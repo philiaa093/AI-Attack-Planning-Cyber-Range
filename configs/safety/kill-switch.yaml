@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "enabled": true,
+  "activation_action_id": "ACTION-END-003",
+  "halts_new_actions": true,
+  "preserve_evidence": true
+}

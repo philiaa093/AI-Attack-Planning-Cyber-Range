@@ -1,0 +1,14 @@
+{
+  "scenario_id": "SCN-003",
+  "target_ids": ["lab-path-001"],
+  "objective_id": "OBJ-DETECT-001",
+  "vulnerability_families": ["PATH_TRAVERSAL"],
+  "allowed_actions": [
+    "ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001", "ACTION-SCAN-002",
+    "ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003",
+    "ACTION-PLAN-001", "ACTION-PLAN-002", "ACTION-PLAN-003",
+    "ACTION-END-001", "ACTION-END-002", "ACTION-END-003"
+  ],
+  "budgets": {"actions": 100, "requests": 2000, "seconds": 3600},
+  "split": "HELD_OUT"
+}

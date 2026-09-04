@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/model-metadata.schema.json",
+  "title": "model-metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "model_id": {"type": "string"},
+    "provider": {"type": "string"},
+    "version": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": ["SPEC_ONLY", "TBD", "UNRESOLVED", "IMPLEMENTED", "VALIDATED", "DEFERRED", "BLOCKED"]
+    }
+  },
+  "required": ["model_id", "provider", "version", "status"]
+}

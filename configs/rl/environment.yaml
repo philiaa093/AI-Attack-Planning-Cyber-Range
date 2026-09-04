@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "observation_schema": "agent/planner/contracts/observation.schema.json",
+  "action_schema": "agent/planner/contracts/action.schema.json",
+  "scenario_manifest_schema": "agent/planner/contracts/scenario-manifest.schema.json",
+  "network": false
+}

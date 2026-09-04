@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "provider": "UNRESOLVED",
+  "model_id": "UNRESOLVED",
+  "version": "UNRESOLVED",
+  "structured_output_schema": "agent/planner/contracts/plan.schema.json"
+}

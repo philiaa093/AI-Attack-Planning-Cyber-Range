@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0",
+  "metrics": [
+    "precision",
+    "recall",
+    "f1",
+    "false_positive_rate",
+    "budget_compliance_rate"
+  ],
+  "inputs": [
+    "evaluation/ground-truth",
+    "evaluation/exports"
+  ],
+  "status": "SPEC_ONLY"
+}

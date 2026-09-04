@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "lab_mode": true,
+  "public_targets": false,
+  "dry_run": true,
+  "external_network": false,
+  "allowed_target_pattern": "^lab-[a-z0-9-]+$"
+}

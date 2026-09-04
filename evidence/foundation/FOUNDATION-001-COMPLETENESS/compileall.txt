@@ -1,0 +1,4 @@
+command: PYTHONDONTWRITEBYTECODE=1 python -B -m compileall -q -f E:/PBL6_FINAL/scripts E:/PBL6_FINAL/tests
+exit_code: 0
+output: none
+cleanup: __pycache__ removed; final validator repeated successfully

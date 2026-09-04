@@ -1,0 +1,9 @@
+{
+  "experiment_id": "EXP-0004",
+  "planner_type": "HYBRID",
+  "scenario_ids": ["SCN-003", "SCN-004"],
+  "seed": 0,
+  "configuration_hash": "UNRESOLVED",
+  "model_id": "UNRESOLVED",
+  "environment_version": "UNRESOLVED"
+}

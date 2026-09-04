@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/experiment-manifest.schema.json",
+  "title": "experiment-manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "experiment_id": {"type": "string", "pattern": "^EXP-[0-9]{4}$"},
+    "planner_type": {"type": "string", "enum": ["RULE", "LLM", "RL", "HYBRID"]},
+    "scenario_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^SCN-[0-9]{3}$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "seed": {"type": "integer", "minimum": 0},
+    "configuration_hash": {"type": "string"},
+    "model_id": {"type": ["string", "null"]},
+    "environment_version": {"type": "string"},
+    "git_commit": {"type": "string"}
+  },
+  "required": [
+    "experiment_id",
+    "planner_type",
+    "scenario_ids",
+    "seed",
+    "configuration_hash"
+  ]
+}

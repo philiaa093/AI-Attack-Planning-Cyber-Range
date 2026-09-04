@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "join_keys": [
+    "scenario_id",
+    "run_id",
+    "target_id"
+  ],
+  "ground_truth_source": "evaluation/ground-truth only",
+  "runtime_output": "evaluation/exports",
+  "status": "SPEC_ONLY"
+}

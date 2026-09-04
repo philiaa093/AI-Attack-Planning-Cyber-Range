@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0",
+  "planner_type": "RULE",
+  "state_schema": "agent/planner/contracts/state.schema.json",
+  "action_schema": "agent/planner/contracts/action.schema.json",
+  "plan_schema": "agent/planner/contracts/plan.schema.json",
+  "observation_schema": "agent/planner/contracts/observation.schema.json",
+  "action_catalog": "actions/catalog/action-catalog.json"
+}

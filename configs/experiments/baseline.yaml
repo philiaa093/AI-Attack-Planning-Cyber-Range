@@ -1,0 +1,9 @@
+{
+  "experiment_id": "EXP-0001",
+  "planner_type": "RULE",
+  "scenario_ids": ["SCN-001", "SCN-004"],
+  "seed": 0,
+  "configuration_hash": "UNRESOLVED",
+  "model_id": null,
+  "environment_version": "UNRESOLVED"
+}

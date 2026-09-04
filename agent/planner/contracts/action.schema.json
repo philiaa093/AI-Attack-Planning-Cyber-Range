@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/action.schema.json",
+  "title": "action",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "type": "string",
+      "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"
+    },
+    "target_id": {
+      "type": "string",
+      "pattern": "^lab-[a-z0-9-]+$"
+    },
+    "action_class": {
+      "type": "string",
+      "enum": ["RECON", "SCAN", "WEB_TEST", "PLAN", "STOP"]
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "required": ["action_id", "target_id", "action_class"]
+}

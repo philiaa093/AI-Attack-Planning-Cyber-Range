@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/state.schema.json",
+  "title": "Planner State",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact_id", "fact_type", "subject", "value", "confidence", "source_observation_id"],
+      "properties": {
+        "fact_id": {"type": "string", "minLength": 1},
+        "fact_type": {"type": "string", "enum": ["TARGET", "SERVICE", "ENDPOINT", "PARAMETER", "CANDIDATE_FINDING", "CONFIRMED_FINDING", "ACTION_OUTCOME", "CONTROL"]},
+        "subject": {"type": "string", "minLength": 1},
+        "value": {"type": ["string", "number", "integer", "boolean", "null"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "source_observation_id": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "required": ["schema_version", "run_id", "scenario_id", "objective_id", "phase", "remaining_budget", "observed_facts"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "run_id": {"type": "string"},
+    "scenario_id": {"type": "string", "pattern": "^SCN-[0-9]{3}$"},
+    "objective_id": {"type": "string"},
+    "phase": {"type": "string", "enum": ["RECON", "DISCOVERY", "ANALYSIS", "TESTING", "REPLAN", "TERMINAL"]},
+    "remaining_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "requests", "seconds"],
+      "properties": {
+        "actions": {"type": "integer", "minimum": 0},
+        "requests": {"type": "integer", "minimum": 0},
+        "seconds": {"type": "number", "minimum": 0}
+      }
+    },
+    "observed_facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
+    "previous_actions": {"type": "array", "items": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"}}
+  }
+}

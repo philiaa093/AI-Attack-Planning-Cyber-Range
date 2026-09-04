@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/ground-truth.schema.json",
+  "title": "ground-truth",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scenario_id": {"type": "string", "pattern": "^SCN-[0-9]{3}$"},
+    "truth_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "truth_id": {"type": "string"},
+          "target_id": {"type": "string", "pattern": "^lab-[a-z0-9-]+$"},
+          "vulnerability_family": {"type": "string", "enum": ["SQLI", "XSS", "PATH_TRAVERSAL"]},
+          "is_vulnerable": {"type": "boolean"}
+        },
+        "required": ["truth_id", "target_id", "vulnerability_family", "is_vulnerable"]
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"source": {"type": "string", "const": "SPEC_ONLY"}},
+      "required": ["source"]
+    }
+  },
+  "required": ["scenario_id", "truth_records", "provenance"]
+}

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/scenario-manifest.schema.json",
+  "title": "scenario-manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scenario_id": {"type": "string", "pattern": "^SCN-[0-9]{3}$"},
+    "target_ids": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^lab-[a-z0-9-]+$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "objective_id": {"type": "string"},
+    "vulnerability_families": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["SQLI", "XSS", "PATH_TRAVERSAL"]},
+      "uniqueItems": true
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "actions": {"type": "integer", "minimum": 0},
+        "requests": {"type": "integer", "minimum": 0},
+        "seconds": {"type": "number", "minimum": 0}
+      },
+      "required": ["actions", "requests", "seconds"]
+    },
+    "split": {"type": "string", "enum": ["TRAIN", "VALIDATION", "HELD_OUT"]}
+  },
+  "required": [
+    "scenario_id",
+    "target_ids",
+    "objective_id",
+    "allowed_actions",
+    "budgets",
+    "split"
+  ]
+}

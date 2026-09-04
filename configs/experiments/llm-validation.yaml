@@ -1,0 +1,9 @@
+{
+  "experiment_id": "EXP-0003",
+  "planner_type": "LLM",
+  "scenario_ids": ["SCN-002"],
+  "seed": 0,
+  "configuration_hash": "UNRESOLVED",
+  "model_id": "UNRESOLVED",
+  "environment_version": "UNRESOLVED"
+}

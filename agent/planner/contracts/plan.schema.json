@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/plan.schema.json",
+  "title": "plan",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string"},
+    "plan_id": {"type": "string"},
+    "objective_id": {"type": "string"},
+    "action_id": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"},
+    "target_id": {"type": "string", "pattern": "^lab-[a-z0-9-]+$"},
+    "reason_code": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "required": ["objective_id", "action_id", "target_id", "reason_code", "confidence"]
+}

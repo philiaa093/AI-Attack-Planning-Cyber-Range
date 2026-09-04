@@ -1,0 +1,5 @@
+command: PYTHONPATH=E:/PBL6_FINAL PYTHONDONTWRITEBYTECODE=1 python -B -m unittest discover -s E:/PBL6_FINAL/tests -t E:/PBL6_FINAL -p 'test_*.py' -v
+exit_code: 0
+summary: Ran 81 tests in 5.330s; OK
+coverage_boundary: scaffold, schemas, action/scenario/planner contracts, safety mutations, evidence/ground-truth isolation, metric formulas
+scope: foundation tests only; no Cyber Range, tool adapter, planner runtime, or experiment executed

@@ -1,0 +1,3 @@
+# Actions
+
+Bounded action catalog.

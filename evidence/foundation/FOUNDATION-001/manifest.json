@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "VALIDATED",
+  "records": [
+    {
+      "evidence_id": "EV-FOUNDATION-001-001",
+      "run_id": "FOUNDATION-001",
+      "path": "evidence/foundation/FOUNDATION-001/validator.txt",
+      "sha256": "8009a2fefb3ad6d868ee1f1a42602e16a47681352413996db2c19ab565629228",
+      "created_at_utc": "2026-08-29T16:09:37.995484Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "exit 0 / approval",
+      "observed_state": "exit 0; SCAFFOLD VALID",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-001-002",
+      "run_id": "FOUNDATION-001",
+      "path": "evidence/foundation/FOUNDATION-001/unittest.txt",
+      "sha256": "90d3851b218e7633eed8124b3f10a91dc3227f6e9445f100ec84ac975b259082",
+      "created_at_utc": "2026-08-29T16:09:37.995919Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "exit 0 / approval",
+      "observed_state": "exit 0; 81 tests OK",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-001-003",
+      "run_id": "FOUNDATION-001",
+      "path": "evidence/foundation/FOUNDATION-001/compileall.txt",
+      "sha256": "5f5b0584e98e14cde26ca85fb42313cf3965d52370607a67aa975d3d7b8f1da9",
+      "created_at_utc": "2026-08-29T16:09:37.996362Z",
+      "source": "COMPILE_CHECK",
+      "redacted": true,
+      "expected_state": "exit 0 / approval",
+      "observed_state": "exit 0",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-001-004",
+      "run_id": "FOUNDATION-001",
+      "path": "evidence/foundation/FOUNDATION-001/review.txt",
+      "sha256": "6e5965de5d646341be6b6e9216b2b33826c44365fdaa437ebc954959592220a9",
+      "created_at_utc": "2026-08-29T16:09:37.996674Z",
+      "source": "OPERATOR",
+      "redacted": true,
+      "expected_state": "FINAL APPROVE",
+      "observed_state": "FINAL APPROVE; no blockers",
+      "derived_from": []
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "schema_version": "1.0",
+  "format": "json_schema",
+  "schema": "agent/planner/contracts/plan.schema.json"
+}

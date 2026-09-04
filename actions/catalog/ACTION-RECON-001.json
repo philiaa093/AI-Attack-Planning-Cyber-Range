@@ -1,0 +1,6 @@
+{
+  "action_id": "ACTION-RECON-001",
+  "target_id": "lab-sqli-001",
+  "action_class": "RECON",
+  "parameters": {}
+}

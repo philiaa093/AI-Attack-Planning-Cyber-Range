@@ -1,0 +1,6 @@
+{
+  "schema_version": "1.0",
+  "memory_mode": "ephemeral_run",
+  "append_only": true,
+  "record_types": ["observation", "plan", "action_receipt"]
+}

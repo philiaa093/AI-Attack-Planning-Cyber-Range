@@ -1,0 +1,6 @@
+{
+  "action_id": "ACTION-END-001",
+  "target_id": "lab-clean-001",
+  "action_class": "STOP",
+  "parameters": {}
+}

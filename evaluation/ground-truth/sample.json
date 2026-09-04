@@ -1,0 +1,24 @@
+{
+  "scenario_id": "SCN-001",
+  "truth_records": [
+    {
+      "truth_id": "TRUTH-001",
+      "target_id": "lab-sqli-001",
+      "vulnerability_family": "SQLI",
+      "is_vulnerable": true
+    },
+    {
+      "truth_id": "TRUTH-002",
+      "target_id": "lab-sqli-001",
+      "vulnerability_family": "XSS",
+      "is_vulnerable": false
+    },
+    {
+      "truth_id": "TRUTH-003",
+      "target_id": "lab-sqli-001",
+      "vulnerability_family": "PATH_TRAVERSAL",
+      "is_vulnerable": false
+    }
+  ],
+  "provenance": {"source": "SPEC_ONLY"}
+}

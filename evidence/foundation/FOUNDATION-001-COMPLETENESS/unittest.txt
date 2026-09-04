@@ -1,0 +1,3 @@
+command: PYTHONPATH=E:/PBL6_FINAL PYTHONDONTWRITEBYTECODE=1 python -B -m unittest discover -s E:/PBL6_FINAL/tests -t E:/PBL6_FINAL -p 'test_*.py' -v
+exit_code: 0
+summary: Ran 83 tests in 8.686s; OK

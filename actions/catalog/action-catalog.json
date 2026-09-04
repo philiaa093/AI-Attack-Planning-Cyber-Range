@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "catalog_id": "ACTION-CATALOG-001",
+  "actions": [
+    {"action_id": "ACTION-RECON-001", "name": "DISCOVER_TARGET", "action_class": "RECON"},
+    {"action_id": "ACTION-RECON-002", "name": "DISCOVER_WEB_SURFACE", "action_class": "RECON"},
+    {"action_id": "ACTION-SCAN-001", "name": "PASSIVE_WEB_SCAN", "action_class": "SCAN"},
+    {"action_id": "ACTION-SCAN-002", "name": "ACTIVE_WEB_SCAN_ALLOWED", "action_class": "SCAN"},
+    {"action_id": "ACTION-WEB-001", "name": "TEST_SQLI_CLASS", "action_class": "WEB_TEST"},
+    {"action_id": "ACTION-WEB-002", "name": "TEST_XSS_CLASS", "action_class": "WEB_TEST"},
+    {"action_id": "ACTION-WEB-003", "name": "TEST_PATH_TRAVERSAL_CLASS", "action_class": "WEB_TEST"},
+    {"action_id": "ACTION-PLAN-001", "name": "CHANGE_TARGET", "action_class": "PLAN"},
+    {"action_id": "ACTION-PLAN-002", "name": "CHANGE_HYPOTHESIS", "action_class": "PLAN"},
+    {"action_id": "ACTION-PLAN-003", "name": "REVISIT_EVIDENCE", "action_class": "PLAN"},
+    {"action_id": "ACTION-END-001", "name": "STOP_SUCCESS", "action_class": "STOP"},
+    {"action_id": "ACTION-END-002", "name": "STOP_BUDGET", "action_class": "STOP"},
+    {"action_id": "ACTION-END-003", "name": "STOP_NO_PROGRESS", "action_class": "STOP"}
+  ]
+}

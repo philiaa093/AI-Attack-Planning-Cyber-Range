@@ -1,0 +1,6 @@
+{
+  "schema_version": "1.0",
+  "requests_per_second": 5,
+  "burst": 1,
+  "scope": "run_and_target"
+}

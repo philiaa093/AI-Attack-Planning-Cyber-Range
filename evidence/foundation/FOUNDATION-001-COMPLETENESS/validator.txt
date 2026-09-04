@@ -1,0 +1,4 @@
+command: PYTHONDONTWRITEBYTECODE=1 python -B E:/PBL6_FINAL/scripts/validation/validate_scaffold.py
+exit_code: 0
+output: SCAFFOLD VALID; files_checked=265; schemas_checked=10; actions_checked=13; tasks_checked=35; adrs_checked=12
+scope: requested scaffold tree and foundation contracts only

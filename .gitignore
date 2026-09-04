@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.env
+*.secret
+*.pem
+*.key
+*.pcap
+*.pcapng
+*.model
+*.joblib
+*.pkl
+evidence/runs/

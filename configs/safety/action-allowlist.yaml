@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.0",
+  "allowed_action_ids": [
+    "ACTION-RECON-001",
+    "ACTION-RECON-002",
+    "ACTION-SCAN-001",
+    "ACTION-SCAN-002",
+    "ACTION-WEB-001",
+    "ACTION-WEB-002",
+    "ACTION-WEB-003",
+    "ACTION-PLAN-001",
+    "ACTION-PLAN-002",
+    "ACTION-PLAN-003",
+    "ACTION-END-001",
+    "ACTION-END-002",
+    "ACTION-END-003"
+  ],
+  "action_classes": {
+    "ACTION-RECON-001": "RECON",
+    "ACTION-RECON-002": "RECON",
+    "ACTION-SCAN-001": "SCAN",
+    "ACTION-SCAN-002": "SCAN",
+    "ACTION-WEB-001": "WEB_TEST",
+    "ACTION-WEB-002": "WEB_TEST",
+    "ACTION-WEB-003": "WEB_TEST",
+    "ACTION-PLAN-001": "PLAN",
+    "ACTION-PLAN-002": "PLAN",
+    "ACTION-PLAN-003": "PLAN",
+    "ACTION-END-001": "STOP",
+    "ACTION-END-002": "STOP",
+    "ACTION-END-003": "STOP"
+  },
+  "deny_unknown_actions": true,
+  "deny_payload_fields": true,
+  "deny_command_fields": true
+}

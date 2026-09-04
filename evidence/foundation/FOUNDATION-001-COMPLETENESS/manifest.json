@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "VALIDATED",
+  "records": [
+    {
+      "evidence_id": "EV-FOUNDATION-COMPLETE-001-001",
+      "run_id": "FOUNDATION-001-COMPLETENESS",
+      "path": "evidence/foundation/FOUNDATION-001-COMPLETENESS/validator.txt",
+      "sha256": "71cbde49cf53f1d8f18f26e5d3be4bb25a0234be8abe9ecf6bdaf80f0a6229f2",
+      "created_at_utc": "2026-08-29T16:26:27.546334Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "exit 0 / APPROVE",
+      "observed_state": "exit 0; 265 files valid",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-COMPLETE-001-002",
+      "run_id": "FOUNDATION-001-COMPLETENESS",
+      "path": "evidence/foundation/FOUNDATION-001-COMPLETENESS/unittest.txt",
+      "sha256": "631578ae28229498ffb53ab56c213e8a9da134d55269a3670a669f84c297d23a",
+      "created_at_utc": "2026-08-29T16:26:27.604461Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "exit 0 / APPROVE",
+      "observed_state": "exit 0; 83 tests OK",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-COMPLETE-001-003",
+      "run_id": "FOUNDATION-001-COMPLETENESS",
+      "path": "evidence/foundation/FOUNDATION-001-COMPLETENESS/compileall.txt",
+      "sha256": "6e422a33aaf4d760e7c809ddc32d8d9e3f3b20dc58999749f701b0c254651481",
+      "created_at_utc": "2026-08-29T16:26:27.628459Z",
+      "source": "COMPILE_CHECK",
+      "redacted": true,
+      "expected_state": "exit 0 / APPROVE",
+      "observed_state": "exit 0",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-FOUNDATION-COMPLETE-001-004",
+      "run_id": "FOUNDATION-001-COMPLETENESS",
+      "path": "evidence/foundation/FOUNDATION-001-COMPLETENESS/review.txt",
+      "sha256": "3767521d3e95e65a918c83fabdeef64a7e5fb1f5286aa0bf5921b547033a6b2b",
+      "created_at_utc": "2026-08-29T16:26:27.648413Z",
+      "source": "OPERATOR",
+      "redacted": true,
+      "expected_state": "exit 0 / APPROVE",
+      "observed_state": "APPROVE; no blockers",
+      "derived_from": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "SPEC_ONLY"
+}

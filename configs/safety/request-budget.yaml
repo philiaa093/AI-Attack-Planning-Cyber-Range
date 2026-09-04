@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0",
+  "max_actions": 100,
+  "max_requests": 2000,
+  "max_rps": 5,
+  "on_exhaustion": "ACTION-END-002"
+}

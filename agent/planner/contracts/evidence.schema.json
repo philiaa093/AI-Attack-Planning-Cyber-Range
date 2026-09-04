@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/evidence.schema.json",
+  "title": "Evidence Record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evidence_id", "run_id", "path", "sha256", "created_at_utc", "source", "redacted", "expected_state", "observed_state"],
+  "properties": {
+    "evidence_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "path": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "created_at_utc": {"type": "string", "format": "date-time"},
+    "source": {"type": "string", "enum": ["VALIDATOR", "UNIT_TEST", "COMPILE_CHECK", "PLANNER", "EXECUTOR", "TOOL_ADAPTER", "OPERATOR"]},
+    "redacted": {"type": "boolean"},
+    "expected_state": {"type": "string", "minLength": 1},
+    "observed_state": {"type": "string", "minLength": 1},
+    "derived_from": {"type": "array", "items": {"type": "string"}}
+  }
+}

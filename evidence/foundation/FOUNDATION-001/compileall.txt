@@ -1,0 +1,5 @@
+command: PYTHONDONTWRITEBYTECODE=1 python -B -m compileall -q -f E:/PBL6_FINAL/scripts E:/PBL6_FINAL/tests
+exit_code: 0
+output: none
+cleanup: generated __pycache__ directories removed before final validation
+scope: Python syntax/bytecode compilation only

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">Pipeline bounded AI planning trong Web Cyber Range cô lập</title>
+  <desc id="desc">Kịch bản được phê duyệt cung cấp quan sát và trạng thái có kiểu cho bốn bộ lập kế hoạch. Đề xuất bị kiểm tra bởi safety gate trước executor tương lai, evidence và evaluator.</desc>
+  <defs>
+    <style>text{font-family:'Times New Roman',serif;fill:#172033}.title{font-size:31px;font-weight:bold}.sub{font-size:20px;fill:#516076}.box{stroke-width:3;rx:18;ry:18}.label{font-size:24px;font-weight:bold}.small{font-size:18px}.arrow{stroke:#365f91;stroke-width:5;fill:none;marker-end:url(#a)}.note{font-size:18px;fill:#6b7280;font-style:italic}</style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#365f91"/></marker>
+  </defs>
+  <rect width="1400" height="760" fill="#f8fafc"/>
+  <text x="700" y="55" text-anchor="middle" class="title">PIPELINE BOUNDED AI PLANNING — SƠ ĐỒ THIẾT KẾ DỰ KIẾN</text>
+  <text x="700" y="88" text-anchor="middle" class="sub">Isolated Web Cyber Range | Không thể hiện runtime hoặc kết quả thực nghiệm</text>
+  <rect x="55" y="180" width="220" height="145" class="box" fill="#e9f2ff" stroke="#365f91"/>
+  <text x="165" y="230" text-anchor="middle" class="label">Kịch bản</text><text x="165" y="260" text-anchor="middle" class="small">được phê duyệt</text><text x="165" y="287" text-anchor="middle" class="small">target + ngân sách</text>
+  <rect x="340" y="180" width="220" height="145" class="box" fill="#edf7ef" stroke="#3f7f54"/>
+  <text x="450" y="230" text-anchor="middle" class="label">Quan sát /</text><text x="450" y="260" text-anchor="middle" class="label">trạng thái có kiểu</text><text x="450" y="287" text-anchor="middle" class="small">validated input</text>
+  <rect x="625" y="145" width="280" height="215" class="box" fill="#fff4d9" stroke="#ad7a12"/>
+  <text x="765" y="195" text-anchor="middle" class="label">Planner</text><text x="765" y="230" text-anchor="middle" class="small">RULE | LLM</text><text x="765" y="258" text-anchor="middle" class="small">RL | HYBRID</text><text x="765" y="305" text-anchor="middle" class="small">đề xuất hành động hữu hạn</text>
+  <rect x="970" y="145" width="230" height="215" class="box" fill="#ffe8e8" stroke="#a83a3a"/>
+  <text x="1085" y="195" text-anchor="middle" class="label">Safety gate</text><text x="1085" y="230" text-anchor="middle" class="small">target | action | thứ tự</text><text x="1085" y="258" text-anchor="middle" class="small">rate | budget | approval</text><text x="1085" y="305" text-anchor="middle" class="small">ALLOW / DENY / REVIEW</text>
+  <rect x="1260" y="180" width="100" height="145" class="box" fill="#f1f5f9" stroke="#64748b"/>
+  <text x="1310" y="228" text-anchor="middle" class="label" style="font-size:18px">Executor</text><text x="1310" y="255" text-anchor="middle" class="small" style="font-size:14px">tương lai,</text><text x="1310" y="277" text-anchor="middle" class="small" style="font-size:14px">phê duyệt riêng</text>
+  <path d="M275 252 H338" class="arrow"/><path d="M560 252 H623" class="arrow"/><path d="M905 252 H968" class="arrow"/><path d="M1200 252 H1258" class="arrow"/>
+  <rect x="755" y="500" width="245" height="135" class="box" fill="#efe9ff" stroke="#7155a5"/>
+  <text x="878" y="548" text-anchor="middle" class="label">Evidence</text><text x="878" y="578" text-anchor="middle" class="small">decision + observation</text><text x="878" y="605" text-anchor="middle" class="small">hash + redaction</text>
+  <rect x="1060" y="500" width="260" height="135" class="box" fill="#e9f6f5" stroke="#2d7b73"/>
+  <text x="1190" y="548" text-anchor="middle" class="label">Đánh giá</text><text x="1190" y="578" text-anchor="middle" class="small">ground truth + metrics</text><text x="1190" y="605" text-anchor="middle" class="small">evidence-backed only</text>
+  <path d="M1310 327 V420 Q1310 450 1275 450 H878 V498" class="arrow"/><path d="M1002 567 H1058" class="arrow"/>
+  <text x="55" y="700" class="note">Nguyên tắc: Không planner nào bỏ qua safety policy; dữ liệu thiếu hoặc sai khuôn dạng bị từ chối mặc định.</text>
+</svg>

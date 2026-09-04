@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/scanner-result.schema.json",
+  "title": "scanner-result",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "source": {"type": "string", "enum": ["ZAP", "NUCLEI", "DISCOVERY"]},
+    "target_id": {"type": "string", "pattern": "^lab-[a-z0-9-]+$"},
+    "endpoint_id": {"type": ["string", "null"]},
+    "finding_type": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  },
+  "required": ["source", "target_id", "endpoint_id", "finding_type", "confidence"]
+}
