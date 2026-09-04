@@ -2,6 +2,10 @@
 ~$*
 *.tmp
 
+# Generated documents
+*.docx
+*.pdf
+
 # Python
 __pycache__/
 *.py[cod]
