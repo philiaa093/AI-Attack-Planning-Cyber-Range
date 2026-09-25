@@ -17,6 +17,8 @@ from urllib.parse import urlsplit, parse_qs
 TARGET_ID = os.environ.get("TARGET_ID", "lab-clean-control")
 PORT = int(os.environ.get("PORT", "8080"))
 DATA_DIR = pathlib.Path("/app/data").resolve()
+MAX_BODY_BYTES = 1024 * 1024
+MAX_BODY_BYTES = 1024 * 1024
 
 
 class AppState:
@@ -130,13 +132,43 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
         if path == "/reset":
-            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send_json(400, {"error": "invalid content length"})
+                return
+            if length < 0 or length > MAX_BODY_BYTES:
+                self._send_json(413, {"error": "request body too large"})
+                return
             if length > 0:
                 self.rfile.read(length)
             state.reset()
             self._send_json(200, {"status": "reset", "target_id": TARGET_ID, "reset_count": state.reset_count})
             return
         self._send_json(404, {"status": "not_found"})
+
+    def do_PUT(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_DELETE(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_PATCH(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_HEAD(self) -> None:
+        self.send_response(405)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, OPTIONS, POST")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
 
     def log_message(self, format: str, *args: object) -> None:
         return

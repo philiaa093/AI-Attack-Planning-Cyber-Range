@@ -12,10 +12,10 @@
 - [TASK-008-scenario-contract.md](TASK-008-scenario-contract.md) — `VALIDATED`; dependency: TASK-001, TASK-003
 - [TASK-009-ground-truth-contract.md](TASK-009-ground-truth-contract.md) — `VALIDATED`; dependency: TASK-008
 - [TASK-010-experiment-contract.md](TASK-010-experiment-contract.md) — `VALIDATED`; dependency: TASK-007, TASK-008
-- [TASK-011-cyber-range-network.md](TASK-011-cyber-range-network.md) — `SPEC_ONLY`; dependency: TASK-003
-- [TASK-012-web-target-a.md](TASK-012-web-target-a.md) — `SPEC_ONLY`; dependency: TASK-011
-- [TASK-013-web-target-b.md](TASK-013-web-target-b.md) — `SPEC_ONLY`; dependency: TASK-011
-- [TASK-014-clean-control-target.md](TASK-014-clean-control-target.md) — `SPEC_ONLY`; dependency: TASK-011
+- [TASK-011-cyber-range-network.md](TASK-011-cyber-range-network.md) — `IMPLEMENTED`; dependency: TASK-003
+- [TASK-012-web-target-a.md](TASK-012-web-target-a.md) — `IMPLEMENTED`; dependency: TASK-011
+- [TASK-013-web-target-b.md](TASK-013-web-target-b.md) — `IMPLEMENTED`; dependency: TASK-011
+- [TASK-014-clean-control-target.md](TASK-014-clean-control-target.md) — `IMPLEMENTED`; dependency: TASK-011
 - [TASK-015-discovery-adapter.md](TASK-015-discovery-adapter.md) — `SPEC_ONLY`; dependency: TASK-004, TASK-006, TASK-011
 - [TASK-016-zap-adapter.md](TASK-016-zap-adapter.md) — `SPEC_ONLY`; dependency: TASK-004, TASK-006, TASK-011
 - [TASK-017-nuclei-adapter.md](TASK-017-nuclei-adapter.md) — `SPEC_ONLY`; dependency: TASK-004, TASK-006, TASK-011

@@ -2,7 +2,7 @@
 
 ## Status
 
-`VALIDATED`.
+`IMPLEMENTED`.
 
 ## Purpose
 

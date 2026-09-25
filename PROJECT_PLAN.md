@@ -12,7 +12,7 @@ Record primary literature and threat sources; define threat and safety assumptio
 
 ## Cyber Range
 
-Local-only runtime vertical slice now covers loopback Docker topology, clean-control health/reset, bounded dry-run, and evidence plumbing. Vulnerability target behavior, adapters, and full range validation remain `SPEC_ONLY`/`UNRESOLVED`.
+Local-only runtime vertical slice now covers loopback Docker topology, clean-control health/reset, bounded dry-run, and evidence plumbing. TASK-011 network configuration and TASK-012–014 in-process target behavior are `IMPLEMENTED`; Docker runtime evidence, adapters, and full range validation remain `SPEC_ONLY`/`UNRESOLVED`.
 
 ## Perception/Tooling
 

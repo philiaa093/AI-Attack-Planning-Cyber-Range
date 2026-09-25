@@ -15,6 +15,7 @@ from urllib.parse import urlsplit, parse_qs
 TARGET_ID = os.environ.get("TARGET_ID", "lab-webapp-b")
 PORT = int(os.environ.get("PORT", "8080"))
 UPLOADS_DIR = "/app/uploads"
+MAX_BODY_BYTES = 1024 * 1024
 
 
 class AppState:
@@ -74,8 +75,15 @@ class Handler(BaseHTTPRequestHandler):
     def _params(self) -> dict[str, list[str]]:
         return parse_qs(urlsplit(self.path).query)
 
-    def _read_body(self) -> bytes:
-        length = int(self.headers.get("Content-Length", "0"))
+    def _read_body(self) -> bytes | None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json(400, {"error": "invalid content length"})
+            return None
+        if length < 0 or length > MAX_BODY_BYTES:
+            self._send_json(413, {"error": "request body too large"})
+            return None
         return self.rfile.read(length) if length > 0 else b""
 
     def do_GET(self) -> None:
@@ -142,7 +150,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
 
         if path == "/reset":
-            self._read_body()
+            if self._read_body() is None:
+                return
             state.reset()
             self._send_json(200, {"status": "reset", "target_id": TARGET_ID, "reset_count": state.reset_count})
             return
@@ -150,6 +159,8 @@ class Handler(BaseHTTPRequestHandler):
         # INTENTIONAL VULN: stored XSS — stores raw HTML from user input — lab only
         if path == "/api/comments":
             raw = self._read_body()
+            if raw is None:
+                return
             try:
                 data = json.loads(raw)
                 author = str(data.get("author", "anonymous"))
@@ -162,6 +173,26 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._send_json(404, {"status": "not_found"})
+
+    def do_PUT(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_DELETE(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_PATCH(self) -> None:
+        self._send_json(405, {"status": "method_not_allowed"})
+
+    def do_HEAD(self) -> None:
+        self.send_response(405)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, OPTIONS, POST")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def log_message(self, format: str, *args: object) -> None:
         return

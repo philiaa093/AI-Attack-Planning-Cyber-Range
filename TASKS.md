@@ -2,7 +2,7 @@
 
 Status vocabulary: `SPEC_ONLY`, `TBD`, `UNRESOLVED`, `IMPLEMENTED`, `VALIDATED`, `DEFERRED`, `BLOCKED`.
 
-Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. A local-only runtime vertical slice covers bounded clean-control health/reset and dry-run; runtime evidence review remains `UNRESOLVED`. Tasks 012-014 are `VALIDATED` by runtime target evidence. Tasks 015-017 are `VALIDATED` by adapter evidence `EV-ADAPTERS-015-001` through `EV-ADAPTERS-017-003`; scaffold validator passes, 87 unit tests pass (27 adapter-specific), all Python files compile, schema-conformant output verified. Tasks 018-019 are `VALIDATED` by perception evidence `EV-PERCEPTION-018-001` through `EV-PERCEPTION-019-003`; scaffold validator passes, 72 unit tests pass (33 normalizer-specific, 39 state-store-specific), all Python files compile, isolation checks verified. Tasks 011, 020-025, 027-031, and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`; no result claim exists.
+Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. TASK-011 is `IMPLEMENTED`; static isolation tests and Compose validation pass, but runtime isolation evidence remains `UNRESOLVED`. Tasks 012-014 are `IMPLEMENTED`; in-process HTTP behavior tests pass, but Docker runtime evidence remains `UNRESOLVED`. Tasks 015-017 remain `SPEC_ONLY`; current adapters are simulation-oriented and real tool execution is not validated. Tasks 018-019 are `VALIDATED` by perception evidence `EV-PERCEPTION-018-001` through `EV-PERCEPTION-019-003`. Tasks 020-025, 027-031, and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`; no result claim exists.
 
 | ID | Descriptive name | Status | Dependencies |
 |---|---|---|---|
@@ -16,13 +16,13 @@ Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` thr
 | TASK-008 | Scenario contract | `VALIDATED` | TASK-001, TASK-003 |
 | TASK-009 | Ground-truth contract | `VALIDATED` | TASK-008 |
 | TASK-010 | Experiment contract | `VALIDATED` | TASK-007, TASK-008 |
-| TASK-011 | Cyber range network | `SPEC_ONLY` | TASK-003 |
-| TASK-012 | Web target A | `VALIDATED` | TASK-011 |
-| TASK-013 | Web target B | `VALIDATED` | TASK-011 |
-| TASK-014 | Clean control target | `VALIDATED` | TASK-011 |
-| TASK-015 | Discovery adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
-| TASK-016 | ZAP adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
-| TASK-017 | Nuclei adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
+| TASK-011 | Cyber range network | `IMPLEMENTED` | TASK-003 |
+| TASK-012 | Web target A | `IMPLEMENTED` | TASK-011 |
+| TASK-013 | Web target B | `IMPLEMENTED` | TASK-011 |
+| TASK-014 | Clean control target | `IMPLEMENTED` | TASK-011 |
+| TASK-015 | Discovery adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
+| TASK-016 | ZAP adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
+| TASK-017 | Nuclei adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
 | TASK-018 | Observation normalizer | `VALIDATED` | TASK-006, TASK-015 |
 | TASK-019 | Knowledge-state store | `VALIDATED` | TASK-005, TASK-018 |
 | TASK-020 | Planner interface | `SPEC_ONLY` | TASK-004, TASK-005, TASK-019 |
