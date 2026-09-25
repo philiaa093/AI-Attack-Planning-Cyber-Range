@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`.
+`VALIDATED`.
 
 ## Purpose
 

@@ -1,0 +1,3 @@
+SCAFFOLD VALID
+files_checked=2103
+schemas_checked=10 actions_checked=13 tasks_checked=35 adrs_checked=13

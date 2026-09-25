@@ -1,0 +1,44 @@
+test_empty_log (tests.unit.test_knowledge_state_store.TestActionLog.test_empty_log) ... ok
+test_get_action_ids (tests.unit.test_knowledge_state_store.TestActionLog.test_get_action_ids) ... ok
+test_immutability (tests.unit.test_knowledge_state_store.TestActionLog.test_immutability) ... ok
+test_json_roundtrip (tests.unit.test_knowledge_state_store.TestActionLog.test_json_roundtrip) ... ok
+test_observation_deep_copy (tests.unit.test_knowledge_state_store.TestActionLog.test_observation_deep_copy) ... ok
+test_record_action (tests.unit.test_knowledge_state_store.TestActionLog.test_record_action) ... ok
+test_record_observation (tests.unit.test_knowledge_state_store.TestActionLog.test_record_observation) ... ok
+test_replay_observations (tests.unit.test_knowledge_state_store.TestActionLog.test_replay_observations) ... ok
+test_sequence_numbers (tests.unit.test_knowledge_state_store.TestActionLog.test_sequence_numbers) ... ok
+test_reconstruct_from_action_log (tests.unit.test_knowledge_state_store.TestDeterministicReconstruction.test_reconstruct_from_action_log) ... ok
+test_reconstruct_matches_sequential (tests.unit.test_knowledge_state_store.TestDeterministicReconstruction.test_reconstruct_matches_sequential) ... ok
+test_all_facts (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_all_facts) ... ok
+test_by_subject (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_by_subject) ... ok
+test_by_type (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_by_type) ... ok
+test_empty_repo (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_empty_repo) ... ok
+test_endpoints (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_endpoints) ... ok
+test_fact_types (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_fact_types) ... ok
+test_findings_all (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_findings_all) ... ok
+test_findings_by_type (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_findings_by_type) ... ok
+test_findings_by_type_with_threshold (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_findings_by_type_with_threshold) ... ok
+test_findings_with_threshold (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_findings_with_threshold) ... ok
+test_services (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_services) ... ok
+test_subjects (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_subjects) ... ok
+test_update (tests.unit.test_knowledge_state_store.TestKnowledgeRepository.test_update) ... ok
+test_action_log_no_forbidden (tests.unit.test_knowledge_state_store.TestNoGroundTruthInMemory.test_action_log_no_forbidden) ... ok
+test_knowledge_repo_no_forbidden (tests.unit.test_knowledge_state_store.TestNoGroundTruthInMemory.test_knowledge_repo_no_forbidden) ... ok
+test_state_manager_no_forbidden (tests.unit.test_knowledge_state_store.TestNoGroundTruthInMemory.test_state_manager_no_forbidden) ... ok
+test_action_dedup (tests.unit.test_knowledge_state_store.TestStateManager.test_action_dedup) ... ok
+test_apply_observation_adds_facts (tests.unit.test_knowledge_state_store.TestStateManager.test_apply_observation_adds_facts) ... ok
+test_budget_decrements (tests.unit.test_knowledge_state_store.TestStateManager.test_budget_decrements) ... ok
+test_custom_budget (tests.unit.test_knowledge_state_store.TestStateManager.test_custom_budget) ... ok
+test_decrement_requests (tests.unit.test_knowledge_state_store.TestStateManager.test_decrement_requests) ... ok
+test_decrement_seconds (tests.unit.test_knowledge_state_store.TestStateManager.test_decrement_seconds) ... ok
+test_dedup_keeps_highest_confidence (tests.unit.test_knowledge_state_store.TestStateManager.test_dedup_keeps_highest_confidence) ... ok
+test_fact_count (tests.unit.test_knowledge_state_store.TestStateManager.test_fact_count) ... ok
+test_initial_state (tests.unit.test_knowledge_state_store.TestStateManager.test_initial_state) ... ok
+test_invalid_phase_rejected (tests.unit.test_knowledge_state_store.TestStateManager.test_invalid_phase_rejected) ... ok
+test_phase_transition (tests.unit.test_knowledge_state_store.TestStateManager.test_phase_transition) ... ok
+test_state_schema_required_fields (tests.unit.test_knowledge_state_store.TestStateManager.test_state_schema_required_fields) ... ok
+
+----------------------------------------------------------------------
+Ran 39 tests in 0.004s
+
+OK

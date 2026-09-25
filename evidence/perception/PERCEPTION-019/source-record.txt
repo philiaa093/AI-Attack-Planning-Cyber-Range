@@ -1,0 +1,8 @@
+Source: TASK-019
+Artifacts: agent/memory/state/state_manager.py, agent/memory/history/action_log.py, agent/memory/knowledge_base/knowledge_repo.py
+Packages: agent/memory/__init__.py, agent/memory/state/__init__.py, agent/memory/history/__init__.py, agent/memory/knowledge_base/__init__.py
+Config: configs/agent/memory-default.yaml
+Tests: tests/unit/test_knowledge_state_store.py (39 tests)
+Contracts referenced: state.schema.json, observation.schema.json
+Deterministic reconstruction: StateManager.reconstruct_from_observations() verified by TestDeterministicReconstruction
+Isolation: no forbidden tokens (verified by TestNoGroundTruthInMemory)

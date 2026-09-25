@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "VALIDATED",
+  "records": [
+    {
+      "evidence_id": "EV-PERCEPTION-019-001",
+      "run_id": "PERCEPTION-019",
+      "path": "evidence/perception/PERCEPTION-019/validator.txt",
+      "sha256": "e99063569a628ee5b344347a95e7ab61c6d5fd32309982350bf75525b34e18d3",
+      "created_at_utc": "2026-09-25T18:00:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "scaffold valid, all memory Python files parse",
+      "observed_state": "SCAFFOLD VALID; 2101 files checked, 10 schemas, 13 actions, 35 tasks",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-PERCEPTION-019-002",
+      "run_id": "PERCEPTION-019",
+      "path": "evidence/perception/PERCEPTION-019/unittest.txt",
+      "sha256": "e06d720e23ea09e7a64aaa5db85080ce055215d21031d38c337e758ea1ae0d23",
+      "created_at_utc": "2026-09-25T18:00:00Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "39 state store tests pass; state management, action log, knowledge repo, deterministic reconstruction, isolation check",
+      "observed_state": "39 tests OK; StateManager apply/reconstruct, ActionLog immutable/replay/JSON roundtrip, KnowledgeRepository index, forbidden token isolation all pass",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-PERCEPTION-019-003",
+      "run_id": "PERCEPTION-019",
+      "path": "evidence/perception/PERCEPTION-019/source-record.txt",
+      "sha256": "3dd1f1a93a5b6d985107f21be6b3bbe469145e46958f8d613025f684700de5eb",
+      "created_at_utc": "2026-09-25T18:00:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "source artifacts listed",
+      "observed_state": "state_manager.py, action_log.py, knowledge_repo.py, memory-default.yaml, 39 unit tests",
+      "derived_from": []
+    }
+  ]
+}

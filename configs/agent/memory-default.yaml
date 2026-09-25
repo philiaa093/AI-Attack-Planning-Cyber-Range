@@ -2,5 +2,22 @@
   "schema_version": "1.0",
   "memory_mode": "ephemeral_run",
   "append_only": true,
-  "record_types": ["observation", "plan", "action_receipt"]
+  "record_types": ["observation", "plan", "action_receipt"],
+  "history": {
+    "immutable": true,
+    "replay_enabled": true,
+    "max_entries": 10000
+  },
+  "state": {
+    "default_budget": {
+      "actions": 100,
+      "requests": 500,
+      "seconds": 3600.0
+    },
+    "initial_phase": "RECON"
+  },
+  "knowledge_base": {
+    "index_by": ["fact_type", "subject"],
+    "dedup_strategy": "highest_confidence"
+  }
 }

@@ -1,0 +1,7 @@
+Source: TASK-018
+Artifacts: agent/perception/normalizers/observation_normalizer.py, agent/perception/feature_extractors/extractors.py
+Packages: agent/__init__.py, agent/perception/__init__.py, agent/perception/normalizers/__init__.py, agent/perception/feature_extractors/__init__.py
+Tests: tests/unit/test_observation_normalizer.py (33 tests)
+Contracts referenced: observation.schema.json, scanner-result.schema.json
+Adapters consumed: DISCOVERY, ZAP, NUCLEI (via tools/adapters/)
+Isolation: no forbidden tokens (verified by TestNoGroundTruthReferences)

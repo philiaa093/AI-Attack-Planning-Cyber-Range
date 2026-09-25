@@ -2,7 +2,7 @@
 
 Status vocabulary: `SPEC_ONLY`, `TBD`, `UNRESOLVED`, `IMPLEMENTED`, `VALIDATED`, `DEFERRED`, `BLOCKED`.
 
-Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. A local-only runtime vertical slice covers bounded clean-control health/reset and dry-run; runtime evidence review remains `UNRESOLVED`. Tasks 012-014 are `VALIDATED` by runtime target evidence. Tasks 015-017 are `VALIDATED` by adapter evidence `EV-ADAPTERS-015-001` through `EV-ADAPTERS-017-003`; scaffold validator passes, 87 unit tests pass (27 adapter-specific), all Python files compile, schema-conformant output verified. Tasks 011, 018-025, 027-031, and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`; no result claim exists.
+Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. A local-only runtime vertical slice covers bounded clean-control health/reset and dry-run; runtime evidence review remains `UNRESOLVED`. Tasks 012-014 are `VALIDATED` by runtime target evidence. Tasks 015-017 are `VALIDATED` by adapter evidence `EV-ADAPTERS-015-001` through `EV-ADAPTERS-017-003`; scaffold validator passes, 87 unit tests pass (27 adapter-specific), all Python files compile, schema-conformant output verified. Tasks 018-019 are `VALIDATED` by perception evidence `EV-PERCEPTION-018-001` through `EV-PERCEPTION-019-003`; scaffold validator passes, 72 unit tests pass (33 normalizer-specific, 39 state-store-specific), all Python files compile, isolation checks verified. Tasks 011, 020-025, 027-031, and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`; no result claim exists.
 
 | ID | Descriptive name | Status | Dependencies |
 |---|---|---|---|
@@ -23,8 +23,8 @@ Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` thr
 | TASK-015 | Discovery adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
 | TASK-016 | ZAP adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
 | TASK-017 | Nuclei adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
-| TASK-018 | Observation normalizer | `SPEC_ONLY` | TASK-006, TASK-015 |
-| TASK-019 | Knowledge-state store | `SPEC_ONLY` | TASK-005, TASK-018 |
+| TASK-018 | Observation normalizer | `VALIDATED` | TASK-006, TASK-015 |
+| TASK-019 | Knowledge-state store | `VALIDATED` | TASK-005, TASK-018 |
 | TASK-020 | Planner interface | `SPEC_ONLY` | TASK-004, TASK-005, TASK-019 |
 | TASK-021 | Rule-based planner | `SPEC_ONLY` | TASK-020 |
 | TASK-022 | LLM planner | `SPEC_ONLY` | TASK-020, TASK-003 |

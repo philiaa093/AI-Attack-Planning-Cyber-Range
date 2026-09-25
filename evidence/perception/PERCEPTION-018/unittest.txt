@@ -1,0 +1,38 @@
+test_above_one (tests.unit.test_observation_normalizer.TestClampConfidence.test_above_one) ... ok
+test_below_zero (tests.unit.test_observation_normalizer.TestClampConfidence.test_below_zero) ... ok
+test_integer (tests.unit.test_observation_normalizer.TestClampConfidence.test_integer) ... ok
+test_non_numeric (tests.unit.test_observation_normalizer.TestClampConfidence.test_non_numeric) ... ok
+test_none (tests.unit.test_observation_normalizer.TestClampConfidence.test_none) ... ok
+test_normal_range (tests.unit.test_observation_normalizer.TestClampConfidence.test_normal_range) ... ok
+test_extract_endpoints (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_endpoints) ... ok
+test_extract_findings_all (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_findings_all) ... ok
+test_extract_findings_with_threshold (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_findings_with_threshold) ... ok
+test_extract_from_empty (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_from_empty) ... ok
+test_extract_parameters (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_parameters) ... ok
+test_extract_services (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_extract_services) ... ok
+test_group_by_subject (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_group_by_subject) ... ok
+test_group_by_type (tests.unit.test_observation_normalizer.TestFeatureExtractors.test_group_by_type) ... ok
+test_deterministic (tests.unit.test_observation_normalizer.TestMakeFactId.test_deterministic) ... ok
+test_different_inputs (tests.unit.test_observation_normalizer.TestMakeFactId.test_different_inputs) ... ok
+test_format (tests.unit.test_observation_normalizer.TestMakeFactId.test_format) ... ok
+test_extractors_no_forbidden (tests.unit.test_observation_normalizer.TestNoGroundTruthReferences.test_extractors_no_forbidden) ... ok
+test_normalizer_no_forbidden (tests.unit.test_observation_normalizer.TestNoGroundTruthReferences.test_normalizer_no_forbidden) ... ok
+test_auto_observation_id (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_auto_observation_id) ... ok
+test_canonical_finding_type_mapping (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_canonical_finding_type_mapping) ... ok
+test_confidence_clamped_in_output (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_confidence_clamped_in_output) ... ok
+test_custom_observation_id (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_custom_observation_id) ... ok
+test_deduplication_keeps_highest_confidence (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_deduplication_keeps_highest_confidence) ... ok
+test_empty_results (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_empty_results) ... ok
+test_endpoint_emits_endpoint_fact (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_endpoint_emits_endpoint_fact) ... ok
+test_invalid_action_id_rejected (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_invalid_action_id_rejected) ... ok
+test_normalize_discovery_result (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_normalize_discovery_result) ... ok
+test_normalize_nuclei_result (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_normalize_nuclei_result) ... ok
+test_normalize_observation_passthrough (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_normalize_observation_passthrough) ... ok
+test_normalize_zap_result (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_normalize_zap_result) ... ok
+test_observation_has_timestamp (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_observation_has_timestamp) ... ok
+test_reset_clears_state (tests.unit.test_observation_normalizer.TestObservationNormalizer.test_reset_clears_state) ... ok
+
+----------------------------------------------------------------------
+Ran 33 tests in 0.003s
+
+OK
