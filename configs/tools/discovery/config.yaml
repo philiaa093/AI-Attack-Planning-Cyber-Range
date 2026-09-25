@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "adapter": "discovery",
+  "description": "Bounded reconnaissance: port scanning, endpoint discovery, tech fingerprinting",
+  "allowed_actions": {
+    "ACTION-RECON-001": {
+      "name": "port_scan",
+      "class": "RECON",
+      "description": "TCP port scan of lab target (simulated nmap)"
+    },
+    "ACTION-RECON-002": {
+      "name": "endpoint_discovery",
+      "class": "RECON",
+      "description": "HTTP endpoint discovery and tech stack fingerprinting"
+    }
+  },
+  "safety": {
+    "target_pattern": "^lab-[a-z0-9-]+$",
+    "deny_public_targets": true,
+    "deny_arbitrary_shell": true,
+    "rate_limit_ref": "configs/safety/rate-limit.yaml"
+  }
+}

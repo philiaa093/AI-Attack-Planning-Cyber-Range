@@ -1,0 +1,33 @@
+test_reject_bad_format (tests.unit.test_tool_adapters.TestActionValidation.test_reject_bad_format) ... ok
+test_reject_unknown_action (tests.unit.test_tool_adapters.TestActionValidation.test_reject_unknown_action) ... ok
+test_reject_wrong_class (tests.unit.test_tool_adapters.TestActionValidation.test_reject_wrong_class) ... ok
+test_valid_action (tests.unit.test_tool_adapters.TestActionValidation.test_valid_action) ... ok
+test_endpoint_discovery_returns_observation_and_results (tests.unit.test_tool_adapters.TestDiscoveryAdapter.test_endpoint_discovery_returns_observation_and_results) ... ok
+test_port_scan_returns_observation (tests.unit.test_tool_adapters.TestDiscoveryAdapter.test_port_scan_returns_observation) ... ok
+test_reject_non_lab_target (tests.unit.test_tool_adapters.TestDiscoveryAdapter.test_reject_non_lab_target) ... ok
+test_reject_wrong_action (tests.unit.test_tool_adapters.TestDiscoveryAdapter.test_reject_wrong_action) ... ok
+test_nuclei_scan_returns_observation_and_results (tests.unit.test_tool_adapters.TestNucleiAdapter.test_nuclei_scan_returns_observation_and_results) ... ok
+test_reject_forbidden_template (tests.unit.test_tool_adapters.TestNucleiAdapter.test_reject_forbidden_template) ... ok
+test_reject_non_lab_target (tests.unit.test_tool_adapters.TestNucleiAdapter.test_reject_non_lab_target) ... ok
+test_reject_wrong_action (tests.unit.test_tool_adapters.TestNucleiAdapter.test_reject_wrong_action) ... ok
+test_template_allowlist_contents (tests.unit.test_tool_adapters.TestNucleiAdapter.test_template_allowlist_contents) ... ok
+test_parse_empty (tests.unit.test_tool_adapters.TestNucleiParser.test_parse_empty) ... ok
+test_parse_findings (tests.unit.test_tool_adapters.TestNucleiParser.test_parse_findings) ... ok
+test_observation_conforms (tests.unit.test_tool_adapters.TestOutputBuilders.test_observation_conforms) ... ok
+test_scanner_result_conforms (tests.unit.test_tool_adapters.TestOutputBuilders.test_scanner_result_conforms) ... ok
+test_acquire_within_limit (tests.unit.test_tool_adapters.TestRateLimiter.test_acquire_within_limit) ... ok
+test_burst_exceeded (tests.unit.test_tool_adapters.TestRateLimiter.test_burst_exceeded) ... ok
+test_reject_non_lab_target (tests.unit.test_tool_adapters.TestTargetValidation.test_reject_non_lab_target) ... ok
+test_reject_unknown_lab_target (tests.unit.test_tool_adapters.TestTargetValidation.test_reject_unknown_lab_target) ... ok
+test_valid_lab_target (tests.unit.test_tool_adapters.TestTargetValidation.test_valid_lab_target) ... ok
+test_reject_non_lab_target (tests.unit.test_tool_adapters.TestZapAdapter.test_reject_non_lab_target) ... ok
+test_reject_wrong_action (tests.unit.test_tool_adapters.TestZapAdapter.test_reject_wrong_action) ... ok
+test_zap_scan_returns_observation_and_results (tests.unit.test_tool_adapters.TestZapAdapter.test_zap_scan_returns_observation_and_results) ... ok
+test_parse_alerts (tests.unit.test_tool_adapters.TestZapParser.test_parse_alerts) ... ok
+test_parse_empty (tests.unit.test_tool_adapters.TestZapParser.test_parse_empty) ... ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 0.008s
+
+OK
+

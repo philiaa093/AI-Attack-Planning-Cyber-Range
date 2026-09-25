@@ -1,0 +1,9 @@
+SCAFFOLD INVALID
+- forbidden artifact tests/unit/__pycache__/test_tool_adapters.cpython-314.pyc
+- forbidden artifact tools/adapters/__pycache__/base.cpython-314.pyc
+- forbidden artifact tools/adapters/discovery/__pycache__/adapter.cpython-314.pyc
+- forbidden artifact tools/adapters/nuclei/__pycache__/adapter.cpython-314.pyc
+- forbidden artifact tools/adapters/zap/__pycache__/adapter.cpython-314.pyc
+- forbidden artifact tools/parsers/__pycache__/nuclei_parser.cpython-314.pyc
+- forbidden artifact tools/parsers/__pycache__/zap_parser.cpython-314.pyc
+

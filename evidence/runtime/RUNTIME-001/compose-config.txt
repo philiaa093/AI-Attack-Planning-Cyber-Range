@@ -1,0 +1,105 @@
+name: cyber-range
+services:
+  executor:
+    build:
+      context: E:\PBL6_FINAL
+      dockerfile: cyber-range/Dockerfile
+    entrypoint:
+      - python
+      - -m
+      - runtime.cli
+    image: cyber-range-executor:latest
+    networks:
+      lab: null
+  lab-clean-001:
+    build:
+      context: E:\PBL6_FINAL
+      dockerfile: cyber-range/Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-clean-001
+    image: cyber-range-lab-clean-001:latest
+    networks:
+      lab: null
+  lab-clean-control:
+    build:
+      context: E:\PBL6_FINAL\cyber-range\targets\clean-control
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-clean-control
+    image: cyber-range-lab-clean-control:latest
+    networks:
+      lab: null
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8080
+        published: "18087"
+        protocol: tcp
+  lab-path-001:
+    build:
+      context: E:\PBL6_FINAL
+      dockerfile: cyber-range/Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-path-001
+    image: cyber-range-lab-path-001:latest
+    networks:
+      lab: null
+  lab-sqli-001:
+    build:
+      context: E:\PBL6_FINAL
+      dockerfile: cyber-range/Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-sqli-001
+    image: cyber-range-lab-sqli-001:latest
+    networks:
+      lab: null
+  lab-webapp-a:
+    build:
+      context: E:\PBL6_FINAL\cyber-range\targets\custom-webapp-a
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-webapp-a
+    image: cyber-range-lab-webapp-a:latest
+    networks:
+      lab: null
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8080
+        published: "18085"
+        protocol: tcp
+  lab-webapp-b:
+    build:
+      context: E:\PBL6_FINAL\cyber-range\targets\custom-webapp-b
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-webapp-b
+    image: cyber-range-lab-webapp-b:latest
+    networks:
+      lab: null
+    ports:
+      - mode: ingress
+        host_ip: 127.0.0.1
+        target: 8080
+        published: "18086"
+        protocol: tcp
+  lab-xss-001:
+    build:
+      context: E:\PBL6_FINAL
+      dockerfile: cyber-range/Dockerfile
+    environment:
+      PORT: "8080"
+      TARGET_ID: lab-xss-001
+    image: cyber-range-lab-xss-001:latest
+    networks:
+      lab: null
+networks:
+  lab:
+    name: cyber-range_lab
+    internal: true

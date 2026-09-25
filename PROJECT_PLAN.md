@@ -12,7 +12,7 @@ Record primary literature and threat sources; define threat and safety assumptio
 
 ## Cyber Range
 
-Define isolated range, scenarios, vulnerability families, reset, and scope controls. Status: `SPEC_ONLY`.
+Local-only runtime vertical slice now covers loopback Docker topology, clean-control health/reset, bounded dry-run, and evidence plumbing. Vulnerability target behavior, adapters, and full range validation remain `SPEC_ONLY`/`UNRESOLVED`.
 
 ## Perception/Tooling
 

@@ -1,0 +1,37 @@
+{
+  "snapshot_version": "1.0",
+  "description": "Golden snapshot configuration for cyber-range targets. Defines expected initial state after reset.",
+  "status": "IMPLEMENTED",
+  "targets": [
+    {
+      "target_id": "lab-webapp-a",
+      "image": "cyber-range-lab-webapp-a:latest",
+      "port": 18085,
+      "health_path": "/health",
+      "reset_path": "/reset",
+      "expected_health_response": {"status": "ok", "target_id": "lab-webapp-a"},
+      "db_tables": ["users", "products"],
+      "vuln_families": ["SQLI", "XSS", "PATH_TRAVERSAL"]
+    },
+    {
+      "target_id": "lab-webapp-b",
+      "image": "cyber-range-lab-webapp-b:latest",
+      "port": 18086,
+      "health_path": "/health",
+      "reset_path": "/reset",
+      "expected_health_response": {"status": "ok", "target_id": "lab-webapp-b"},
+      "db_tables": ["orders", "inventory", "comments"],
+      "vuln_families": ["SQLI", "XSS", "PATH_TRAVERSAL"]
+    },
+    {
+      "target_id": "lab-clean-control",
+      "image": "cyber-range-lab-clean-control:latest",
+      "port": 18087,
+      "health_path": "/health",
+      "reset_path": "/reset",
+      "expected_health_response": {"status": "ok", "target_id": "lab-clean-control"},
+      "db_tables": ["items", "categories"],
+      "vuln_families": []
+    }
+  ]
+}

@@ -14,7 +14,7 @@ Scenario supplies typed state and target scope. Planner proposes bounded actions
 
 ## Current state
 
-Foundation contracts, safety, validator, tests, and full requested scaffold tree are `VALIDATED` by `evidence/foundation/FOUNDATION-001/manifest.json` and `evidence/foundation/FOUNDATION-001-COMPLETENESS/manifest.json`. Final read-only reviews approved both foundation safety and tree completeness. Runtime and results remain `SPEC_ONLY`; runtime observations, metrics, deployment, model training, and result claims remain `UNRESOLVED`.
+Foundation contracts, safety, validator, tests, and full requested scaffold tree are `VALIDATED` by `evidence/foundation/FOUNDATION-001/manifest.json` and `evidence/foundation/FOUNDATION-001-COMPLETENESS/manifest.json`. A local-only runtime vertical slice now exists for clean-control health/reset and bounded dry-run; runtime validation and observed deployment evidence remain `UNRESOLVED`. Vulnerability execution, adapters, planners, metrics, model training, and result claims remain `SPEC_ONLY`.
 
 ## Boundaries
 

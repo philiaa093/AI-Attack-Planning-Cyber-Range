@@ -2,7 +2,7 @@
 
 Status vocabulary: `SPEC_ONLY`, `TBD`, `UNRESOLVED`, `IMPLEMENTED`, `VALIDATED`, `DEFERRED`, `BLOCKED`.
 
-Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. Tasks 011-025, 027-031, and 033-035 are `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`. Runtime and results remain `SPEC_ONLY`; no result claim exists.
+Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. A local-only runtime vertical slice covers bounded clean-control health/reset and dry-run; runtime evidence review remains `UNRESOLVED`. Tasks 012-014 are `VALIDATED` by runtime target evidence. Tasks 015-017 are `VALIDATED` by adapter evidence `EV-ADAPTERS-015-001` through `EV-ADAPTERS-017-003`; scaffold validator passes, 87 unit tests pass (27 adapter-specific), all Python files compile, schema-conformant output verified. Tasks 011, 018-025, 027-031, and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 are `DEFERRED`; no result claim exists.
 
 | ID | Descriptive name | Status | Dependencies |
 |---|---|---|---|
@@ -17,12 +17,12 @@ Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` thr
 | TASK-009 | Ground-truth contract | `VALIDATED` | TASK-008 |
 | TASK-010 | Experiment contract | `VALIDATED` | TASK-007, TASK-008 |
 | TASK-011 | Cyber range network | `SPEC_ONLY` | TASK-003 |
-| TASK-012 | Web target A | `SPEC_ONLY` | TASK-011 |
-| TASK-013 | Web target B | `SPEC_ONLY` | TASK-011 |
-| TASK-014 | Clean control target | `SPEC_ONLY` | TASK-011 |
-| TASK-015 | Discovery adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
-| TASK-016 | ZAP adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
-| TASK-017 | Nuclei adapter | `SPEC_ONLY` | TASK-004, TASK-006, TASK-011 |
+| TASK-012 | Web target A | `VALIDATED` | TASK-011 |
+| TASK-013 | Web target B | `VALIDATED` | TASK-011 |
+| TASK-014 | Clean control target | `VALIDATED` | TASK-011 |
+| TASK-015 | Discovery adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
+| TASK-016 | ZAP adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
+| TASK-017 | Nuclei adapter | `VALIDATED` | TASK-004, TASK-006, TASK-011 |
 | TASK-018 | Observation normalizer | `SPEC_ONLY` | TASK-006, TASK-015 |
 | TASK-019 | Knowledge-state store | `SPEC_ONLY` | TASK-005, TASK-018 |
 | TASK-020 | Planner interface | `SPEC_ONLY` | TASK-004, TASK-005, TASK-019 |

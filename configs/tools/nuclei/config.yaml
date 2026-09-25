@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "adapter": "nuclei",
+  "description": "Nuclei template scanner with allowlisted templates and rate limiting",
+  "allowed_actions": {
+    "ACTION-SCAN-002": {
+      "name": "nuclei_scan",
+      "class": "SCAN",
+      "description": "Nuclei template scan of lab target (SQLi, XSS, Path Traversal only)"
+    }
+  },
+  "template_allowlist": ["sqli", "xss", "path-traversal"],
+  "safety": {
+    "target_pattern": "^lab-[a-z0-9-]+$",
+    "deny_public_targets": true,
+    "deny_arbitrary_shell": true,
+    "rate_limit_ref": "configs/safety/rate-limit.yaml",
+    "request_budget_ref": "configs/safety/request-budget.yaml"
+  }
+}

@@ -31,14 +31,14 @@ class ValidatorTests(unittest.TestCase):
         self.assertEqual(len(validate_scaffold.RUNBOOKS), 10)
 
     def test_exact_adr_manifest(self):
-        self.assertEqual(len(validate_scaffold.ADRS), 12)
+        self.assertEqual(len(validate_scaffold.ADRS), 13)
 
     def test_exact_report_manifests(self):
         self.assertEqual(len(validate_scaffold.CHAPTERS), 11)
         self.assertEqual(len(validate_scaffold.APPENDICES), 6)
 
     def test_complete_scaffold_placeholder_manifest(self):
-        self.assertEqual(len(validate_scaffold.SCAFFOLD_PLACEHOLDER_DIRS), 62)
+        self.assertEqual(len(validate_scaffold.SCAFFOLD_PLACEHOLDER_DIRS), 57)
         for relative in validate_scaffold.SCAFFOLD_PLACEHOLDER_DIRS:
             readme = Path(validate_scaffold.ROOT) / relative / "README.md"
             self.assertTrue(readme.is_file(), relative)

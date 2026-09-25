@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "VALIDATED",
+  "records": [
+    {
+      "evidence_id": "EV-ADAPTERS-016-001",
+      "run_id": "ADAPTERS-016",
+      "path": "evidence/adapters/ADAPTERS-016/validator.txt",
+      "sha256": "d3bd9cfd40879871b698c413a8fe722f3525ecb69d87bb299fc1d233a003017b",
+      "created_at_utc": "2026-09-25T12:00:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "scaffold valid, ZAP adapter Python files parse",
+      "observed_state": "SCAFFOLD VALID; 1935 files checked, 10 schemas, 13 actions, 35 tasks",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-ADAPTERS-016-002",
+      "run_id": "ADAPTERS-016",
+      "path": "evidence/adapters/ADAPTERS-016/unittest.txt",
+      "sha256": "d0e796a25d9c0d7bd74bec221ef2ea763ee9dcd2def4fc2827da1c7c0db09833",
+      "created_at_utc": "2026-09-25T12:00:00Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "ZAP adapter tests pass; rate limiting, budget enforcement, parser correctness, schema compliance",
+      "observed_state": "27 tests OK; ZAP scan, ZAP parser (empty + alerts), target reject, action reject all pass",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-ADAPTERS-016-003",
+      "run_id": "ADAPTERS-016",
+      "path": "evidence/adapters/ADAPTERS-016/source-record.txt",
+      "sha256": "ddedeb9efb925c35bb378f8455eb6bccc730c64a50517fa79807902afddf042e",
+      "created_at_utc": "2026-09-25T12:00:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "source artifacts listed",
+      "observed_state": "ZAP adapter: adapter.py, zap_parser.py, config.yaml; ACTION-SCAN-001",
+      "derived_from": []
+    }
+  ]
+}

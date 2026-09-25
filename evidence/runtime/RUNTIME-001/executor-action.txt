@@ -1,0 +1,1 @@
+{"action_id": "ACTION-WEB-001", "family": "SQLI", "fixture": {"query": "id=1 OR 1=1", "row_count": 2, "rows": [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}]}, "http_status": 200, "status": "detected", "target_id": "lab-sqli-001", "vulnerable": true}

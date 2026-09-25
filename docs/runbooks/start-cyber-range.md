@@ -2,52 +2,61 @@
 
 ## Status
 
-`SPEC_ONLY`.
+`IMPLEMENTED` local runtime procedure.
 
 ## Purpose
 
-Define safe, reviewable procedure; this runbook does not authorize runtime.
+Start fixed local lab targets for bounded health, reset, and mapped action checks.
 
 ## Preconditions
 
-Approved isolated lab scope, scenario, contracts, and safety review. No public target or production system.
+Docker daemon available. No public target, credential, arbitrary payload, shell, or external network.
 
 ## Required Configuration
 
-Approved manifest, target/action allowlists, policy, planner identity, and run ID. Versions remain `UNRESOLVED`.
+Use `cyber-range/compose.yaml`. Published ports use Docker Desktop host publishing: 18081 SQLi, 18082 XSS, 18083 path traversal, 18084 clean control. Executor accepts loopback URLs only; host firewall must restrict these ports to local use.
 
 ## Safety Checks
 
-Validate identity, scope, approval, action, order, budget, rate, refusal, isolation, and evidence preservation.
+Confirm exact target IDs, loopback ports, internal Docker network, and fixed action mapping. Stop on mismatch.
 
 ## Inputs
 
-Scenario ID, planner mode, approved manifest, policy, and run identity.
+No user payload. Executor target IDs and action IDs must match allowlists.
 
 ## Procedure
 
-Read contracts; confirm scope; apply policy before any future executor; record expected/observed state; stop on mismatch. No live commands.
+```text
+docker compose -f cyber-range/compose.yaml up -d --build
+GET  http://127.0.0.1:18081/health
+POST http://127.0.0.1:18081/reset
+POST http://127.0.0.1:18081/action?action=ACTION-WEB-001
+```
+
+Repeat mapped actions for XSS (`ACTION-WEB-002`) and path traversal (`ACTION-WEB-003`).
 
 ## Expected Artifacts
 
-Procedure record, manifest reference, status, and evidence reference or `UNRESOLVED`.
+Deterministic JSON observations containing target ID, action ID, family, fixed fixture evidence, vulnerability result, and reset count.
 
 ## Validation
 
-Focused documentation check only. Runtime validation needs approval and observed evidence.
+Run `python -B -m unittest discover -s tests -p "test_*.py" -v`, then compose health/reset/action checks. Run compose down after checks.
 
 ## Failure Handling
 
-Stop on malformed input, scope mismatch, missing approval, isolation uncertainty, policy denial, or evidence-loss risk.
+Stop on non-loopback binding, unknown ID, invalid action, HTTP failure, malformed JSON, or evidence-loss risk.
 
 ## Cleanup
 
-Preserve evidence and use approved restore process only.
+```text
+docker compose -f cyber-range/compose.yaml down
+```
 
 ## Evidence
 
-UTC, run ID, source, hash, redaction, expected state, observed state. None claimed.
+Record exact commands and JSON responses. No credentials or external network.
 
 ## Related Tasks
 
-See `TASKS.md` and named task specifications.
+Runtime vertical slice replaces prior SPEC_ONLY placeholder for local lab behavior.

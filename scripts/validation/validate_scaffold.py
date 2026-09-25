@@ -50,7 +50,7 @@ ADRS = {
     "ADR-001-planner-centered-scope.md", "ADR-002-web-only-cyber-range-mvp.md", "ADR-003-three-vulnerability-families.md",
     "ADR-004-bounded-action-catalog.md", "ADR-005-planner-executor-perception-separation.md", "ADR-006-shared-planner-interface.md",
     "ADR-007-simulator-before-cyber-range-rl.md", "ADR-008-held-out-scenarios.md", "ADR-009-ground-truth-isolation.md",
-    "ADR-010-evidence-immutability.md", "ADR-011-same-budgets-across-planners.md", "ADR-012-safety-engine-control.md",
+    "ADR-010-evidence-immutability.md", "ADR-011-same-budgets-across-planners.md", "ADR-012-safety-engine-control.md", "ADR-013-runtime-vertical-slice.md",
 }
 CHAPTERS = {f"{n:02d}-{name}.md" for n, name in {
     1: "introduction", 2: "background", 3: "related-work", 4: "problem-formulation", 5: "system-architecture",
@@ -70,8 +70,7 @@ SAFETY_FILES = {
 }
 SCAFFOLD_PLACEHOLDER_DIRS = {
     "configs/tools/zap", "configs/tools/nuclei", "configs/tools/discovery",
-    "cyber-range/network", "cyber-range/targets/juice-shop", "cyber-range/targets/custom-webapp-a",
-    "cyber-range/targets/custom-webapp-b", "cyber-range/targets/clean-control", "cyber-range/snapshots", "cyber-range/reset",
+    "cyber-range/network", "cyber-range/targets/juice-shop",
     "agent/planner/rule_based", "agent/planner/llm", "agent/planner/rl", "agent/planner/hybrid",
     "agent/memory/state", "agent/memory/history", "agent/memory/knowledge_base",
     "agent/perception/normalizers", "agent/perception/feature_extractors", "agent/orchestration",
@@ -346,7 +345,7 @@ def validate_ids_and_status(errors: list[str]) -> None:
         heading = re.search(r"^#\s+(.*)$", path.read_text(encoding="utf-8"), re.MULTILINE)
         if not match or not heading: fail(errors, f"{rel(path)}: exact ADR ID mismatch")
         adr_ids.append(match.group(1) if match else path.stem)
-    if set(adr_ids) != {f"ADR-{n:03d}" for n in range(1, 13)} or len(adr_ids) != len(set(adr_ids)): fail(errors, "ADR IDs are not exact and unique")
+    if set(adr_ids) != {f"ADR-{n:03d}" for n in range(1, 14)} or len(adr_ids) != len(set(adr_ids)): fail(errors, "ADR IDs are not exact and unique")
     catalog = load_json(ROOT / "actions/catalog/action-catalog.json", errors)
     if isinstance(catalog, dict):
         ids = [item.get("action_id") for item in catalog.get("actions", [])]
@@ -355,7 +354,7 @@ def validate_ids_and_status(errors: list[str]) -> None:
         data = load_json(path, errors)
         if data is None: continue
         for _, key, value in walk_keys(data):
-            if key == "status" and isinstance(value, str) and value not in STATUSES and value not in {"COMPLETED", "ERROR"}:
+            if key == "status" and isinstance(value, str) and value not in STATUSES and value not in {"COMPLETED", "ERROR", "ok", "reset", "detected", "not_detected", "ready", "not_found"}:
                 fail(errors, f"{rel(path)}: invalid status {value!r}")
 
 

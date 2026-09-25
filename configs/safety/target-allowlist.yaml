@@ -4,7 +4,10 @@
     "lab-sqli-001",
     "lab-xss-001",
     "lab-path-001",
-    "lab-clean-001"
+    "lab-clean-001",
+    "lab-webapp-a",
+    "lab-webapp-b",
+    "lab-clean-control"
   ],
   "deny_public_targets": true,
   "deny_external_hosts": true

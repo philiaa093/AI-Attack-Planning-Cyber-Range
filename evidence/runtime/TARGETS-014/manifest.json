@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "VALIDATED",
+  "records": [
+    {
+      "evidence_id": "EV-TARGETS-014-001",
+      "run_id": "TARGETS-014",
+      "path": "evidence/runtime/TARGETS-014/validation.txt",
+      "sha256": "bd37f0e4fb2df589cc522e0a65abd7ce2a0d0e4218ddeb53eb02df5e1d9aa5df",
+      "created_at_utc": "2026-09-23T06:17:31.537606Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "health ok, reset ok, NO SQLi, NO XSS, NO path traversal, schema valid (all false)",
+      "observed_state": "ALL CHECKS PASS; health ok, reset count=1, SQLi blocked (0 results), XSS escaped, path traversal 403, ground-truth schema valid (all false)",
+      "derived_from": []
+    }
+  ]
+}

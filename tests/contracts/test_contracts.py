@@ -99,6 +99,35 @@ class ContractTests(unittest.TestCase):
                 with self.subTest(schema=name, field=forbidden):
                     self.assertTrue(validate_shape(mutated, schema))
 
+    def test_discovery_observation_accepts_structured_facts(self):
+        schema = json.loads((ROOT / "agent/planner/contracts/observation.schema.json").read_text(encoding="utf-8"))
+        observation = {
+            "observation_id": "OBS-DISCOVERY-001",
+            "run_id": "RUN-DISCOVERY-001",
+            "action_id": "ACTION-RECON-001",
+            "timestamp_utc": "2026-08-29T00:00:00Z",
+            "outcome": "SUCCESS",
+            "new_facts": [{
+                "fact_id": "FACT-SERVICE-001",
+                "fact_type": "SERVICE",
+                "subject": "target.example",
+                "value": "https",
+                "confidence": 0.95,
+            }],
+            "evidence_refs": ["EV-DISCOVERY-001"],
+        }
+        self.assertEqual(validate_shape(observation, schema), [])
+
+        for mutation in (
+            lambda fact: fact.pop("fact_id"),
+            lambda fact: fact.pop("confidence"),
+            lambda fact: fact.update(fact_type="NOT_A_FACT_TYPE"),
+        ):
+            invalid = json.loads(json.dumps(observation))
+            mutation(invalid["new_facts"][0])
+            with self.subTest(mutation=mutation):
+                self.assertTrue(validate_shape(invalid, schema))
+
     def test_evidence_schema_accepts_governance_metadata(self):
         schema = json.loads((ROOT / "agent/planner/contracts/evidence.schema.json").read_text(encoding="utf-8"))
         record = {

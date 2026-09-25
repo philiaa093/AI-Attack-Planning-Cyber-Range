@@ -1,0 +1,56 @@
+{
+  "services": {
+    "executor": {
+      "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
+      "image": "cyber-range-executor:latest",
+      "entrypoint": ["python", "-m", "runtime.cli"],
+      "networks": ["lab"]
+    },
+    "lab-sqli-001": {
+      "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
+      "image": "cyber-range-lab-sqli-001:latest",
+      "environment": {"TARGET_ID": "lab-sqli-001", "PORT": 8080},
+      "networks": ["lab"]
+    },
+    "lab-xss-001": {
+      "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
+      "image": "cyber-range-lab-xss-001:latest",
+      "environment": {"TARGET_ID": "lab-xss-001", "PORT": 8080},
+      "networks": ["lab"]
+    },
+    "lab-path-001": {
+      "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
+      "image": "cyber-range-lab-path-001:latest",
+      "environment": {"TARGET_ID": "lab-path-001", "PORT": 8080},
+      "networks": ["lab"]
+    },
+    "lab-clean-001": {
+      "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
+      "image": "cyber-range-lab-clean-001:latest",
+      "environment": {"TARGET_ID": "lab-clean-001", "PORT": 8080},
+      "networks": ["lab"]
+    },
+    "lab-webapp-a": {
+      "build": {"context": "targets/custom-webapp-a", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-webapp-a:latest",
+      "ports": ["127.0.0.1:18085:8080"],
+      "environment": {"TARGET_ID": "lab-webapp-a", "PORT": "8080"},
+      "networks": ["lab"]
+    },
+    "lab-webapp-b": {
+      "build": {"context": "targets/custom-webapp-b", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-webapp-b:latest",
+      "ports": ["127.0.0.1:18086:8080"],
+      "environment": {"TARGET_ID": "lab-webapp-b", "PORT": "8080"},
+      "networks": ["lab"]
+    },
+    "lab-clean-control": {
+      "build": {"context": "targets/clean-control", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-clean-control:latest",
+      "ports": ["127.0.0.1:18087:8080"],
+      "environment": {"TARGET_ID": "lab-clean-control", "PORT": "8080"},
+      "networks": ["lab"]
+    }
+  },
+  "networks": {"lab": {"internal": true}}
+}

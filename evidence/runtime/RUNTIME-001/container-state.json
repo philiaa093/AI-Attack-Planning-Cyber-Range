@@ -1,0 +1,198 @@
+[
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "50bbf74ffab4",
+    "Image": "cyber-range-lab-clean-001:latest",
+    "Labels": "com.docker.compose.project=cyber-range,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,com.docker.compose.version=5.4.0,com.docker.compose.config-hash=64562cb6d6d1aa26a10642f85aeac9fa5d6779c5c1abaf35d78fb790c9928bce,com.docker.compose.image=sha256:bc29a57a05a075b3c8577f940dfec864adb315a1acc3bb1ea3db82e7b8dde975,com.docker.compose.service=lab-clean-001,desktop.docker.io/ports.scheme=v2,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.oneoff=False",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-clean-001-1",
+    "Names": "cyber-range-lab-clean-001-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-clean-001",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "94aac0d73914",
+    "Image": "cyber-range-lab-clean-control:latest",
+    "Labels": "com.docker.compose.config-hash=3eea838ad7a44925ac42909d264112348661f7cf13fe761fb70d45124de15a4d,com.docker.compose.container-number=1,com.docker.compose.image=sha256:0bc692a426d609e6641c74245b0f35b6b27be16131f4a3af4503cf75ec4419ef,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,desktop.docker.io/ports/8080/tcp=127.0.0.1:18087,com.docker.compose.depends_on=,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.service=lab-clean-control,com.docker.compose.version=5.4.0,desktop.docker.io/ports.scheme=v2",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-clean-control-1",
+    "Names": "cyber-range-lab-clean-control-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-clean-control",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "77edbe2bb5a7",
+    "Image": "cyber-range-lab-path-001:latest",
+    "Labels": "com.docker.compose.config-hash=4051cfdba6562e7eb40058e3ee27687ca4b55c46580da04a2830bc7d3e6ecd01,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.service=lab-path-001,com.docker.compose.version=5.4.0,com.docker.compose.image=sha256:73bda761ade8381a5be638cd72143f3c951cd236189fade68cbb4570df19ee23,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,desktop.docker.io/ports.scheme=v2",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-path-001-1",
+    "Names": "cyber-range-lab-path-001-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-path-001",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "e6133face497",
+    "Image": "cyber-range-lab-sqli-001:latest",
+    "Labels": "com.docker.compose.image=sha256:216a45a94d84a1bb290a4be095e90c1b6a658d7958ccc9b35c2f96f029f73b09,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.service=lab-sqli-001,desktop.docker.io/ports.scheme=v2,com.docker.compose.config-hash=7b7d80dd94f1cb8b5537aec63ad26d0efc2da776e17bdf2f9dcf053790edee4d,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,com.docker.compose.version=5.4.0",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-sqli-001-1",
+    "Names": "cyber-range-lab-sqli-001-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-sqli-001",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "ac7c34009a7a",
+    "Image": "cyber-range-lab-webapp-a:latest",
+    "Labels": "com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:407beb90987ef758621e87522a5b0dae5492d746541544bbdf7d3913db949c23,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,com.docker.compose.version=5.4.0,com.docker.compose.config-hash=ab95d06d6360a79f167b567aa0d0f6ee17ebb7b1155799291bd1d6e7c0f8ccde,com.docker.compose.service=lab-webapp-a,desktop.docker.io/ports.scheme=v2,desktop.docker.io/ports/8080/tcp=127.0.0.1:18085",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-webapp-a-1",
+    "Names": "cyber-range-lab-webapp-a-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-webapp-a",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "e4d61b771552",
+    "Image": "cyber-range-lab-webapp-b:latest",
+    "Labels": "com.docker.compose.config-hash=400b3268febd9db6f586363e2cd20b02bdb0d4ec12f19bd365b7c3b8e59872eb,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,com.docker.compose.service=lab-webapp-b,com.docker.compose.version=5.4.0,desktop.docker.io/ports/8080/tcp=127.0.0.1:18086,com.docker.compose.image=sha256:ddcb1279bcdc12e0fcc60b4dc581e934d36a5d6d5df924beddc651cce422bd5a,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,desktop.docker.io/ports.scheme=v2",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-webapp-b-1",
+    "Names": "cyber-range-lab-webapp-b-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-webapp-b",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  },
+  {
+    "CreatedAt": "2026-09-23 14:45:07 +0700 +07",
+    "ExitCode": 0,
+    "Health": "",
+    "ID": "821de7bdf785",
+    "Image": "cyber-range-lab-xss-001:latest",
+    "Labels": "com.docker.compose.version=5.4.0,desktop.docker.io/ports.scheme=v2,com.docker.compose.config-hash=85fb59a00c57cb13f39b77a5693a7368e9d7bbce505ec51d966f638f6d70bce9,com.docker.compose.container-number=1,com.docker.compose.depends_on=,com.docker.compose.image=sha256:c602fe54c684e35dc76b6159f44298b445daa3b3102caab6223eaf7500aaf054,com.docker.compose.oneoff=False,com.docker.compose.project=cyber-range,com.docker.compose.project.working_dir=E:\\PBL6_FINAL\\cyber-range,com.docker.compose.service=lab-xss-001,com.docker.compose.project.config_files=E:\\PBL6_FINAL\\cyber-range\\compose.yaml",
+    "LocalVolumes": "0",
+    "Mounts": "",
+    "Name": "cyber-range-lab-xss-001-1",
+    "Names": "cyber-range-lab-xss-001-1",
+    "Networks": "cyber-range_lab",
+    "Ports": "8080/tcp",
+    "Project": "cyber-range",
+    "Publishers": [
+      {
+        "URL": "",
+        "TargetPort": 8080,
+        "PublishedPort": 0,
+        "Protocol": "tcp"
+      }
+    ],
+    "RunningFor": "About a minute ago",
+    "Service": "lab-xss-001",
+    "Size": "0B",
+    "State": "running",
+    "Status": "Up About a minute"
+  }
+]

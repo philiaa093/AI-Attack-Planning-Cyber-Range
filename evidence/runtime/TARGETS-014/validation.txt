@@ -1,0 +1,44 @@
+VALIDATION: lab-clean-control
+DATE: 2026-09-23T06:17:31Z
+RUN_ID: TARGETS-014
+
+== Docker Build ==
+Image: cyber-range-lab-clean-control:latest
+Build: PASS (cached layers, python:3.12-alpine)
+
+== Health Check ==
+GET /health → 200
+Response: {"status": "ok", "target_id": "lab-clean-control", "reset_count": 0}
+PASS
+
+== State Reset ==
+POST /reset → 200
+Response: {"status": "reset", "target_id": "lab-clean-control", "reset_count": 1}
+PASS
+
+== No SQLi Verification ==
+GET /api/items/search?q=Pen → 1 result (normal)
+GET /api/items/search?q=' OR '1'='1 → 0 results (parameterized query blocks injection)
+PASS: NO SQLi (parameterized query)
+
+== No XSS Verification ==
+GET /search?q=<script>alert(1)</script>
+Response contains &lt;script&gt; (properly escaped via html.escape)
+Does NOT contain raw <script> tag
+PASS: NO XSS (escaped output)
+
+== No Path Traversal Verification ==
+GET /files?name=../../etc/passwd → 403 Forbidden
+Path normalization + containment check blocks traversal
+PASS: NO Path Traversal (pathlib.resolve + startswith check)
+
+== Ground Truth Schema ==
+ground-truth.json validated against ground-truth.schema.json
+scenario_id: SCN-014, target_id: lab-clean-control
+All 3 families (SQLI, XSS, PATH_TRAVERSAL) = false
+PASS
+
+== Python Syntax ==
+py_compile: PASS
+
+RESULT: ALL CHECKS PASS — clean control baseline confirmed secure

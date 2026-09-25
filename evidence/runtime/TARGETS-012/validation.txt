@@ -1,0 +1,44 @@
+VALIDATION: lab-webapp-a
+DATE: 2026-09-23T06:17:31Z
+RUN_ID: TARGETS-012
+
+== Docker Build ==
+Image: cyber-range-lab-webapp-a:latest
+Build: PASS (cached layers, python:3.12-alpine)
+
+== Health Check ==
+GET /health → 200
+Response: {"status": "ok", "target_id": "lab-webapp-a", "reset_count": 0}
+PASS
+
+== State Reset ==
+POST /reset → 200
+Response: {"status": "reset", "target_id": "lab-webapp-a", "reset_count": 1}
+PASS
+
+== SQLi Verification ==
+GET /api/users/search?q=alice → 1 result (normal)
+GET /api/users/search?q=' OR '1'='1 → 3 results (all rows returned)
+PASS: SQLi confirmed (string concat vuln)
+
+== Reflected XSS Verification ==
+GET /search?q=<script>alert(1)</script>
+Response body contains unescaped <script> tag
+PASS: Reflected XSS confirmed
+
+== Path Traversal Verification ==
+GET /files?name=readme.txt → "public file content" (normal)
+GET /files?name=../../etc/passwd → root:x:0:0:... (traversal success)
+GET /files?name=../../etc/shadow-lab-sample → "secret data"
+PASS: Path traversal confirmed (unsanitized os.path.join)
+
+== Ground Truth Schema ==
+ground-truth.json validated against ground-truth.schema.json
+scenario_id: SCN-012, target_id: lab-webapp-a
+All 3 families (SQLI, XSS, PATH_TRAVERSAL) = true
+PASS
+
+== Python Syntax ==
+py_compile: PASS
+
+RESULT: ALL CHECKS PASS

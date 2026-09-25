@@ -1,0 +1,6 @@
+Source: TASK-015, TASK-016, TASK-017
+Artifacts: tools/adapters/base.py, tools/adapters/discovery/adapter.py, tools/adapters/zap/adapter.py, tools/adapters/nuclei/adapter.py, tools/parsers/zap_parser.py, tools/parsers/nuclei_parser.py
+Configs: configs/tools/discovery/config.yaml, configs/tools/zap/config.yaml, configs/tools/nuclei/config.yaml
+Tests: tests/unit/test_tool_adapters.py (27 tests)
+Contracts referenced: action.schema.json, observation.schema.json, scanner-result.schema.json
+Safety configs: target-allowlist.yaml, action-allowlist.yaml, rate-limit.yaml, request-budget.yaml

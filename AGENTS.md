@@ -6,7 +6,7 @@ Read `PROJECT_CONTEXT.md`, `PROJECT_PLAN.md`, `TASKS.md`, relevant canonical doc
 
 ## Scope and Allowed Paths
 
-Work only inside assigned allowlist. This repair owns root documentation, `docs/**`, and `report/**` only. Never edit forbidden runtime, contract, configuration, catalog, scenario, evidence, script, or test paths.
+Work only inside assigned allowlist. Runtime vertical-slice work may edit `runtime/**`, `cyber-range/compose.yaml`, `cyber-range/runtime/**`, `cyber-range/targets/manifests/**`, `scripts/cyber-range/**`, and focused `tests/runtime/**` or `tests/integration/**`. Never edit contracts, configuration, catalog, scenario, evidence, or unrelated target paths without explicit task scope.
 
 ## Trust Boundary and Input Validation
 

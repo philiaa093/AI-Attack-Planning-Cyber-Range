@@ -1,0 +1,22 @@
+{
+  "services": {
+    "lab-webapp-a": {
+      "build": {"context": "targets/custom-webapp-a", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-webapp-a:latest",
+      "ports": ["18085:8080"],
+      "environment": {"TARGET_ID": "lab-webapp-a", "PORT": "8080"}
+    },
+    "lab-webapp-b": {
+      "build": {"context": "targets/custom-webapp-b", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-webapp-b:latest",
+      "ports": ["18086:8080"],
+      "environment": {"TARGET_ID": "lab-webapp-b", "PORT": "8080"}
+    },
+    "lab-clean-control": {
+      "build": {"context": "targets/clean-control", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-clean-control:latest",
+      "ports": ["18087:8080"],
+      "environment": {"TARGET_ID": "lab-clean-control", "PORT": "8080"}
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "targets": [
+    {"target_id": "lab-sqli-001", "port": 18081, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-xss-001", "port": 18082, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-path-001", "port": 18083, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-clean-001", "port": 18084, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-webapp-a", "port": 18085, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-webapp-b", "port": 18086, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-clean-control", "port": 18087, "health_path": "/health", "reset_path": "/reset"}
+  ]
+}

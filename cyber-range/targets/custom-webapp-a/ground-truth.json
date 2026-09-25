@@ -1,0 +1,9 @@
+{
+  "scenario_id": "SCN-012",
+  "truth_records": [
+    {"truth_id": "GT-012-SQLI", "target_id": "lab-webapp-a", "vulnerability_family": "SQLI", "is_vulnerable": true},
+    {"truth_id": "GT-012-XSS", "target_id": "lab-webapp-a", "vulnerability_family": "XSS", "is_vulnerable": true},
+    {"truth_id": "GT-012-PATH", "target_id": "lab-webapp-a", "vulnerability_family": "PATH_TRAVERSAL", "is_vulnerable": true}
+  ],
+  "provenance": {"source": "SPEC_ONLY"}
+}

@@ -4,4 +4,4 @@ validate:
 test:
 	$(PYTHON) -B -m unittest discover -s tests -p "test_*.py" -v
 compile:
-	$(PYTHON) -B -m compileall -q scripts tests
+	$(PYTHON) -B -m compileall -q scripts tests runtime

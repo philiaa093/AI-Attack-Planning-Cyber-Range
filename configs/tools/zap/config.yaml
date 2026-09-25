@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "adapter": "zap",
+  "description": "OWASP ZAP active/passive scanning with rate limiting and budget enforcement",
+  "allowed_actions": {
+    "ACTION-SCAN-001": {
+      "name": "zap_scan",
+      "class": "SCAN",
+      "description": "ZAP active scan of lab target"
+    }
+  },
+  "safety": {
+    "target_pattern": "^lab-[a-z0-9-]+$",
+    "deny_public_targets": true,
+    "deny_arbitrary_shell": true,
+    "rate_limit_ref": "configs/safety/rate-limit.yaml",
+    "request_budget_ref": "configs/safety/request-budget.yaml"
+  }
+}

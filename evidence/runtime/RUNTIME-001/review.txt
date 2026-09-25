@@ -1,0 +1,14 @@
+REVIEW_CONTRACT: 1.0
+review_contract: REVIEW_CONTRACT 1.0
+task_id: TASK-012-014-RUNTIME
+plan_id: RUNTIME-VALIDATION-2026-09-23
+base_head: current-working-tree
+build_id: runtime-validation-2026-09-23
+pre_review_gate: PASS
+verdict_status: FINAL
+verdict: APPROVE
+scope: current working tree runtime vertical slice
+checks: scaffold, unit tests, compileall, compose config, Docker build, internal executor health/reset/action, teardown
+results: SCAFFOLD VALID; 87 tests passed; compileall PASS; Docker lifecycle PASS; executor end-to-end PASS
+blockers: none
+boundary: evidence covers runtime vertical slice and listed checks; broader planner experiments remain outside scope

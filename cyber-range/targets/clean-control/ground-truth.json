@@ -1,0 +1,9 @@
+{
+  "scenario_id": "SCN-014",
+  "truth_records": [
+    {"truth_id": "GT-014-SQLI", "target_id": "lab-clean-control", "vulnerability_family": "SQLI", "is_vulnerable": false},
+    {"truth_id": "GT-014-XSS", "target_id": "lab-clean-control", "vulnerability_family": "XSS", "is_vulnerable": false},
+    {"truth_id": "GT-014-PATH", "target_id": "lab-clean-control", "vulnerability_family": "PATH_TRAVERSAL", "is_vulnerable": false}
+  ],
+  "provenance": {"source": "SPEC_ONLY"}
+}
