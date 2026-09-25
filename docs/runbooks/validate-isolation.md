@@ -2,67 +2,35 @@
 
 ## Status
 
-`SPEC_ONLY`.
-
-## Purpose
-
-Define safe, reviewable procedure; this runbook does not authorize runtime.
+`IMPLEMENTED` static configuration validation; runtime evidence remains `UNRESOLVED`.
 
 ## Preconditions
 
 Approved isolated lab scope, scenario, contracts, and safety review. No public target or production system.
 
-## Required Configuration
+## Required configuration
 
-Approved manifest, target/action allowlists, policy, planner identity, and run ID. Versions remain `UNRESOLVED`.
-
-## Safety Checks
-
-Validate identity, scope, approval, action, order, budget, rate, refusal, isolation, and evidence preservation.
-
-## Inputs
-
-Scenario ID, planner mode, approved manifest, policy, and run identity.
+`cyber-range/compose.yaml` must define only approved target IDs, one Docker network named `lab` with `internal: true`, and loopback-only published ports.
 
 ## Procedure
 
-Read contracts; confirm scope; apply policy before any future executor; record expected/observed state; stop on mismatch. No live commands.
+Run from repository root. These checks inspect configuration only; they do not start containers or authorize runtime.
 
-Isolation test, offline and reviewable:
+```text
+python -m unittest tests.integration.test_network_isolation -v
+docker compose -f cyber-range/compose.yaml config
+```
 
-1. Input target set must contain only `lab-sqli-001`, `lab-xss-001`, `lab-path-001`, and `lab-clean-001`.
-2. Expected policy state must be `lab_mode=true`, `public_targets=false`, `external_network=false`, and `deny_external_hosts=true`.
-3. Expected route state must contain no public or external route; any public endpoint, DNS name, or unresolved route is a failure.
-4. Expected segmentation state must deny target-to-target access unless explicitly approved by scenario contract.
-5. Expected refusal state must stop on unknown target, missing approval, budget/rate violation, or isolation uncertainty.
-6. Record each check as `PASS`, `FAIL`, or `UNRESOLVED`; `PASS` requires observed runtime evidence, not prose or configuration inference.
+Stop on unknown target, unrestricted network, non-loopback port, malformed input, scope mismatch, or evidence-loss risk.
 
-No live commands. This procedure defines checks only; it does not authorize runtime.
+## Checks
 
-## Expected Artifacts
-
-Procedure record, manifest reference, isolation-test check receipt, status, and evidence reference or `UNRESOLVED`.
-
-Check receipt fields: UTC timestamp, run ID, scenario ID, check ID, expected state, observed state, status, source, and evidence reference. Preserve append-only; stop if evidence is missing or mutable.
-
-## Validation
-
-Focused check: verify all five isolation controls and refusal conditions are listed, each result has a closed status (`PASS`, `FAIL`, or `UNRESOLVED`), and no `PASS` appears without observed evidence. Current receipt: `UNRESOLVED` because no runtime is authorized or observed.
-
-Runtime validation needs approval and observed evidence.
-
-## Failure Handling
-
-Stop on malformed input, scope mismatch, missing approval, isolation uncertainty, policy denial, or evidence-loss risk.
-
-## Cleanup
-
-Preserve evidence and use approved restore process only.
+1. Every service uses only `lab` network.
+2. `lab` network is internal.
+3. Every published port starts with `127.0.0.1:`.
+4. Every service target ID is in `lab-sqli-001`, `lab-xss-001`, `lab-path-001`, `lab-clean-001`, `lab-webapp-a`, `lab-webapp-b`, or `lab-clean-control`.
+5. No host network, default network, public bind, external route, or unrestricted network appears.
 
 ## Evidence
 
-UTC, run ID, source, hash, redaction, expected state, observed state. None claimed.
-
-## Related Tasks
-
-See `TASKS.md` and named task specifications.
+Record UTC timestamp, run ID, command, expected state, observed result, status, source, and evidence reference. Configuration checks do not produce runtime evidence; mark runtime status `UNRESOLVED` until approved observed evidence exists.

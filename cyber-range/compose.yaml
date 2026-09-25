@@ -9,24 +9,28 @@
     "lab-sqli-001": {
       "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
       "image": "cyber-range-lab-sqli-001:latest",
+      "ports": ["127.0.0.1:18081:8080"],
       "environment": {"TARGET_ID": "lab-sqli-001", "PORT": 8080},
       "networks": ["lab"]
     },
     "lab-xss-001": {
       "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
       "image": "cyber-range-lab-xss-001:latest",
+      "ports": ["127.0.0.1:18082:8080"],
       "environment": {"TARGET_ID": "lab-xss-001", "PORT": 8080},
       "networks": ["lab"]
     },
     "lab-path-001": {
       "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
       "image": "cyber-range-lab-path-001:latest",
+      "ports": ["127.0.0.1:18083:8080"],
       "environment": {"TARGET_ID": "lab-path-001", "PORT": 8080},
       "networks": ["lab"]
     },
     "lab-clean-001": {
       "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
       "image": "cyber-range-lab-clean-001:latest",
+      "ports": ["127.0.0.1:18084:8080"],
       "environment": {"TARGET_ID": "lab-clean-001", "PORT": 8080},
       "networks": ["lab"]
     },
