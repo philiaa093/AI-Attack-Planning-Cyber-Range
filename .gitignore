@@ -5,6 +5,10 @@
 # Generated documents
 *.docx
 *.pdf
+MicroWord/
+headings.txt
+math_check.txt
+violations.txt
 
 # Python
 __pycache__/

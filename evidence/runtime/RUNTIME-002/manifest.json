@@ -1,0 +1,130 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "IMPLEMENTED",
+  "records": [
+    {
+      "evidence_id": "EV-RUNTIME-002-BEHAVIOR",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/behavior.txt",
+      "sha256": "437280942f8225236c6a12ee973aaef09617332f9e22d38412836a314db19989",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-BUILD",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/build.txt",
+      "sha256": "29f33c2bb5f6c1828ebe199e7509a2795b34f3cf6ce1552aa3d94bd963ee0bc3",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-COMPOSE_CONFIG",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/compose-config.txt",
+      "sha256": "6337a6bd99432d4bc2ed1760149bffb5eb15fe0def806b398e7c850af95950cd",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-CONTAINER_STATE",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/container-state.txt",
+      "sha256": "2ff071f6ca83c431790fce8fa2bc274b9a04116377ca6b50483c5e114b469e68",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-HEALTH_AFTER_RESET",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/health-after-reset.txt",
+      "sha256": "7605784866b950c99e3815f154e4ce33f4ee2b01071ed9c3891e21cb96d511e9",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-HEALTH_BEFORE_RESET",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/health-before-reset.txt",
+      "sha256": "7605784866b950c99e3815f154e4ce33f4ee2b01071ed9c3891e21cb96d511e9",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-NETWORK_INSPECT",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/network-inspect.txt",
+      "sha256": "6d02df169c68443b9de8cc14ceec9af2f46b58a2b3b4952a89d26a5812261f77",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-RESET",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/reset.txt",
+      "sha256": "2f98f860d62fba6057b9dc55d28d8c0f4edc8525cc8291b66d67eda84d2b6de4",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-SOURCE_RECORD",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/source-record.txt",
+      "sha256": "3b96b8ab1db90fbbc208a12ae1b898ad6041dbd00814da89948be99f5b48ee44",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "VALIDATOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    },
+    {
+      "evidence_id": "EV-RUNTIME-002-TEARDOWN",
+      "run_id": "RUNTIME-002",
+      "path": "evidence/runtime/RUNTIME-002/teardown.txt",
+      "sha256": "a5ee34725b5c5b0a7e4c8165191332c9bfec2c7dfe0aeab13017cc1f2ded50b6",
+      "created_at_utc": "2026-09-27T08:35:00Z",
+      "source": "EXECUTOR",
+      "redacted": true,
+      "expected_state": "fresh Docker runtime check passes",
+      "observed_state": "PASS; see artifact",
+      "derived_from": []
+    }
+  ]
+}

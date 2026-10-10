@@ -1,0 +1,7 @@
+TARGET A
+{"results": [{"email": "alice@lab.invalid", "id": 1, "name": "alice"}, {"email": "bob@lab.invalid", "id": 2, "name": "bob"}, {"email": "charlie@lab.invalid", "id": 3, "name": "charlie"}]}<html><body><h1>Search results for: <script>alert(1)</script></h1><p>No results.</p></body></html>
+TARGET B
+{"orders": [{"customer_id": 1, "id": 1, "item": "Laptop", "quantity": 2}, {"customer_id": 2, "id": 2, "item": "Mouse", "quantity": 5}, {"customer_id": 1, "id": 3, "item": "Keyboard", "quantity": 1}]}{"status": "created"}<html><body><h1>Comments</h1><div class='comment'><b>lab</b>: <script>alert(1)</script></div></body></html>
+CLEAN CONTROL
+{"results": []}<html><body><h1>Search results for: &lt;script&gt;alert(1)&lt;/script&gt;</h1><p>No results.</p></body></html>HTTP 403
+{"error": "forbidden"}

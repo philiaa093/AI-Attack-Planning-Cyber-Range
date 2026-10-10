@@ -1,0 +1,145 @@
+COMMAND: docker network inspect cyber-range_lab cyber-range_ingress
+[
+    {
+        "Name": "cyber-range_lab",
+        "Id": "e24222c6dd38fd9df7e4087604b8c3cfae7c53d8cac34e775297eeadfb935422",
+        "Created": "2026-09-27T08:55:22.290323069Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv4": true,
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.19.0.0/16",
+                    "Gateway": "172.19.0.1"
+                }
+            ]
+        },
+        "Internal": true,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Options": {
+            "com.docker.network.enable_ipv4": "true",
+            "com.docker.network.enable_ipv6": "false"
+        },
+        "Labels": {
+            "com.docker.compose.config-hash": "34ccd2c7dd4f2449d5c8f900d3ac89b3dc3182f258f4b32d509f444280d0dc9f",
+            "com.docker.compose.network": "lab",
+            "com.docker.compose.project": "cyber-range",
+            "com.docker.compose.version": "5.4.0"
+        },
+        "Containers": {
+            "7417d6f430124309f8689b19da91622d3a623ae1c12be62f92e7a4496000ff5d": {
+                "Name": "cyber-range-lab-webapp-b-1",
+                "EndpointID": "2d255e3533af1a00d32858f6fe42b799c352132a74f7e17f6ba95fda5f7cb5ff",
+                "MacAddress": "72:db:f8:69:5a:2c",
+                "IPv4Address": "172.19.0.2/16",
+                "IPv6Address": ""
+            },
+            "b5d74ae8c748b7939a65a1bd85ca27d764a100959ec5745f0b382d8e0e7a8057": {
+                "Name": "cyber-range-lab-webapp-a-1",
+                "EndpointID": "1b7f15350c1ae73e5f5f0129da830ec5bddd4471c8b6b1e11a067d7f883f9142",
+                "MacAddress": "86:33:70:96:a9:cd",
+                "IPv4Address": "172.19.0.3/16",
+                "IPv6Address": ""
+            },
+            "c729adfa628d039db0708a05557112a713046197f9bb8bbb784fb1257aedbf48": {
+                "Name": "cyber-range-lab-clean-control-1",
+                "EndpointID": "5f5f6d7d02c18c670b230c84cd37704d52fb4b57be2a4253acff8e14ecd7918a",
+                "MacAddress": "be:f9:3d:d4:e8:ab",
+                "IPv4Address": "172.19.0.4/16",
+                "IPv6Address": ""
+            }
+        },
+        "Status": {
+            "IPAM": {
+                "Subnets": {
+                    "172.19.0.0/16": {
+                        "IPsInUse": 6,
+                        "DynamicIPsAvailable": 65530
+                    }
+                }
+            }
+        }
+    },
+    {
+        "Name": "cyber-range_ingress",
+        "Id": "1afaf8515b50c18c601a42881a2b2f30ec4fc8f3a0dbbdd0b99ed7758c188e17",
+        "Created": "2026-09-27T08:55:22.290485174Z",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv4": true,
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.20.0.0/16",
+                    "Gateway": "172.20.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Options": {
+            "com.docker.network.enable_ipv4": "true",
+            "com.docker.network.enable_ipv6": "false"
+        },
+        "Labels": {
+            "com.docker.compose.config-hash": "311071708ea8aaae4bd3ccbc37756c13bc8051f900b7c040a132a88986f0e55d",
+            "com.docker.compose.network": "ingress",
+            "com.docker.compose.project": "cyber-range",
+            "com.docker.compose.version": "5.4.0"
+        },
+        "Containers": {
+            "7417d6f430124309f8689b19da91622d3a623ae1c12be62f92e7a4496000ff5d": {
+                "Name": "cyber-range-lab-webapp-b-1",
+                "EndpointID": "e8f6dde4fcba19a85d26e3e8aea11438ffd8a10f59a4bec366f2b95d4a283a3f",
+                "MacAddress": "66:e3:01:00:f4:b2",
+                "IPv4Address": "172.20.0.2/16",
+                "IPv6Address": ""
+            },
+            "b5d74ae8c748b7939a65a1bd85ca27d764a100959ec5745f0b382d8e0e7a8057": {
+                "Name": "cyber-range-lab-webapp-a-1",
+                "EndpointID": "518a15a6f77ffe30e968b7e0700e94de937909a0fb4af1122bcea24136ce149a",
+                "MacAddress": "46:9a:7b:8c:ff:09",
+                "IPv4Address": "172.20.0.3/16",
+                "IPv6Address": ""
+            },
+            "c729adfa628d039db0708a05557112a713046197f9bb8bbb784fb1257aedbf48": {
+                "Name": "cyber-range-lab-clean-control-1",
+                "EndpointID": "56e366a0a89249739ee109cfea4b56b2919d6d0e7982c7c5515225dbfb7eb043",
+                "MacAddress": "a6:08:c5:9f:04:20",
+                "IPv4Address": "172.20.0.4/16",
+                "IPv6Address": ""
+            }
+        },
+        "Status": {
+            "IPAM": {
+                "Subnets": {
+                    "172.20.0.0/16": {
+                        "IPsInUse": 6,
+                        "DynamicIPsAvailable": 65530
+                    }
+                }
+            }
+        }
+    }
+]
+COMMAND: docker inspect published bindings
+/cyber-range-lab-webapp-a-1 {"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"18085"}]} {"cyber-range_ingress":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-webapp-a-1","lab-webapp-a"],"DriverOpts":null,"GwPriority":0,"NetworkID":"1afaf8515b50c18c601a42881a2b2f30ec4fc8f3a0dbbdd0b99ed7758c188e17","EndpointID":"518a15a6f77ffe30e968b7e0700e94de937909a0fb4af1122bcea24136ce149a","Gateway":"172.20.0.1","IPAddress":"172.20.0.3","MacAddress":"46:9a:7b:8c:ff:09","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-webapp-a-1","lab-webapp-a","b5d74ae8c748"]},"cyber-range_lab":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-webapp-a-1","lab-webapp-a"],"DriverOpts":null,"GwPriority":0,"NetworkID":"e24222c6dd38fd9df7e4087604b8c3cfae7c53d8cac34e775297eeadfb935422","EndpointID":"1b7f15350c1ae73e5f5f0129da830ec5bddd4471c8b6b1e11a067d7f883f9142","Gateway":"","IPAddress":"172.19.0.3","MacAddress":"86:33:70:96:a9:cd","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-webapp-a-1","lab-webapp-a","b5d74ae8c748"]}}
+/cyber-range-lab-webapp-b-1 {"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"18086"}]} {"cyber-range_ingress":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-webapp-b-1","lab-webapp-b"],"DriverOpts":null,"GwPriority":0,"NetworkID":"1afaf8515b50c18c601a42881a2b2f30ec4fc8f3a0dbbdd0b99ed7758c188e17","EndpointID":"e8f6dde4fcba19a85d26e3e8aea11438ffd8a10f59a4bec366f2b95d4a283a3f","Gateway":"172.20.0.1","IPAddress":"172.20.0.2","MacAddress":"66:e3:01:00:f4:b2","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-webapp-b-1","lab-webapp-b","7417d6f43012"]},"cyber-range_lab":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-webapp-b-1","lab-webapp-b"],"DriverOpts":null,"GwPriority":0,"NetworkID":"e24222c6dd38fd9df7e4087604b8c3cfae7c53d8cac34e775297eeadfb935422","EndpointID":"2d255e3533af1a00d32858f6fe42b799c352132a74f7e17f6ba95fda5f7cb5ff","Gateway":"","IPAddress":"172.19.0.2","MacAddress":"72:db:f8:69:5a:2c","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-webapp-b-1","lab-webapp-b","7417d6f43012"]}}
+/cyber-range-lab-clean-control-1 {"8080/tcp":[{"HostIp":"127.0.0.1","HostPort":"18087"}]} {"cyber-range_ingress":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-clean-control-1","lab-clean-control"],"DriverOpts":null,"GwPriority":0,"NetworkID":"1afaf8515b50c18c601a42881a2b2f30ec4fc8f3a0dbbdd0b99ed7758c188e17","EndpointID":"56e366a0a89249739ee109cfea4b56b2919d6d0e7982c7c5515225dbfb7eb043","Gateway":"172.20.0.1","IPAddress":"172.20.0.4","MacAddress":"a6:08:c5:9f:04:20","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-clean-control-1","lab-clean-control","c729adfa628d"]},"cyber-range_lab":{"IPAMConfig":null,"Links":null,"Aliases":["cyber-range-lab-clean-control-1","lab-clean-control"],"DriverOpts":null,"GwPriority":0,"NetworkID":"e24222c6dd38fd9df7e4087604b8c3cfae7c53d8cac34e775297eeadfb935422","EndpointID":"5f5f6d7d02c18c670b230c84cd37704d52fb4b57be2a4253acff8e14ecd7918a","Gateway":"","IPAddress":"172.19.0.4","MacAddress":"be:f9:3d:d4:e8:ab","IPPrefixLen":16,"IPv6Gateway":"","GlobalIPv6Address":"","GlobalIPv6PrefixLen":0,"DNSNames":["cyber-range-lab-clean-control-1","lab-clean-control","c729adfa628d"]}}

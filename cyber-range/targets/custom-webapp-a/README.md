@@ -1,8 +1,8 @@
 # Cyber Range/Targets/Custom Webapp A
 
-> Status: VALIDATED
+> Status: IMPLEMENTED
 
-Target ID: `lab-webapp-a`. Flask app with intentional vulnerabilities (lab-isolated only).
+Target ID: `lab-webapp-a`. Stdlib HTTP app with intentional vulnerabilities (lab-isolated only).
 
 ## Vulnerable Endpoints
 - `GET /api/users/search?q=` — SQLi (string concat)

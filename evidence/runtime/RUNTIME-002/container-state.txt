@@ -1,0 +1,24 @@
+ Network cyber-range_ingress Creating 
+ Network cyber-range_lab Creating 
+ Network cyber-range_ingress Creating 
+ Network cyber-range_lab Creating 
+ Network cyber-range_ingress Created 
+ Network cyber-range_ingress Created 
+ Network cyber-range_lab Created 
+ Network cyber-range_lab Created 
+ Container cyber-range-lab-webapp-b-1 Creating 
+ Container cyber-range-lab-clean-control-1 Creating 
+ Container cyber-range-lab-webapp-a-1 Creating 
+ Container cyber-range-lab-webapp-b-1 Created 
+ Container cyber-range-lab-webapp-a-1 Created 
+ Container cyber-range-lab-clean-control-1 Created 
+ Container cyber-range-lab-webapp-a-1 Starting 
+ Container cyber-range-lab-webapp-b-1 Starting 
+ Container cyber-range-lab-clean-control-1 Starting 
+ Container cyber-range-lab-clean-control-1 Started 
+ Container cyber-range-lab-webapp-b-1 Started 
+ Container cyber-range-lab-webapp-a-1 Started 
+NAME                              IMAGE                                  COMMAND                SERVICE             CREATED          STATUS         PORTS
+cyber-range-lab-clean-control-1   cyber-range-lab-clean-control:latest   "python /app/app.py"   lab-clean-control   10 seconds ago   Up 8 seconds   127.0.0.1:18087->8080/tcp
+cyber-range-lab-webapp-a-1        cyber-range-lab-webapp-a:latest        "python /app/app.py"   lab-webapp-a        10 seconds ago   Up 8 seconds   127.0.0.1:18085->8080/tcp
+cyber-range-lab-webapp-b-1        cyber-range-lab-webapp-b:latest        "python /app/app.py"   lab-webapp-b        10 seconds ago   Up 8 seconds   127.0.0.1:18086->8080/tcp

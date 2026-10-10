@@ -1,0 +1,3 @@
+COMMAND: target behavior checks
+clean traversal HTTP 000
+cat: /tmp/clean.json: No such file or directory

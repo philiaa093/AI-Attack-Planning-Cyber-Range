@@ -1,0 +1,6 @@
+COMMAND: docker compose -f cyber-range/compose.yaml down
+RESULT: PASS
+All gateway and target containers stopped and removed.
+Networks cyber-range_lab and cyber-range_ingress removed.
+RAW OUTPUT:
+Containers removed; networks removed.

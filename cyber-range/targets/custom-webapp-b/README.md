@@ -1,8 +1,8 @@
 # Cyber Range/Targets/Custom Webapp B
 
-> Status: VALIDATED
+> Status: IMPLEMENTED
 
-Target ID: `lab-webapp-b`. Flask app with intentional vulnerabilities (lab-isolated only).
+Target ID: `lab-webapp-b`. Standard-library HTTP app with intentional vulnerabilities (lab-isolated only).
 Vuln patterns differ from lab-webapp-a to test planner generalization.
 
 ## Vulnerable Endpoints

@@ -22,10 +22,14 @@ class NetworkIsolationTests(unittest.TestCase):
         cls.compose = json.loads(COMPOSE.read_text(encoding="utf-8"))
         cls.services = cls.compose["services"]
 
-    def test_all_services_use_internal_lab_network(self):
+    def test_targets_use_only_internal_lab_network(self):
         self.assertTrue(self.compose["networks"]["lab"]["internal"])
-        for service in self.services.values():
-            self.assertEqual(service["networks"], ["lab"])
+        self.assertFalse(self.compose["networks"]["ingress"].get("internal", False))
+        for name, service in self.services.items():
+            if "TARGET_ID" in service.get("environment", {}):
+                self.assertEqual(service["networks"], ["lab"], name)
+            elif name.startswith("gateway-"):
+                self.assertEqual(set(service["networks"]), {"lab", "ingress"}, name)
 
     def test_ports_bind_loopback_only(self):
         for service in self.services.values():
@@ -39,6 +43,14 @@ class NetworkIsolationTests(unittest.TestCase):
             if "TARGET_ID" in service.get("environment", {})
         }
         self.assertEqual(target_ids, ALLOWED_TARGETS)
+
+    def test_only_gateways_publish_new_target_ports(self):
+        targets = {"lab-webapp-a", "lab-webapp-b", "lab-clean-control"}
+        for name in targets:
+            self.assertNotIn("ports", self.services[name])
+        for name in ("gateway-webapp-a", "gateway-webapp-b", "gateway-clean-control"):
+            self.assertTrue(self.services[name]["ports"])
+            self.assertNotIn("TARGET_ID", self.services[name]["environment"])
 
     def test_rejects_unrestricted_network_configuration(self):
         self.assertNotIn("default", self.compose["networks"])

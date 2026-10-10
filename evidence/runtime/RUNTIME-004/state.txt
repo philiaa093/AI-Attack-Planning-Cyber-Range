@@ -1,0 +1,7 @@
+NAME                                  IMAGE                                  COMMAND                  SERVICE                 CREATED          STATUS          PORTS
+cyber-range-gateway-clean-control-1   cyber-range-gateway:latest             "python /app/gateway…"   gateway-clean-control   12 seconds ago   Up 10 seconds   127.0.0.1:18087->8080/tcp
+cyber-range-gateway-webapp-a-1        cyber-range-gateway:latest             "python /app/gateway…"   gateway-webapp-a        12 seconds ago   Up 10 seconds   127.0.0.1:18085->8080/tcp
+cyber-range-gateway-webapp-b-1        cyber-range-gateway:latest             "python /app/gateway…"   gateway-webapp-b        12 seconds ago   Up 10 seconds   127.0.0.1:18086->8080/tcp
+cyber-range-lab-clean-control-1       cyber-range-lab-clean-control:latest   "python /app/app.py"     lab-clean-control       12 seconds ago   Up 10 seconds   8080/tcp
+cyber-range-lab-webapp-a-1            cyber-range-lab-webapp-a:latest        "python /app/app.py"     lab-webapp-a            12 seconds ago   Up 10 seconds   8080/tcp
+cyber-range-lab-webapp-b-1            cyber-range-lab-webapp-b:latest        "python /app/app.py"     lab-webapp-b            12 seconds ago   Up 10 seconds   8080/tcp

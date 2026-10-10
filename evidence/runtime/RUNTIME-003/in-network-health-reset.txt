@@ -1,0 +1,8 @@
+COMMAND: in-network health
+lab-webapp-a {"reset_count": 0, "status": "ok", "target_id": "lab-webapp-a"}
+lab-webapp-b {"reset_count": 0, "status": "ok", "target_id": "lab-webapp-b"}
+lab-clean-control {"reset_count": 0, "status": "ok", "target_id": "lab-clean-control"}
+COMMAND: in-network reset
+lab-webapp-a {"reset_count": 1, "status": "reset", "target_id": "lab-webapp-a"}
+lab-webapp-b {"reset_count": 1, "status": "reset", "target_id": "lab-webapp-b"}
+lab-clean-control {"reset_count": 1, "status": "reset", "target_id": "lab-clean-control"}

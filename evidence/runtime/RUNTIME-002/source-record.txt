@@ -1,0 +1,16 @@
+RUN_ID: RUNTIME-002
+PURPOSE: Fresh Docker runtime validation for TASK-012, TASK-013, TASK-014.
+BASE_HEAD: 96d9428ef715299ca2c6d403a81d50d97ae55412
+COMPOSE: cyber-range/compose.yaml
+TARGETS: lab-webapp-a, lab-webapp-b, lab-clean-control
+COMMANDS:
+- docker compose -f cyber-range/compose.yaml config
+- python -m unittest tests.integration.test_network_isolation -v
+- docker compose -f cyber-range/compose.yaml build lab-webapp-a lab-webapp-b lab-clean-control
+- docker compose -f cyber-range/compose.yaml up -d lab-webapp-a lab-webapp-b lab-clean-control
+- bash cyber-range/reset/health-check-all.sh
+- bash cyber-range/reset/reset-all-targets.sh
+- bash cyber-range/reset/health-check-all.sh
+- docker compose -f cyber-range/compose.yaml down
+BOUNDARY: Local Docker runtime only. No public-target or production-data claim.
+STATUS: IMPLEMENTED pending independent source review.

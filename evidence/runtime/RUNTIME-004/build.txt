@@ -1,0 +1,153 @@
+COMMAND: docker compose -f cyber-range/compose.yaml build lab-webapp-a lab-webapp-b lab-clean-control gateway-webapp-a
+ Image cyber-range-lab-webapp-a:latest Building 
+ Image cyber-range-lab-clean-control:latest Building 
+ Image cyber-range-gateway:latest Building 
+ Image cyber-range-lab-webapp-b:latest Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 2.13kB done
+#1 DONE 0.0s
+
+#2 [gateway-webapp-a internal] load build definition from gateway.Dockerfile
+#2 transferring dockerfile: 181B done
+#2 DONE 0.0s
+
+#3 [lab-clean-control internal] load build definition from Dockerfile
+#3 transferring dockerfile: 279B done
+#3 DONE 0.0s
+
+#4 [lab-webapp-b internal] load build definition from Dockerfile
+#4 transferring dockerfile: 333B done
+#4 DONE 0.1s
+
+#5 [lab-webapp-a internal] load build definition from Dockerfile
+#5 transferring dockerfile: 333B done
+#5 DONE 0.1s
+
+#6 [lab-webapp-b internal] load .dockerignore
+#6 transferring context: 2B done
+#6 DONE 0.0s
+
+#7 [lab-clean-control internal] load .dockerignore
+#7 transferring context: 2B done
+#7 DONE 0.0s
+
+#8 [gateway-webapp-a internal] load .dockerignore
+#8 transferring context: 2B done
+#8 DONE 0.1s
+
+#9 [lab-webapp-a internal] load metadata for docker.io/library/python:3.12-alpine
+#9 DONE 0.1s
+
+#10 [gateway-webapp-a internal] load build context
+#10 transferring context: 32B done
+#10 DONE 0.0s
+
+#11 [lab-webapp-a internal] load .dockerignore
+#11 transferring context: 2B done
+#11 DONE 0.0s
+
+#12 [lab-webapp-a 1/4] FROM docker.io/library/python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111
+#12 resolve docker.io/library/python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 0.0s done
+#12 DONE 0.0s
+
+#13 [gateway-webapp-a 2/4] WORKDIR /app
+#13 CACHED
+
+#14 [gateway-webapp-a 3/3] COPY gateway.py /app/gateway.py
+#14 CACHED
+
+#15 [lab-clean-control internal] load build context
+#15 transferring context: 28B done
+#15 DONE 0.0s
+
+#16 [gateway-webapp-a] exporting to image
+#16 exporting layers done
+#16 exporting manifest sha256:276b91193ce49a1db945944ae3689472e1dd8ff22967e82342c0880548eda98f done
+#16 exporting config sha256:d105e3eaaa0d56b552cbf3ee8df04c2cd3d906d1b1ee7fede79d1e2f3596f374
+#16 ...
+
+#17 [lab-webapp-b internal] load build context
+#17 transferring context: 28B done
+#17 DONE 0.1s
+
+#18 [lab-webapp-a internal] load build context
+#18 transferring context: 28B done
+#18 DONE 0.1s
+
+#19 [lab-clean-control 3/4] COPY app.py /app/app.py
+#19 CACHED
+
+#20 [lab-clean-control 4/4] RUN mkdir -p /app/data     && echo "public readme" > /app/data/readme.txt
+#20 CACHED
+
+#21 [lab-webapp-a 3/4] COPY app.py /app/app.py
+#21 CACHED
+
+#22 [lab-webapp-a 4/4] RUN mkdir -p /app/data     && echo "public file content" > /app/data/readme.txt     && echo "secret data" > /etc/shadow-lab-sample
+#22 CACHED
+
+#23 [lab-webapp-b 3/4] COPY app.py /app/app.py
+#23 CACHED
+
+#13 [lab-webapp-b 2/4] WORKDIR /app
+#13 CACHED
+
+#24 [lab-webapp-b 4/4] RUN mkdir -p /app/uploads     && echo "report data" > /app/uploads/report.txt     && echo "confidential" > /etc/private-lab-sample
+#24 CACHED
+
+#16 [gateway-webapp-a] exporting to image
+#16 exporting config sha256:d105e3eaaa0d56b552cbf3ee8df04c2cd3d906d1b1ee7fede79d1e2f3596f374 done
+#16 exporting attestation manifest sha256:fd08e77eb63ce882525a84e8bb70ae055b317eac6b7ecfaae172d53cb79611aa 0.0s done
+#16 exporting manifest list sha256:98c99d062f820499ef7baea410e96955afa95a445d53510422b9dba42274be2f
+#16 exporting manifest list sha256:98c99d062f820499ef7baea410e96955afa95a445d53510422b9dba42274be2f 0.0s done
+#16 naming to docker.io/library/cyber-range-gateway:latest 0.0s done
+#16 unpacking to docker.io/library/cyber-range-gateway:latest 0.1s done
+#16 DONE 0.3s
+
+#25 [lab-webapp-b] exporting to image
+#25 exporting layers done
+#25 exporting manifest sha256:8de031699393747d49e3d1f4b3dd1f3acee23f3a8760624a559cf9db13a591cd 0.0s done
+#25 exporting config sha256:a09ada4ba6590a32fcdcc0815ddeaa9c57b63db4aeb07d6a1eda0f360d9ab186 done
+#25 exporting attestation manifest sha256:0f74d087208e409e5c3fcec18935087a0e5567d31d59136cd89e964167437aa0 0.1s done
+#25 exporting manifest list sha256:6f90933647861f65f692fbf24b6f8c488aaec48560a11d952735b6ce08155eed
+#25 exporting manifest list sha256:6f90933647861f65f692fbf24b6f8c488aaec48560a11d952735b6ce08155eed 0.1s done
+#25 naming to docker.io/library/cyber-range-lab-webapp-b:latest 0.0s done
+#25 unpacking to docker.io/library/cyber-range-lab-webapp-b:latest
+#25 unpacking to docker.io/library/cyber-range-lab-webapp-b:latest 0.0s done
+#25 DONE 0.4s
+
+#26 [lab-clean-control] exporting to image
+#26 exporting layers done
+#26 exporting manifest sha256:fdb37abbd8e9c9d6dda0452fe5c92ff6dd69efdcfefb856509c2da411beb5dd9 0.0s done
+#26 exporting config sha256:257ca069da6bd51c06c5d862ac4c45c1f60fcbd42a451213bea4a7eebdf72b38 0.0s done
+#26 exporting attestation manifest sha256:0d5023a51535363862f9d6d27ad6d26aed98e49166dbda480346e2bdf9a7e180 0.1s done
+#26 exporting manifest list sha256:50339bcbbc8a2555702aee329e9a3b3bb07d744eabbf81ab27f04635bbc5a8f1 0.1s done
+#26 naming to docker.io/library/cyber-range-lab-clean-control:latest 0.0s done
+#26 unpacking to docker.io/library/cyber-range-lab-clean-control:latest 0.1s done
+#26 DONE 0.4s
+
+#27 [lab-webapp-a] exporting to image
+#27 exporting layers done
+#27 exporting manifest sha256:e00560ddac34702d0cbe689e0a7f21706090b651acff8181b19fd9af62386374 0.0s done
+#27 exporting config sha256:ea9609320909f572ae678ab1cefde09ccb5c67d9d2f6817aadd5ec7958af8aed done
+#27 exporting attestation manifest sha256:ccddaa494148856f8e30bf15e3ca4d23c2e00196e32a1dde3fd05457331ea209 0.1s done
+#27 exporting manifest list sha256:def7a58f67c963f95563ddfca319b4adb58a821238597b5fbe1c78ae6e9aef19 0.1s done
+#27 naming to docker.io/library/cyber-range-lab-webapp-a:latest 0.0s done
+#27 unpacking to docker.io/library/cyber-range-lab-webapp-a:latest 0.1s done
+#27 DONE 0.4s
+
+#28 [gateway-webapp-a] resolving provenance for metadata file
+#28 DONE 0.1s
+
+#29 [lab-webapp-b] resolving provenance for metadata file
+#29 DONE 0.0s
+
+#30 [lab-clean-control] resolving provenance for metadata file
+#30 DONE 0.1s
+
+#31 [lab-webapp-a] resolving provenance for metadata file
+#31 DONE 0.0s
+ Image cyber-range-gateway:latest Built 
+ Image cyber-range-lab-webapp-a:latest Built 
+ Image cyber-range-lab-webapp-b:latest Built 
+ Image cyber-range-lab-clean-control:latest Built 

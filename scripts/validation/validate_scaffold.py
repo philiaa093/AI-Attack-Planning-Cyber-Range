@@ -41,6 +41,11 @@ TASK_SPECS = {f"TASK-{n:03d}-{name}.md" for n, name in enumerate((
     "hybrid-planner", "experiment-runner", "metrics-engine", "held-out-evaluation", "statistical-analysis",
     "dashboard", "report-artifact-generator", "reproducibility-package", "final-foundation-audit",
 ), 1)}
+SL_SPECS = {f"SL-{n:02d}-{name}.md" for n, name in enumerate((
+    "baseline-checks", "storage-lifecycle", "auth-authorization", "cart-checkout",
+    "orders-reviews", "product-admin", "lab-runtime", "discovery-safety",
+    "observation-planner", "ptes-orchestration", "evidence-reporting", "verification-handoff",
+), 1)}
 RUNBOOKS = {
     "start-cyber-range.md", "stop-cyber-range.md", "validate-isolation.md", "run-rule-planner.md",
     "run-llm-planner.md", "train-agent.md", "run-hybrid-planner.md", "run-experiment.md",
@@ -97,7 +102,7 @@ ROOT_HEADINGS = {
     "AGENTS.md": ("Authority and Source Hierarchy", "Scope and Allowed Paths", "Trust Boundary and Input Validation", "Security and Safety", "Evidence and Data Preservation", "Status and Validation", "Change and Handoff"),
     "PROJECT_CONTEXT.md": ("Purpose", "Architecture", "Planner model", "Current state", "Boundaries", "Source hierarchy"),
     "PROJECT_PLAN.md": ("Foundation", "Literature/Threat", "Cyber Range", "Perception/Tooling", "Rule", "LLM", "RL Environment", "RL Planner", "Hybrid", "Evaluation", "Dashboard", "Final Reproducibility", "Completion rule"),
-    "TASKS.md": ("Blockers",),
+    "TASKS.md": ("ShopLab/PTES implementation backlog", "Checks and observed implementation state", "Blockers"),
     "docs/guides/index.md": (), "docs/task-specs/index.md": (), "docs/runbooks/index.md": (), "docs/adr/index.md": (),
     "report/README.md": (),
 }
@@ -270,7 +275,7 @@ def validate_documents(errors: list[str]) -> None:
     for required in ROOT_FILES | {f"docs/{name}" for name in ("architecture.md", "system-boundaries.md", "threat-model.md", "planning-model.md", "mdp-pomdp-model.md", "safety-model.md", "experiment-design.md", "metrics.md", "ground-truth.md", "references.md", "reproducibility.md", "versions.md")}:
         if not (ROOT / required).is_file(): fail(errors, f"missing required file: {required}")
     _exact_dir(errors, "docs/guides", GUIDES)
-    _exact_dir(errors, "docs/task-specs", TASK_SPECS)
+    _exact_dir(errors, "docs/task-specs", TASK_SPECS | SL_SPECS)
     _exact_dir(errors, "docs/runbooks", RUNBOOKS)
     _exact_dir(errors, "docs/adr", ADRS)
     _exact_dir(errors, "report/chapters", CHAPTERS)
@@ -281,8 +286,10 @@ def validate_documents(errors: list[str]) -> None:
         if path.is_file(): _check_markdown(path, errors, headings if headings else None)
     for path in (ROOT / "docs/guides").glob("[0-9][0-9]-*.md"):
         _check_markdown(path, errors, GUIDE_HEADINGS)
-    for path in (ROOT / "docs/task-specs").glob("TASK-*.md"):
-        _check_markdown(path, errors, TASK_HEADINGS)
+    for name in sorted(TASK_SPECS | SL_SPECS):
+        path = ROOT / "docs/task-specs" / name
+        if path.is_file():
+            _check_markdown(path, errors, TASK_HEADINGS)
     for path in (ROOT / "docs/runbooks").glob("*-*.md"):
         _check_markdown(path, errors, RUNBOOK_HEADINGS)
     for path in (ROOT / "docs/adr").glob("ADR-*.md"):
@@ -340,6 +347,18 @@ def validate_ids_and_status(errors: list[str]) -> None:
         status = re.search(r"`([^`]+)`", text[text.find("## Status"):], re.MULTILINE)
         if not status or status.group(1) not in STATUSES: fail(errors, f"{rel(path)}: invalid status marker")
     if set(task_ids) != {f"TASK-{n:03d}" for n in range(1, 36)} or len(task_ids) != len(set(task_ids)): fail(errors, "task IDs are not exact and unique")
+    for name in sorted(SL_SPECS):
+        path = ROOT / "docs/task-specs" / name
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        heading = re.search(r"^#\s+(SL-[0-9]{2})\s+—\s+", text, re.MULTILINE)
+        if not heading or heading.group(1) != name[:5]:
+            fail(errors, f"{rel(path)}: exact SL ID mismatch")
+        section = re.search(r"^## Status\s*$([\s\S]*?)(?=^## |\Z)", text, re.MULTILINE)
+        status = re.search(r"`([^`]+)`", section.group(1)) if section else None
+        if not status or status.group(1) not in STATUSES:
+            fail(errors, f"{rel(path)}: invalid SL status marker")
     for path in sorted((ROOT / "docs/adr").glob("ADR-*.md")):
         match = re.match(r"^(ADR-[0-9]{3})-", path.stem)
         heading = re.search(r"^#\s+(.*)$", path.read_text(encoding="utf-8"), re.MULTILINE)
@@ -644,7 +663,8 @@ def validate_dependencies(errors: list[str]) -> None:
     tasks_file = ROOT / "TASKS.md"
     if not tasks_file.is_file(): return
     text = tasks_file.read_text(encoding="utf-8")
-    rows = re.findall(r"\|\s*(TASK-\d{3})\s*\|.*?\|\s*([^|]+?)\s*\|", text)
+    tasks_text = text
+    rows = re.findall(r"^\|\s*(TASK-\d{3})\s*\|[^|\n]*\|[^|\n]*\|\s*([^|\n]+?)\s*\|\s*$", text, re.MULTILINE)
     ids = [task for task, _ in rows]
     expected = {f"TASK-{n:03d}" for n in range(1, 36)}
     if set(ids) != expected or len(ids) != len(set(ids)): fail(errors, "TASKS.md dependency IDs incomplete or duplicated")
@@ -659,6 +679,44 @@ def validate_dependencies(errors: list[str]) -> None:
         if not task_match or not section: continue
         for dep in re.findall(r"TASK-(\d{3})", section.group(1)):
             if dep == task_match.group(1) or int(dep) >= int(task_match.group(1)): fail(errors, f"invalid dependency in {rel(path)}: TASK-{dep}")
+    sl_expected = {f"SL-{n:02d}" for n in range(1, 13)}
+    sl_names = {name[:5]: name for name in SL_SPECS}
+    sl_rows = re.findall(
+        r"^\|\s*\[(SL-\d{2})\]\(([^)\n]+)\)\s*\|([^|\n]*)\|[^|\n]*\|([^|\n]*)\|[^|\n]*\|\s*$",
+        tasks_text, re.MULTILINE,
+    )
+    sl_ids = [task for task, _, _, _ in sl_rows]
+    if set(sl_ids) != sl_expected or len(sl_ids) != len(set(sl_ids)):
+        fail(errors, "TASKS.md SL dependency IDs incomplete or duplicated")
+
+    def check_sl(task: str, deps: str, source: str) -> None:
+        for dep in re.findall(r"SL-\d+", deps):
+            if dep not in sl_expected or int(dep[3:]) >= int(task[3:]):
+                fail(errors, f"invalid SL dependency {task} -> {dep} in {source}")
+        for dep in re.findall(r"TASK-\d+", deps):
+            if dep not in expected:
+                fail(errors, f"invalid canonical reference {task} -> {dep} in {source}")
+        for dep, link in re.findall(r"\[(SL-\d+)\]\(([^)]+)\)", deps):
+            if dep not in sl_names or Path(link).name != sl_names[dep]:
+                fail(errors, f"invalid SL dependency link in {source}: {dep}")
+
+    for task, link, foundations, deps in sl_rows:
+        if task not in sl_names or link != f"docs/task-specs/{sl_names[task]}":
+            fail(errors, f"invalid SL spec link in TASKS.md: {task}")
+        check_sl(task, foundations + " " + deps, "TASKS.md")
+    for name in sorted(SL_SPECS):
+        path = ROOT / "docs/task-specs" / name
+        if not path.is_file():
+            continue
+        spec_text = path.read_text(encoding="utf-8")
+        section = re.search(r"^## Dependencies\s*$([\s\S]*?)(?=^## |\Z)", spec_text, re.MULTILINE)
+        if section is None:
+            fail(errors, f"missing Dependencies section in {rel(path)}")
+        else:
+            # Danh sách khai báo ở đầu mục; phần giải thích sau dấu chấm không tạo cạnh.
+            declaration = section.group(1).strip().split(". ", 1)[0]
+            declaration = declaration.split(".\n", 1)[0]
+            check_sl(name[:5], declaration, rel(path))
 
 
 def validate_experiment_identity(errors: list[str]) -> None:

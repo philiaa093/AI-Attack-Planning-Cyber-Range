@@ -1,8 +1,8 @@
 # Cyber Range/Targets/Clean Control
 
-> Status: VALIDATED
+> Status: IMPLEMENTED
 
-Target ID: `lab-clean-control`. Secure Flask app with NO vulnerabilities.
+Target ID: `lab-clean-control`. Secure stdlib HTTP app with NO vulnerabilities.
 Baseline for measuring false positive rate of security scanning tools.
 
 ## Endpoints (all secure)

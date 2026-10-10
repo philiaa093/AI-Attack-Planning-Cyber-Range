@@ -1,0 +1,15 @@
+COMMAND: target behavior checks via loopback gateway
+RESULT: PASS
+TARGET A SQLi: GET /api/users/search?q=' OR 1=1 -- returned all seeded users.
+TARGET A XSS: GET /search?q=<script>alert(1)</script> returned raw script marker.
+TARGET B SQLi: GET /api/orders?customer_id=1 OR 1=1 returned all seeded orders.
+CLEAN SQLi: GET /api/items/search?q=' OR 1=1 -- returned empty results.
+CLEAN XSS: GET /search?q=<script>alert(1)</script> returned escaped &lt;script&gt;.
+CLEAN path traversal: GET /files?name=../etc/passwd returned HTTP 403.
+RAW OUTPUT:
+A_USERS: 3 seeded rows
+A_XSS: raw script marker present
+B_ORDERS: 3 seeded rows
+CLEAN_SQLI: empty results
+CLEAN_XSS: escaped marker
+CLEAN_PATH: HTTP 403 forbidden

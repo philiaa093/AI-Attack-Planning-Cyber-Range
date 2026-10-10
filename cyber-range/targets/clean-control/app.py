@@ -18,7 +18,6 @@ TARGET_ID = os.environ.get("TARGET_ID", "lab-clean-control")
 PORT = int(os.environ.get("PORT", "8080"))
 DATA_DIR = pathlib.Path("/app/data").resolve()
 MAX_BODY_BYTES = 1024 * 1024
-MAX_BODY_BYTES = 1024 * 1024
 
 
 class AppState:
@@ -166,9 +165,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Allow", "GET, HEAD, OPTIONS, POST")
         self.send_header("Content-Length", "0")
         self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
 
     def log_message(self, format: str, *args: object) -> None:
         return

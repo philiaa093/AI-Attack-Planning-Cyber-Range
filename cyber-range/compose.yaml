@@ -37,24 +37,57 @@
     "lab-webapp-a": {
       "build": {"context": "targets/custom-webapp-a", "dockerfile": "Dockerfile"},
       "image": "cyber-range-lab-webapp-a:latest",
-      "ports": ["127.0.0.1:18085:8080"],
       "environment": {"TARGET_ID": "lab-webapp-a", "PORT": "8080"},
       "networks": ["lab"]
     },
     "lab-webapp-b": {
       "build": {"context": "targets/custom-webapp-b", "dockerfile": "Dockerfile"},
       "image": "cyber-range-lab-webapp-b:latest",
-      "ports": ["127.0.0.1:18086:8080"],
       "environment": {"TARGET_ID": "lab-webapp-b", "PORT": "8080"},
       "networks": ["lab"]
     },
     "lab-clean-control": {
       "build": {"context": "targets/clean-control", "dockerfile": "Dockerfile"},
       "image": "cyber-range-lab-clean-control:latest",
-      "ports": ["127.0.0.1:18087:8080"],
       "environment": {"TARGET_ID": "lab-clean-control", "PORT": "8080"},
       "networks": ["lab"]
+    },
+    "gateway-webapp-a": {
+      "build": {"context": "runtime", "dockerfile": "gateway.Dockerfile"},
+      "image": "cyber-range-gateway:latest",
+      "ports": ["127.0.0.1:18085:8080"],
+      "environment": {"TARGET_HOST": "lab-webapp-a", "TARGET_PORT": "8080", "PORT": "8080"},
+      "networks": ["lab", "ingress"],
+      "depends_on": ["lab-webapp-a"]
+    },
+    "gateway-webapp-b": {
+      "image": "cyber-range-gateway:latest",
+      "ports": ["127.0.0.1:18086:8080"],
+      "environment": {"TARGET_HOST": "lab-webapp-b", "TARGET_PORT": "8080", "PORT": "8080"},
+      "networks": ["lab", "ingress"],
+      "depends_on": ["lab-webapp-b"]
+    },
+    "gateway-clean-control": {
+      "image": "cyber-range-gateway:latest",
+      "ports": ["127.0.0.1:18087:8080"],
+      "environment": {"TARGET_HOST": "lab-clean-control", "TARGET_PORT": "8080", "PORT": "8080"},
+      "networks": ["lab", "ingress"],
+      "depends_on": ["lab-clean-control"]
+    },
+    "lab-ecommerce": {
+      "build": {"context": "targets/ecommerce", "dockerfile": "Dockerfile"},
+      "image": "cyber-range-lab-ecommerce:latest",
+      "environment": {"TARGET_ID": "lab-ecommerce", "PORT": "8080"},
+      "networks": ["lab"]
+    },
+    "gateway-ecommerce": {
+      "build": {"context": "runtime", "dockerfile": "gateway.Dockerfile"},
+      "image": "cyber-range-gateway:latest",
+      "ports": ["127.0.0.1:18088:8080"],
+      "environment": {"TARGET_HOST": "lab-ecommerce", "TARGET_PORT": "8080", "PORT": "8080"},
+      "networks": ["lab", "ingress"],
+      "depends_on": ["lab-ecommerce"]
     }
   },
-  "networks": {"lab": {"internal": true}}
+  "networks": {"lab": {"internal": true}, "ingress": {}}
 }

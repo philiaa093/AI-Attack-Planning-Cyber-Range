@@ -1,0 +1,14 @@
+test_only_gateways_publish_new_target_ports (tests.integration.test_network_isolation.NetworkIsolationTests.test_only_gateways_publish_new_target_ports) ... ok
+test_ports_bind_loopback_only (tests.integration.test_network_isolation.NetworkIsolationTests.test_ports_bind_loopback_only) ... ok
+test_rejects_unrestricted_network_configuration (tests.integration.test_network_isolation.NetworkIsolationTests.test_rejects_unrestricted_network_configuration) ... ok
+test_target_ids_are_allowlisted (tests.integration.test_network_isolation.NetworkIsolationTests.test_target_ids_are_allowlisted) ... ok
+test_targets_use_only_internal_lab_network (tests.integration.test_network_isolation.NetworkIsolationTests.test_targets_use_only_internal_lab_network) ... ok
+test_clean_control_negative_behavior (tests.runtime.test_targets.TargetTests.test_clean_control_negative_behavior) ... ok
+test_health_reset_and_ground_truth (tests.runtime.test_targets.TargetTests.test_health_reset_and_ground_truth) ... ok
+test_target_a_real_vulnerabilities (tests.runtime.test_targets.TargetTests.test_target_a_real_vulnerabilities) ... ok
+test_target_b_real_distinct_vulnerabilities (tests.runtime.test_targets.TargetTests.test_target_b_real_distinct_vulnerabilities) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 2.613s
+
+OK
