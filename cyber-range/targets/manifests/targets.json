@@ -6,6 +6,7 @@
     {"target_id": "lab-clean-001", "port": 18084, "health_path": "/health", "reset_path": "/reset"},
     {"target_id": "lab-webapp-a", "port": 18085, "health_path": "/health", "reset_path": "/reset"},
     {"target_id": "lab-webapp-b", "port": 18086, "health_path": "/health", "reset_path": "/reset"},
-    {"target_id": "lab-clean-control", "port": 18087, "health_path": "/health", "reset_path": "/reset"}
+    {"target_id": "lab-clean-control", "port": 18087, "health_path": "/health", "reset_path": "/reset"},
+    {"target_id": "lab-ecommerce", "port": 18088, "health_path": "/health", "reset_path": "/reset"}
   ]
 }

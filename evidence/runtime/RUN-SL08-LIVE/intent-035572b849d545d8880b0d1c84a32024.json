@@ -1,0 +1,1 @@
+{"action_id":"ACTION-RECON-002","approval_id":"APP-SL08-LIVE-001","decision":"DISPATCH_PERMITTED","depth":1,"headers":{},"method":"GET","redirect_hops":0,"run_id":"RUN-SL08-LIVE","target_id":"lab-ecommerce","timestamp_utc":"2026-10-10T17:24:36.237308Z","url":"http://127.0.0.1:18088/products/2"}

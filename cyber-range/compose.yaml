@@ -78,6 +78,7 @@
       "build": {"context": "targets/ecommerce", "dockerfile": "Dockerfile"},
       "image": "cyber-range-lab-ecommerce:latest",
       "environment": {"TARGET_ID": "lab-ecommerce", "PORT": "8080"},
+      "volumes": ["ecommerce-data:/app/data"],
       "networks": ["lab"]
     },
     "gateway-ecommerce": {
@@ -89,5 +90,6 @@
       "depends_on": ["lab-ecommerce"]
     }
   },
-  "networks": {"lab": {"internal": true}, "ingress": {}}
+  "networks": {"lab": {"internal": true}, "ingress": {}},
+  "volumes": {"ecommerce-data": {}}
 }

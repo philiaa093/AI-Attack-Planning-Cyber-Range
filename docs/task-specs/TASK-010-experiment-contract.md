@@ -34,14 +34,15 @@ Canonical root docs, typed planner/policy boundaries, and evidence references.
 
 ## Data Contracts
 
-Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable.
+Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable. Mỗi experiment instance phải version theo approved target snapshot và baseline evaluation; shared schema không tự đổi do UI/build/upstream thay đổi.
 
 ## Dependencies
 
 TASK-007, TASK-008
+
 ## Implementation Requirements
 
-Produce reproducible EXP; preserve source hierarchy and status vocabulary.
+Produce reproducible EXP; preserve source hierarchy and status vocabulary. Snapshot mới cần impact assessment, receipts và instance experiment riêng; ground truth chỉ dùng evaluation, không làm planner input.
 
 ## Safety Requirements
 
@@ -53,7 +54,7 @@ Focused check covers reproducible EXP; validated by scaffold, contract, safety, 
 
 ## Acceptance Criteria
 
-Reproducible exp exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval.
+Reproducible exp exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval. Instance versioning không làm validation cũ áp dụng tự động cho snapshot mới.
 
 ## Evidence Required
 

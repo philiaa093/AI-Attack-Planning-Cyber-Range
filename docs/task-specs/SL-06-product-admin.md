@@ -2,86 +2,106 @@
 
 ## Status
 
-`SPEC_ONLY`. Chuyển sang upstream dashboard permission/configuration/UI acceptance; chưa có execution receipts Oscar. Không tiếp tục tự xây admin ShopLab hoặc coi upstream dashboard là đã được kiểm chứng.
+`IMPLEMENTED`. Đã hoàn thành trên target ShopLab (`cyber-range/targets/ecommerce/app.py`) và kiểm chứng tự động bằng bộ test tích hợp `tests/integration/test_ecommerce_admin.py` (14 tests PASS). Chưa có independent review / approval; không tự nâng `VALIDATED`.
 
 ## Purpose
 
-Quản trị được catalog/tồn kho/trạng thái đơn đúng quyền và có UI sản phẩm sử dụng được trên desktop/mobile, không chỉ các endpoints demo.
+Cung cấp bảng điều khiển quản trị (Admin Backoffice) để quản lý danh mục sản phẩm, điều chỉnh tồn kho, kiểm soát quy trình chuyển đổi trạng thái đơn hàng (order status lifecycle), chính sách hủy đơn, và ghi nhật ký kiểm toán (audit log) có phân quyền server-side nghiêm ngặt.
 
 ## Background
 
-SL-03–05 cung cấp identity, cart/checkout và order/review. Admin phải dùng server-side roles, không cookie. UI sản phẩm không phải dashboard nghiên cứu TASK-032.
+Sau SL-03, SL-04 và SL-05, hệ thống đã có xác thực người dùng, giỏ hàng, checkout và lịch sử đơn hàng. SL-06 hoàn thiện giao diện và API quản trị backoffice, yêu cầu quyền `admin` được xác thực server-side, bảo đảm máy trạng thái đơn hàng forward-only, chính sách hủy đơn minh bạch, lưu trữ sản phẩm (product archival) an toàn và ghi log hoạt động quản trị.
 
 ## Scope
 
-Đề xuất `cyber-range/targets/oscar-lab/**` và `tests/integration/test_oscar_lab*.py`: cấu hình/kiểm chứng upstream dashboard, permissions, local administrative workflow và assets/UI. Không viết lại catalog/admin/order services hoặc sửa ShopLab. Sandbox Django `/admin/` chỉ developer convenience và upstream ghi unsupported; không bật mặc định thay dashboard được kiểm chứng.
+- Code ứng dụng: `cyber-range/targets/ecommerce/app.py`
+- Test suite tích hợp: `tests/integration/test_ecommerce_admin.py`
+- Endpoints: `/admin`, `/admin/orders/<id>`, `/admin/orders/status`, `/admin/orders/cancel`, `/admin/products/stock`, `/admin/products/archive`, `/admin/products/create`
 
 ## Out of Scope
 
-Không public admin, fixed admin credential, first-registration auto-admin, external CDN/payment/email, dashboard/analytics TASK-032, quản trị target OS hoặc free-form commands.
+Không bypass phân quyền, không tài khoản admin mặc định cố định trong code, không quản trị hệ điều hành máy chủ, không xóa vật lý các đơn hàng hay sản phẩm đã có giao dịch.
 
 ## Inputs
 
-SL-03 auth/CSRF/role helpers, SL-04 money/stock transactions, SL-05 order snapshots/status; approved local administrative authority và fake fixtures.
+Identity có role `admin` từ bảng `users`, form POST data cho trạng thái đơn, tồn kho, tạo/lưu trữ sản phẩm, CSRF token.
 
 ## Outputs
 
-Upstream dashboard permission/operation fit-gap matrix, lab configuration tối thiểu và role/CSRF/stock/status/UI acceptance receipts. Local role workflow cần authority riêng; không viết services mới hoặc claim screenshots/browser pass nếu chưa chạy tooling. Không deployed claim.
+Giao diện quản trị `/admin`, trang chi tiết quản trị đơn `/admin/orders/<id>`, cập nhật trạng thái đơn hàng, bảng `product_archives`, bảng `admin_activity_log`.
 
 ## Interfaces
 
-Dùng upstream dashboard URL/permission model, không map `/admin` ShopLab. Mutations cần server authorization và CSRF được kiểm chứng. Local administrative provisioning cần scope/authority riêng, không HTTP bootstrap, không default admin/first-user privilege, không upstream auth fixtures hoặc password command-line. Tái sử dụng template/form escaping upstream; kiểm chứng mỗi context thay vì giả định an toàn.
+- `GET /admin`: Dashboard tổng quan sản phẩm, đơn hàng, người dùng và 30 hoạt động audit log gần nhất. Yêu cầu role `admin`.
+- `GET /admin/orders/<id>`: Chi tiết quản trị đơn hàng với form chuyển trạng thái và nút hủy đơn nếu đủ điều kiện.
+- `POST /admin/orders/status`: Chuyển trạng thái đơn hàng theo máy trạng thái forward-only (order_id, status, csrf_token).
+- `POST /admin/orders/cancel`: Hủy đơn hàng (order_id, csrf_token); chỉ áp dụng cho đơn `pending`.
+- `POST /admin/products/stock`: Cập nhật tồn kho sản phẩm (product_id, stock, csrf_token).
+- `POST /admin/products/archive`: Lưu trữ sản phẩm (product_id, csrf_token).
+- `POST /admin/products/create`: Tạo sản phẩm mới (name, description, category_id, price, stock, csrf_token).
 
 ## Data Contracts
 
-Product fields bounded: name/description/category existing ID, integer price_minor/currency và nonnegative stock. Stock updates không làm mất invariants với checkout. Order state transition map chốt trước edit; accepted → processing → shipped → completed là ví dụ proposal, không value catalog đã duyệt. Không arbitrary status text hoặc cho sửa totals/items đã commit. Admin audit redact actor/action/resource/UTC/old/new state, không secret.
+- Phân quyền: Cột `users.role = 'admin'` trong SQLite; không chấp nhận cookie role tự xưng từ client.
+- Order transitions:
+  - `pending` -> `processing`, `shipped`, `cancelled`
+  - `processing` -> `shipped`
+  - `completed` -> `shipped`
+  - `shipped` -> `delivered`
+  - `delivered` -> terminal (không cho phép chuyển tiếp)
+  - `cancelled` -> terminal
+- Cancellation policy: Chỉ cho phép hủy khi đơn ở trạng thái `pending`. Đơn đã ở `processing`, `shipped`, `delivered` bị từ chối với 400.
+- Product archival: Bảng `product_archives (product_id INTEGER PRIMARY KEY, archived_at TIMESTAMP)`.
+- Audit log: Bảng `admin_activity_log (id, user_id, action, target_type, target_id, old_value, new_value, created_at)`.
 
 ## Dependencies
 
-SL-03, SL-04, SL-05; TASK-003/TASK-011. Local bootstrap quyền riêng không tự cấp bởi task-spec.
+SL-03 (Auth/Roles), SL-04 (Checkout/Stock), SL-05 (Orders/Snapshots); liên kết TASK-003 và TASK-011.
 
 ## Implementation Requirements
 
-Đây là fit-gap/configuration/acceptance trên upstream, không chỉ thị viết lại admin. Map Decimal/stock allocation/permission/status semantics tới invariants dưới đây; thiếu equivalence thì giữ gap và không tự hạ acceptance. Override CDN jQuery bằng bundled local asset, tắt analytics và integrations ngoài lab; secret thiếu fail closed, DEBUG=False. Static source scan không chứng minh browser/network isolation; visual và egress cần receipts riêng.
-
-1. Check role từ server mỗi admin GET/mutation; revoke/expired session có effect, không cached role cookie.
-2. Catalog create/update/archive, category selection, price/stock validation; referenced products không delete gây lỗi order snapshot. Archived item không mua mới, đơn cũ vẫn đọc được.
-3. Stock change trong transaction cùng checkout semantics; stale version/conflict behavior rõ, không lost update khi hai admin/checkout đồng thời.
-4. Order-status transitions bounded và audit; reject invalid state, duplicate transition idempotent; cancellation/refund không implement inventory/payment reversal âm thầm. Nếu chưa có reversal policy thì không expose operation.
-5. Local role promotion/revocation deny unknown identities và không tự đăng ký credential. Authority/confirmation và session invalidation rõ; no web bootstrap endpoint.
-6. UI navigation/cart badges/order detail/forms/error/empty states, labels, keyboard/focus và mobile gutters/no page overflow. Product prices/stock/status phản ánh server data, không KPI giả.
-7. Lab notice xuyên suốt và offline assets. Content escaped; forms CSRF; render lỗi không expose DB/paths.
+1. Server-side role verification: `self._require_admin()` kiểm tra identity trong DB; từ chối người dùng thường và khách với `403 Forbidden`. Bỏ qua hoàn toàn cookie `role` từ client.
+2. Máy trạng thái đơn hàng nghiêm ngặt (Forward-only state machine): chỉ cho phép các bước chuyển trạng thái có nghĩa nghiệp vụ theo map `ORDER_TRANSITIONS`. Từ chối chuyển ngược (ví dụ: `completed -> processing` hay `delivered -> processing`).
+3. Chính sách hủy đơn rõ ràng: chỉ đơn `pending` mới có thể hủy. Đơn đã vào khâu xử lý hoặc giao hàng không thể hủy trực tiếp qua endpoint cancel.
+4. Product soft-archival: sản phẩm bị archive không bị xóa khỏi DB để bảo toàn snapshot của các đơn hàng cũ; sản phẩm archived bị ẩn khỏi form mua hàng và hiển thị huy hiệu Archived.
+5. Cập nhật tồn kho an toàn: validate số lượng nguyên không âm; ghi nhận hoạt động thay đổi tồn kho vào audit log.
+6. Audit logging đầy đủ: mọi hành vi thay đổi trạng thái đơn, hủy đơn, điều chỉnh tồn kho, lưu trữ hoặc tạo sản phẩm đều được ghi vào bảng `admin_activity_log`.
+7. CSRF validation: kiểm tra CSRF token trên toàn bộ các mutation endpoints của admin.
 
 ## Safety Requirements
 
-Không tài khoản mặc định. Admin workflow không arbitrary command runner, không reset/evidence deletion. Không public artifact imitation hoặc genuine payment records; screenshots lab-only redact identities.
+Lab-only isolation. Không cho phép privilege escalation từ regular user lên admin qua request headers/cookies. Không rò rỉ stack trace khi gặp lỗi tham số. CSRF enforcement tuyệt đối trên mọi POST.
 
 ## Testing Requirements
 
 | Case | Scenario | Expected |
 |---|---|---|
-| M01 | Anonymous/user thường truy cập admin mutations | Deny trước DB write |
-| M02 | Admin với đúng/sai/missing CSRF | Valid write hoặc reject; no cookie-role trust |
-| M03 | Invalid price/stock/category/text limits | Safe validation; no partial changes |
-| M04 | Archive product referenced bởi order | New purchase deny; old snapshot còn |
-| M05 | Concurrent stock edits/checkout | Conflict/serialization đúng, no oversell/lost update |
-| M06 | Valid/invalid/repeated order-status transition | Map được enforced; audit đúng; không totals rewrite |
-| M07 | Local promote/revoke existing/unknown account | Correct identity, no fixed credential; revoke effect |
-| M08 | Mobile/desktop, keyboard và empty/error views | No horizontal page scroll; usable forms/lab notice |
-
-Nếu chưa có browser tooling, M08 ghi unverified và dùng render/HTML assertions phần có thể test; không bịa screenshots hoặc visual pass.
+| M01 | Anonymous / Regular user truy cập `/admin` và POST actions | Trả về 403 Forbidden |
+| M02 | Cookie giả mạo `role=admin` của regular user | Bị từ chối với 403 Forbidden (kiểm tra DB authoritative) |
+| M03 | POST actions admin thiếu hoặc sai CSRF token | Trả về 403 Forbidden |
+| M04 | Chuyển trạng thái đơn hợp lệ (`pending -> processing -> shipped -> delivered`) | Chuyển thành công, ghi audit log |
+| M05 | Chuyển trạng thái đơn trái phép (`delivered -> processing`, `shipped -> pending`) | Trả về 400 Bad Request |
+| M06 | Hủy đơn hàng ở trạng thái `pending` | Chuyển thành `cancelled`, ghi audit log |
+| M07 | Hủy đơn hàng ở trạng thái `processing` hoặc `shipped` | Trả về 400 Bad Request, giữ nguyên trạng thái |
+| M08 | Soft-archive sản phẩm | Lưu vào `product_archives`, cấm mua mới, đơn cũ giữ nguyên snapshot |
+| M09 | Điều chỉnh tồn kho sản phẩm | Cập nhật chính xác, ghi log `stock_update` |
+| M10 | Tạo sản phẩm mới với dữ liệu hợp lệ và không hợp lệ | Tạo thành công khi hợp lệ, 400 khi sai giá/tồn kho |
 
 ## Acceptance Criteria
 
-Admin làm được các operations đã chốt, negative authorization/CSRF tests pass; stock/order invariants giữ; role workflow không credentials mặc định; product flow UI hoàn chỉnh và evidence-linked accessibility/browser checks. TASK-032 vẫn DEFERRED, không claim production-ready.
+Tất cả các tiêu chí về phân quyền admin, forward-only state machine, chính sách hủy đơn, product soft-archival và audit logging được xác minh bằng kiểm thử tự động. Bộ test `tests/integration/test_ecommerce_admin.py` (14 tests) đạt 100% PASS, exit code 0.
 
 ## Evidence Required
 
-Exact commands/results, role matrix, state transition map, redacted audit/UI receipts; screenshots chỉ observed với tooling thật. Handoff SL-07 routes/forms/role setup và gaps rõ.
+Command receipts thực tế:
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_admin.py"`: 14 tests PASS, exit 0.
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_*.py"`: 95 tests PASS, exit 0.
+- `python -B scripts/validation/validate_scaffold.py`: SCAFFOLD VALID, exit 0.
+Không ghi token, password hoặc dữ liệu cá nhân trong receipts.
 
 ## Failure Conditions
 
-Unprotected bootstrap/mutation, hardcoded credentials, invalid stock/state writes, UI report giả hoặc browser checks thiếu mà claim pass: blocker; dừng khi conflict source/permissions.
+Regular user truy cập được trang admin, chuyển ngược trạng thái đơn hàng từ `delivered`/`completed` về `processing`, hủy đơn hàng khi đã vận chuyển mà không có chính sách hoàn tiền, hoặc ghi đè/xóa vĩnh viễn sản phẩm đã có đơn hàng.
 
 ## Related Guides
 

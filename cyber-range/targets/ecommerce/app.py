@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib, json, os, pathlib, sqlite3, uuid
 import stat, threading, time, re, secrets, hmac
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from contextlib import contextmanager
 from functools import wraps
 from html import escape as html_escape
@@ -20,6 +21,7 @@ from urllib.parse import urlsplit, parse_qs, urlencode
 
 PORT = int(os.environ.get("PORT", "8080"))
 TARGET_ID = os.environ.get("TARGET_ID", "lab-ecommerce")
+SHOPLAB_CURRENCY = "USD"
 DATA_DIR = pathlib.Path(os.environ.get("SHOPLAB_DATA_DIR", "/app/data"))
 UPLOAD_DIR = DATA_DIR / "invoices"
 _condition = threading.Condition()
@@ -100,6 +102,16 @@ _SCHEMA_SCRIPT = """
             currency TEXT NOT NULL DEFAULT 'USD' CHECK(currency = 'USD'),
             UNIQUE(order_id, product_id)
         );
+        CREATE TABLE order_idempotency (
+            key TEXT NOT NULL,
+            owner_key TEXT NOT NULL,
+            user_id INTEGER REFERENCES users(id),
+            session_id TEXT NOT NULL,
+            order_id INTEGER NOT NULL REFERENCES orders(id),
+            request_hash TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            PRIMARY KEY(key, owner_key)
+        );
         CREATE TABLE reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             product_id INTEGER NOT NULL REFERENCES products(id),
@@ -108,6 +120,20 @@ _SCHEMA_SCRIPT = """
             rating INTEGER,
             body TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE product_archives (
+            product_id INTEGER PRIMARY KEY REFERENCES products(id),
+            archived_at TEXT NOT NULL
+        );
+        CREATE TABLE admin_activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id INTEGER NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            created_at TEXT NOT NULL
         );
         -- Seed data
         -- Không tạo tài khoản hoặc mật khẩu cố định trong dữ liệu mẫu.
@@ -180,8 +206,80 @@ def _create_schema(db) -> None:
     db.execute('PRAGMA user_version = 2')
 
 
+def _can_upgrade_schema(db, reference) -> bool:
+    """Kiểm tra DB có thể upgrade an toàn sang new schema (order_idempotency missing hoặc new tables)."""
+    ref_objects = {row[1]: tuple(row) for row in reference.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'")}
+    db_objects = {row[1]: tuple(row) for row in db.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'")}
+    upgrade_allowed = {'order_idempotency', 'product_archives', 'admin_activity_log'}
+    for name, row in ref_objects.items():
+        if name in upgrade_allowed:
+            continue
+        if name not in db_objects or db_objects[name] != row:
+            return False
+    for name, row in db_objects.items():
+        if name in upgrade_allowed:
+            continue
+        if name not in ref_objects or ref_objects[name] != row:
+            return False
+    if 'order_idempotency' in db_objects:
+        cols = {col[1] for col in db.execute("PRAGMA table_info(order_idempotency)").fetchall()}
+        if not {'key', 'session_id', 'order_id', 'request_hash'}.issubset(cols):
+            return False
+    return True
+
+
+def _migrate_order_idempotency(db) -> None:
+    """Migrate order_idempotency sang (key, owner_key) deterministic và an toàn."""
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    needs_migration = False
+    has_old_data = False
+    if 'order_idempotency' not in tables:
+        needs_migration = True
+    else:
+        cols = {col[1] for col in db.execute("PRAGMA table_info(order_idempotency)").fetchall()}
+        if 'owner_key' not in cols:
+            needs_migration = True
+            has_old_data = True
+
+    if not needs_migration:
+        return
+
+    create_stmt = None
+    for stmt in _SCHEMA:
+        if 'CREATE TABLE order_idempotency' in stmt:
+            create_stmt = stmt
+            break
+
+    if has_old_data:
+        db.execute("CREATE TEMP TABLE _old_idem AS SELECT key, session_id, user_id, order_id, request_hash, created_at FROM order_idempotency")
+        db.execute("DROP TABLE order_idempotency")
+        db.execute(create_stmt)
+        db.execute("""
+            INSERT OR IGNORE INTO order_idempotency (key, owner_key, user_id, session_id, order_id, request_hash, created_at)
+            SELECT key, CASE WHEN user_id IS NOT NULL THEN 'user:' || user_id ELSE 'guest:' || session_id END,
+                   user_id, session_id, order_id, request_hash, created_at
+            FROM _old_idem
+        """)
+        db.execute("DROP TABLE _old_idem")
+    else:
+        db.execute(create_stmt)
+
+
+def _migrate_new_tables(db) -> None:
+    """Tạo product_archives và admin_activity_log nếu DB cũ chưa có."""
+    tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+    for table_name in ('product_archives', 'admin_activity_log'):
+        if table_name not in tables:
+            for stmt in _SCHEMA:
+                if f'CREATE TABLE {table_name}' in stmt:
+                    db.execute(stmt)
+                    break
+
+
 def _preflight_db(database_path, *, required=False) -> None:
-    """Chỉ kiểm tra DB quiescent bằng read-only; không recovery/migration."""
+    """Chỉ kiểm tra DB quiescent bằng read-only; cho phép upgradable schema hợp lệ."""
     if str(database_path) == ':memory:':
         return
     path = pathlib.Path(database_path)
@@ -201,7 +299,9 @@ def _preflight_db(database_path, *, required=False) -> None:
             return
         reference = _connect(':memory:')
         _create_schema(reference)
-        if version != 2 or objects != _schema_snapshot(reference):
+        is_exact = (version == 2 and objects == _schema_snapshot(reference))
+        is_upgradable = (version == 2 and _can_upgrade_schema(db, reference))
+        if not (is_exact or is_upgradable):
             raise StorageError('Unsupported storage schema')
         if db.execute('PRAGMA integrity_check').fetchone()[0] != 'ok' or db.execute('PRAGMA foreign_key_check').fetchone():
             raise StorageError('Invalid storage data')
@@ -212,7 +312,7 @@ def _preflight_db(database_path, *, required=False) -> None:
 
 
 def _init_db(database_path: str | pathlib.Path = ':memory:') -> sqlite3.Connection:
-    """Atomic schema/catalog; schema cũ không được migrate hoặc reseed."""
+    """Atomic schema/catalog; schema cũ được migrate deterministic nếu upgradable."""
     _preflight_db(database_path)
     db = _connect(database_path)
     try:
@@ -229,6 +329,12 @@ def _init_db(database_path: str | pathlib.Path = ':memory:') -> sqlite3.Connecti
         try:
             _create_schema(reference)
             expected = _schema_snapshot(reference)
+            if db.execute('PRAGMA user_version').fetchone()[0] == 2 and _schema_snapshot(db) != expected:
+                if _can_upgrade_schema(db, reference):
+                    db.execute('BEGIN IMMEDIATE')
+                    _migrate_order_idempotency(db)
+                    _migrate_new_tables(db)
+                    db.commit()
         finally:
             reference.close()
         if db.execute('PRAGMA user_version').fetchone()[0] != 2 or _schema_snapshot(db) != expected:
@@ -335,14 +441,46 @@ def close_storage() -> None:
         quiesce_storage()
         _database_path = None
 
+ORDER_TRANSITIONS = {
+    'pending': {'processing', 'shipped'},
+    'processing': {'shipped'},
+    'completed': {'shipped'},
+    'shipped': {'delivered'},
+    'delivered': set(),
+}
+
+
+def _validate_price(value: str) -> float:
+    """Validate product price (positive, bounded, minor-unit accurate)."""
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{1,8}(\.[0-9]{1,2})?', value.strip()):
+        raise ValueError('Invalid price')
+    cents = _to_minor(value.strip())
+    if cents <= 0 or cents > 100_000_000_00:
+        raise ValueError('Price out of bounds')
+    return _from_minor(cents)
+
+
+def _validate_stock(value: str) -> int:
+    """Validate stock count (integer, >= 0, bounded)."""
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{1,8}', value.strip()):
+        raise ValueError('Invalid stock')
+    stk = int(value.strip())
+    if stk < 0 or stk > 1_000_000:
+        raise ValueError('Stock out of bounds')
+    return stk
+
+
 # ─────────────────────────────── Helpers ─────────────────────────────────────
-def search_products(db: sqlite3.Connection, query: str = "", category: str = "") -> list:
+def search_products(db: sqlite3.Connection, query: str = "", category: str = "", *, include_archived: bool = False) -> list:
     """Tìm kiếm và lọc đồng thời, dùng tham số SQL và ký tự tìm kiếm literal."""
     if not isinstance(query, str) or len(query) > 200 or not isinstance(category, str):
         raise ValueError("Invalid search input")
     sql = "SELECT p.*, c.name AS cat_name FROM products p JOIN categories c ON p.category_id=c.id"
     conditions = []
     params = []
+    if not include_archived:
+        sql += " LEFT JOIN product_archives pa ON p.id=pa.product_id"
+        conditions.append("pa.product_id IS NULL")
     if query:
         literal = query.replace("!", "!!").replace("%", "!%").replace("_", "!_")
         conditions.append("(p.name LIKE ? ESCAPE '!' OR p.description LIKE ? ESCAPE '!')")
@@ -375,6 +513,26 @@ def _positive_id(value: str) -> int:
     if result > 9223372036854775807:
         raise ValueError('Invalid identifier')
     return result
+
+
+def _validate_quantity(value: str) -> int:
+    """Số lượng hợp lệ: số nguyên dương từ 1 đến 99, không có ký tự lạ hay leading zero."""
+    if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]{0,1}', value):
+        raise ValueError('Invalid quantity')
+    qty = int(value)
+    if not 1 <= qty <= 99:
+        raise ValueError('Invalid quantity')
+    return qty
+
+
+def _to_minor(amount: float | str | Decimal) -> int:
+    """Chuyển đổi số tiền sang integer minor units (cents) chính xác, không dùng float division."""
+    return int(Decimal(str(amount)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) * 100)
+
+
+def _from_minor(cents: int) -> float:
+    """Chuyển integer cents về float với 2 chữ số thập phân chuẩn xác cho SQLite storage."""
+    return round(cents / 100, 2)
 
 
 def _now() -> int:
@@ -562,6 +720,42 @@ def set_local_role(data_dir, user_id, role):
         finally:
             db.close()
 
+
+def restore_baseline(data_dir: str | pathlib.Path) -> None:
+    """Restore ShopLab state to approved seed baseline. Operates strictly within data_dir."""
+    with _condition:
+        if _database_path is not None or _active:
+            raise StorageError('Storage must be closed before restore')
+        if not isinstance(data_dir, (str, pathlib.Path)) or not str(data_dir).strip() or '\x00' in str(data_dir) or '..' in pathlib.Path(data_dir).parts or str(data_dir).startswith(('\\\\', '//')):
+            raise StorageError('Invalid storage path')
+        directory = pathlib.Path(os.path.abspath(data_dir))
+        _validate_storage(directory)
+        if not directory.is_dir() or not os.access(directory, os.W_OK | os.X_OK):
+            raise StorageError('Invalid storage path')
+        if hasattr(os, 'geteuid') and (directory.stat().st_uid != os.geteuid() or directory.stat().st_mode & stat.S_IWOTH):
+            raise StorageError('Invalid storage ownership')
+        for f in directory.glob('shoplab.*'):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        inv_dir = directory / 'invoices'
+        if inv_dir.is_dir():
+            for f in inv_dir.glob('INV-*.txt'):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+        db_path = directory / 'shoplab.sqlite3'
+        _preflight_db(db_path, required=False)
+        db = _connect(db_path)
+        try:
+            db.execute('BEGIN IMMEDIATE')
+            _create_schema(db)
+            db.commit()
+        finally:
+            db.close()
+
 # ─────────────────────────────── Templates ───────────────────────────────────
 _BASE = """<!DOCTYPE html>
 <html lang="en">
@@ -600,11 +794,17 @@ th{{background:#f0f0f0;font-weight:600}}
 .badge{{display:inline-block;padding:3px 10px;border-radius:12px;font-size:12px;font-weight:600}}
 .badge-pending{{background:#fff3cd;color:#856404}}
 .badge-completed{{background:#d4edda;color:#155724}}
+.badge-processing{{background:#cce5ff;color:#004085}}
+.badge-shipped{{background:#d1ecf1;color:#0c5460}}
+.badge-delivered{{background:#d4edda;color:#155724}}
+.badge-archived{{background:#e2e3e5;color:#383d41}}
+.badge-active{{background:#d4edda;color:#155724}}
 .stars{{color:#f5a623;font-size:18px}}
 footer{{text-align:center;padding:32px;color:#888;font-size:14px;margin-top:48px}}
 </style>
 </head>
 <body>
+<div style="background:#2a2b3d;color:#ffc107;text-align:center;padding:6px 12px;font-size:13px;font-weight:600">⚠️ ShopLab — Cyber Range Lab Environment (Simulated / Educational Store)</div>
 <nav class="nav">
   <span class="brand">🛒 ShopLab</span>
   <a href="/">Home</a>
@@ -641,11 +841,29 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def _create_invoice_post_commit(self, inv_name: str, full_name: str, address: str, total: float, items_data: list) -> None:
+        try:
+            inv_path = UPLOAD_DIR / inv_name
+            _validate_path(inv_path, directory=False)
+            with inv_path.open('x', encoding='utf-8') as invoice:
+                invoice.write(
+                    f"Invoice: {inv_name}\n"
+                    f"Notice: ShopLab — Lab / Simulated Order Receipt (No payment charged)\n"
+                    f"Name: {full_name}\n"
+                    f"Address: {address}\nTotal: ${total:.2f}\n"
+                    + "\n".join(f"  {r['name']} x{r['quantity']} @ ${r['price']:.2f}" for r in items_data)
+                    + "\n"
+                )
+        except OSError:
+            # Post-commit invoice write failure never rolls back the committed order
+            pass
+
     def _request(self, dispatch, *, write: bool) -> None:
         self._pending_response = None
         self._cached_body = None
         self._identity = None
         self._security_headers = []
+        self._post_commit_action = None
         try:
             self._params()  # Từ chối query mơ hồ trước cả session bootstrap.
             token = _session_token(self)
@@ -665,6 +883,14 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(403, {'error': 'Request is not authorized'})
                 else:
                     dispatch(db)
+            action_info = self._post_commit_action
+            self._post_commit_action = None
+            if action_info is not None:
+                action, args = action_info
+                try:
+                    action(*args)
+                except Exception:
+                    pass
         except sqlite3.IntegrityError:
             self._send_json(409, {'error': 'Storage constraint rejected'})
         except (StorageError, sqlite3.Error, OSError):
@@ -748,6 +974,12 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _require_admin(self) -> bool:
+        if self._role() != "admin":
+            self._send_json(403, {'error': 'Admin access required'})
+            return False
+        return True
+
     # ── GET dispatcher ────────────────────────────────────────────────────
     def do_GET(self) -> None:
         self._request(self._dispatch_get, write=False)
@@ -755,20 +987,25 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch_get(self, db) -> None:
         path = urlsplit(self.path).path
         routes = {
-            "/":           self._home,
-            "/products":   self._products_list,
-            "/cart":       self._cart_view,
-            "/login":      self._login_form,
-            "/register":   self._register_form,
-            "/logout":     self._logout_read,
-            "/orders":     self._orders_list,
-            "/admin":      self._admin_panel,
-            "/health":     self._health,
+            "/":               self._home,
+            "/products":       self._products_list,
+            "/cart":           self._cart_view,
+            "/login":          self._login_form,
+            "/register":       self._register_form,
+            "/logout":         self._logout_read,
+            "/orders":         self._orders_list,
+            "/admin":          self._admin_panel,
+            "/admin/products": self._admin_panel,
+            "/health":         self._health,
         }
         if path in routes:
             routes[path](db)
+        elif path.startswith("/admin/orders/"):
+            self._admin_order_detail(db, path)
         elif path.startswith("/products/"):
             self._product_detail(db, path)
+        elif path.startswith("/orders/"):
+            self._order_detail(db, path)
         elif path.startswith("/download/invoice"):
             self._download_invoice(db)
         elif path.startswith("/api/"):
@@ -786,14 +1023,20 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch_post(self, db) -> None:
         path = urlsplit(self.path).path
         routes = {
-            "/login":         self._login_submit,
-            "/register":      self._register_submit,
-            "/logout":        self._logout,
-            "/cart/add":      self._cart_add,
-            "/cart/remove":   self._cart_remove,
-            "/checkout":      self._checkout,
-            "/reviews":       self._review_submit,
-            "/reset":         self._reset,
+            "/login":                  self._login_submit,
+            "/register":               self._register_submit,
+            "/logout":                 self._logout,
+            "/cart/add":               self._cart_add,
+            "/cart/update":            self._cart_update,
+            "/cart/remove":            self._cart_remove,
+            "/checkout":               self._checkout,
+            "/reviews":                self._review_submit,
+            "/admin/products/add":     self._admin_product_add,
+            "/admin/products/update":  self._admin_product_update,
+            "/admin/products/archive": self._admin_product_archive,
+            "/admin/products/stock":   self._admin_product_stock,
+            "/admin/orders/status":    self._admin_order_status,
+            "/reset":                  self._reset,
         }
         if path in routes:
             routes[path](db)
@@ -806,7 +1049,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── Home ─────────────────────────────────────────────────────────────
     def _home(self, db) -> None:
-        rows = db.execute("SELECT p.*, c.name AS cat_name FROM products p JOIN categories c ON p.category_id=c.id LIMIT 6").fetchall()
+        rows = db.execute("SELECT p.*, c.name AS cat_name FROM products p JOIN categories c ON p.category_id=c.id LEFT JOIN product_archives pa ON p.id=pa.product_id WHERE pa.product_id IS NULL LIMIT 6").fetchall()
         cards = "".join(self._product_card(r) for r in rows)
         body = f"""
         <div class='card' style='background:linear-gradient(135deg,#1a1a2e,#16213e);color:#fff;margin-bottom:24px'>
@@ -833,6 +1076,17 @@ class Handler(BaseHTTPRequestHandler):
         name = html_escape(row["name"])
         price = f"${row['price']:.2f}"
         cat = html_escape(row["cat_name"])
+        stock = row["stock"]
+        if stock <= 0:
+            action_btn = "<span class='badge' style='background:#e0e0e0;color:#666;padding:6px 12px'>Out of stock</span>"
+        else:
+            action_btn = f"""
+            <form method='POST' action='/cart/add' style='display:inline'>
+              {self._csrf_field()}
+              <input type='hidden' name='product_id' value='{pid}'>
+              <input type='hidden' name='quantity' value='1'>
+              <button class='btn btn-primary btn-sm'>Add to Cart</button>
+            </form>"""
         return f"""
         <div class='product-card'>
           <div class='info'>
@@ -841,12 +1095,7 @@ class Handler(BaseHTTPRequestHandler):
             <div class='price'>{price}</div>
             <a href='/products/{pid}' class='btn btn-secondary btn-sm'>View Details</a>
             &nbsp;
-            <form method='POST' action='/cart/add' style='display:inline'>
-              {self._csrf_field()}
-              <input type='hidden' name='product_id' value='{pid}'>
-              <input type='hidden' name='quantity' value='1'>
-              <button class='btn btn-primary btn-sm'>Add to Cart</button>
-            </form>
+            {action_btn}
           </div>
         </div>"""
 
@@ -904,7 +1153,23 @@ class Handler(BaseHTTPRequestHandler):
 
         u = self._username()
         review_form = ""
-        if u:
+        archived = db.execute("SELECT 1 FROM product_archives WHERE product_id=?", (pid,)).fetchone() is not None
+        if archived:
+            purchase_html = "<div class='alert' style='background:#f0f0f0;color:#666'>This product has been archived and is no longer available for purchase.</div>"
+            review_form = ""
+        elif row["stock"] <= 0:
+            purchase_html = "<p style='color:#888'>This product is currently out of stock.</p>"
+        else:
+            purchase_html = f"""<form method='POST' action='/cart/add'>
+                {self._csrf_field()}
+                <input type='hidden' name='product_id' value='{pid}'>
+                <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
+                  <input name='quantity' type='number' value='1' min='1' max='{row["stock"]}' style='width:80px'>
+                  <button class='btn btn-primary'>Add to Cart</button>
+                </div>
+              </form>"""
+
+        if u and not archived:
             review_form = f"""
             <div class='card'>
               <h3>Write a Review</h3>
@@ -931,15 +1196,8 @@ class Handler(BaseHTTPRequestHandler):
               <h1 style='margin:8px 0'>{html_escape(row["name"])}</h1>
               <p style='margin:12px 0;color:#555'>{html_escape(row["description"])}</p>
               <div style='font-size:28px;color:#e94560;font-weight:700;margin:16px 0'>${row["price"]:.2f}</div>
-              <p style='color:#888;font-size:14px;margin-bottom:16px'>{row["stock"]} in stock</p>
-              <form method='POST' action='/cart/add'>
-                {self._csrf_field()}
-                <input type='hidden' name='product_id' value='{pid}'>
-                <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
-                  <input name='quantity' type='number' value='1' min='1' max='{row["stock"]}' style='width:80px'>
-                  <button class='btn btn-primary'>Add to Cart</button>
-                </div>
-              </form>
+              <p style='color:#888;font-size:14px;margin-bottom:16px'>{"<span class='badge badge-archived'>Archived</span>" if archived else ("<span style='color:#c00;font-weight:600'>Out of stock</span>" if row["stock"] <= 0 else f"{row['stock']} in stock")}</p>
+              {purchase_html}
             </div>
           </div>
         </div>
@@ -953,44 +1211,70 @@ class Handler(BaseHTTPRequestHandler):
     def _cart_view(self, db) -> None:
         sid = self._session()
         rows = db.execute("""
-            SELECT c.id, c.quantity, p.name, p.price, p.id AS pid
+            SELECT c.id, c.quantity, p.name, p.price, p.id AS pid, p.stock, pa.product_id AS is_archived
             FROM cart c JOIN products p ON c.product_id=p.id
+            LEFT JOIN product_archives pa ON p.id=pa.product_id
             WHERE c.session_id=?""", (sid,)).fetchall()
         if not rows:
             body = "<div class='card'><h2>Your Cart</h2><p>Your cart is empty. <a href='/products'>Shop now →</a></p></div>"
         else:
-            total = sum(r["price"] * r["quantity"] for r in rows)
-            items_html = "".join(f"""
-            <tr>
-              <td><a href='/products/{r["pid"]}'>{html_escape(r["name"])}</a></td>
-              <td>${r["price"]:.2f}</td>
-              <td>{r["quantity"]}</td>
-              <td>${r["price"]*r["quantity"]:.2f}</td>
-              <td>
-                <form method='POST' action='/cart/remove' style='display:inline'>
-                  {self._csrf_field()}
-                  <input type='hidden' name='cart_id' value='{r["id"]}'>
-                  <button class='btn btn-secondary btn-sm'>Remove</button>
-                </form>
-              </td>
-            </tr>""" for r in rows)
+            total_cents = 0
+            items_html = []
+            has_stale_stock = False
+            for r in rows:
+                unit_cents = _to_minor(r["price"])
+                sub_cents = unit_cents * r["quantity"]
+                total_cents += sub_cents
+                sub_float = _from_minor(sub_cents)
+                stale_msg = ""
+                if r["is_archived"] is not None:
+                    has_stale_stock = True
+                    stale_msg = "<div style='color:#c00;font-size:12px'>⚠️ Product archived / unavailable</div>"
+                elif r["stock"] < r["quantity"]:
+                    has_stale_stock = True
+                    stale_msg = f"<div style='color:#c00;font-size:12px'>⚠️ Only {r['stock']} available</div>" if r['stock'] > 0 else "<div style='color:#c00;font-size:12px'>⚠️ Out of stock</div>"
+                items_html.append(f"""
+                <tr>
+                  <td><a href='/products/{r["pid"]}'>{html_escape(r["name"])}</a>{stale_msg}</td>
+                  <td>${r["price"]:.2f}</td>
+                  <td>
+                    <form method='POST' action='/cart/update' style='display:flex;align-items:center;gap:6px'>
+                      {self._csrf_field()}
+                      <input type='hidden' name='cart_id' value='{r["id"]}'>
+                      <input type='number' name='quantity' value='{r["quantity"]}' min='1' max='{min(99, max(1, r["stock"]))}' style='width:65px;margin-bottom:0'>
+                      <button class='btn btn-secondary btn-sm'>Update</button>
+                    </form>
+                  </td>
+                  <td>${sub_float:.2f}</td>
+                  <td>
+                    <form method='POST' action='/cart/remove' style='display:inline'>
+                      {self._csrf_field()}
+                      <input type='hidden' name='cart_id' value='{r["id"]}'>
+                      <button class='btn btn-secondary btn-sm'>Remove</button>
+                    </form>
+                  </td>
+                </tr>""")
+            total = _from_minor(total_cents)
+            items_rows = "".join(items_html)
+            checkout_btn = f"<button class='btn btn-primary' style='margin-top:8px'>Place Order (${total:.2f})</button>" if not has_stale_stock else "<div class='alert alert-error' style='margin-top:8px'>Some items have insufficient stock. Please update quantities before checkout.</div>"
             body = f"""
             <div class='card'>
               <h2>Your Cart</h2>
               <table style='margin:16px 0'>
                 <tr><th>Product</th><th>Price</th><th>Qty</th><th>Subtotal</th><th></th></tr>
-                {items_html}
+                {items_rows}
               </table>
               <div style='text-align:right;font-size:20px;font-weight:700;margin:16px 0'>
                 Total: <span style='color:#e94560'>${total:.2f}</span>
               </div>
               <form method='POST' action='/checkout'>
                 {self._csrf_field()}
+                <input type='hidden' name='idempotency_key' value='{secrets.token_hex(16)}'>
                 <h3 style='margin-bottom:12px'>Shipping Information</h3>
                 <label>Full Name</label><input name='full_name' placeholder='John Doe' required>
                 <label>Address</label><input name='address' placeholder='123 Main St, City' required>
                 <label>Email</label><input name='email' type='email' placeholder='you@example.com' required>
-                <button class='btn btn-primary' style='margin-top:8px'>Place Order (${total:.2f})</button>
+                {checkout_btn}
               </form>
             </div>"""
         self._send(200, _render("Cart", body, self._nav()))
@@ -999,20 +1283,41 @@ class Handler(BaseHTTPRequestHandler):
         f = self._form()
         sid = self._session()
         pid = _positive_id(f.get('product_id', '0'))
-        qty = int(f.get('quantity', '1'))
-        product = db.execute('SELECT stock FROM products WHERE id=?', (pid,)).fetchone()
-        if product is None:
+        qty = _validate_quantity(f.get('quantity', '1'))
+        product = db.execute(
+            'SELECT p.stock, pa.product_id AS is_archived FROM products p '
+            'LEFT JOIN product_archives pa ON p.id=pa.product_id WHERE p.id=?', (pid,)
+        ).fetchone()
+        if product is None or product['is_archived'] is not None:
             self._send_json(409, {'error': 'Product unavailable'}); return
+        if product['stock'] <= 0:
+            self._send_json(409, {'error': 'Product is out of stock'}); return
         existing = db.execute('SELECT id, quantity FROM cart WHERE session_id=? AND product_id=?', (sid, pid)).fetchone()
         total = qty + (existing['quantity'] if existing else 0)
-        if not 1 <= qty <= 99 or not 1 <= total <= min(99, product['stock']):
+        if total > min(99, product['stock']):
             raise ValueError('Invalid quantity')
         if not existing and db.execute('SELECT count(*) FROM cart WHERE session_id=?', (sid,)).fetchone()[0] >= 50:
             raise ValueError('Cart limit')
         if existing:
-            db.execute("UPDATE cart SET quantity=? WHERE id=?", (existing["quantity"] + qty, existing["id"]))
+            db.execute("UPDATE cart SET quantity=? WHERE id=?", (total, existing["id"]))
         else:
             db.execute("INSERT INTO cart (session_id, product_id, quantity) VALUES (?,?,?)", (sid, pid, qty))
+        self._redirect('/cart')
+
+    def _cart_update(self, db) -> None:
+        f = self._form()
+        sid = self._session()
+        cart_id = _positive_id(f.get('cart_id', '0'))
+        qty = _validate_quantity(f.get('quantity', ''))
+        item = db.execute(
+            "SELECT c.id, c.product_id, p.stock FROM cart c JOIN products p ON c.product_id=p.id WHERE c.id=? AND c.session_id=?",
+            (cart_id, sid)
+        ).fetchone()
+        if item is None:
+            self._send_json(404, {'error': 'Cart item not found'}); return
+        if qty > min(99, item['stock']):
+            raise ValueError('Invalid quantity')
+        db.execute("UPDATE cart SET quantity=? WHERE id=? AND session_id=?", (qty, cart_id, sid))
         self._redirect('/cart')
 
     def _cart_remove(self, db) -> None:
@@ -1025,39 +1330,116 @@ class Handler(BaseHTTPRequestHandler):
     # ── Checkout ─────────────────────────────────────────────────────────
     def _checkout(self, db) -> None:
         sid = self._session()
+        f = self._form()
+        uid = self._identity['user_id']
+        owner_key = f"user:{uid}" if uid is not None else f"guest:{sid}"
+
+        idem_key = (
+            _header(self, 'Idempotency-Key')
+            or _header(self, 'X-Idempotency-Key')
+            or f.get('idempotency_key', '')
+        ).strip()
+        if idem_key and not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', idem_key):
+            raise ValueError('Invalid idempotency key')
+
+        full_name = f.get('full_name', '').strip()
+        address = f.get('address', '').strip()
+        email = f.get('email', '').strip()
+        if len(full_name) > 100 or len(address) > 200:
+            raise ValueError('Invalid shipping details')
+        if email and not re.fullmatch(r'[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?', email):
+            raise ValueError('Invalid email')
+
+        req_hash = hashlib.sha256(f"{full_name}|{address}|{email}".encode('utf-8')).hexdigest()
+
+        if idem_key:
+            existing_record = db.execute(
+                "SELECT order_id, request_hash FROM order_idempotency WHERE key=? AND owner_key=?",
+                (idem_key, owner_key)
+            ).fetchone()
+            if existing_record is not None:
+                if existing_record['request_hash'] == req_hash:
+                    order = db.execute("SELECT * FROM orders WHERE id=?", (existing_record['order_id'],)).fetchone()
+                    if order is None:
+                        self._send_json(404, {'error': 'Order not found'}); return
+                    body = f"""
+                    <div class='card' style='text-align:center;padding:48px'>
+                      <div style='font-size:64px'>✅</div>
+                      <h2 style='margin:16px 0'>Order Placed Successfully!</h2>
+                      <p>Order #{order['id']} &bull; Total: <strong>${order['total']:.2f}</strong></p>
+                      <p style='margin:12px 0;color:#555'>Lab order only: no payment was charged and no email was sent. Contact: {html_escape(email)}.</p>
+                      <a href='/download/invoice?file={order["invoice_file"]}' class='btn btn-secondary' style='margin-top:16px'>Download Invoice</a>
+                      &nbsp;
+                      <a href='/products' class='btn btn-primary' style='margin-top:16px'>Continue Shopping</a>
+                    </div>"""
+                    self._send(200, _render("Order Confirmed", body, self._nav()))
+                    return
+                else:
+                    self._send_json(409, {'error': 'Idempotency key conflict: different request payload'})
+                    return
+
         items = db.execute("""
-            SELECT c.quantity, p.price, p.id AS pid, p.name
+            SELECT c.quantity, p.price, p.id AS pid, p.name, p.stock, pa.product_id AS is_archived
             FROM cart c JOIN products p ON c.product_id=p.id
+            LEFT JOIN product_archives pa ON p.id=pa.product_id
             WHERE c.session_id=?""", (sid,)).fetchall()
         if not items:
             self._redirect("/cart"); return
-        total = sum(r["price"] * r["quantity"] for r in items)
-        uid = self._identity['user_id']
-        inv_name = f"INV-{uuid.uuid4().hex.upper()}.txt"
-        inv_path = UPLOAD_DIR / inv_name
-        _validate_path(inv_path, directory=False)
-        f = self._form()
-        # File và SQLite không atomic chung: commit failure có thể giữ orphan.
-        # Không xóa orphan tùy ý; reconciliation cần workflow SL-04/SL-07.
-        with inv_path.open('x', encoding='utf-8') as invoice:
-            invoice.write(
-                f"Invoice: {inv_name}\nName: {f.get('full_name','')}\n"
-                f"Address: {f.get('address','')}\nTotal: ${total:.2f}\n"
-                + "\n".join(f"  {r['name']} x{r['quantity']} @ ${r['price']:.2f}" for r in items)
-            )
-        cur = db.execute("INSERT INTO orders (user_id, session_id, total, status, invoice_file) VALUES (?,?,?,?,?)",
-                         (uid, sid, total, "completed", inv_name))
-        order_id = cur.lastrowid
+
         for r in items:
-            db.execute("INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES (?,?,?,?)",
-                       (order_id, r["pid"], r["quantity"], r["price"]))
+            if r['is_archived'] is not None:
+                self._send_json(409, {'error': f"Product '{r['name']}' is no longer available"}); return
+            if r['stock'] < r['quantity']:
+                self._send_json(409, {'error': f"Insufficient stock for '{r['name']}': {r['stock']} available, {r['quantity']} requested"})
+                return
+
+        total_cents = 0
+        for r in items:
+            unit_cents = _to_minor(r["price"])
+            subtotal_cents = unit_cents * r["quantity"]
+            total_cents += subtotal_cents
+        total = _from_minor(total_cents)
+
+        inv_name = f"INV-{uuid.uuid4().hex.upper()}.txt"
+
+        for r in items:
+            cur = db.execute(
+                "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                (r['quantity'], r['pid'], r['quantity'])
+            )
+            if cur.rowcount != 1:
+                raise sqlite3.IntegrityError(f"Insufficient stock for product {r['pid']}")
+
+        cur = db.execute(
+            "INSERT INTO orders (user_id, session_id, total, currency, status, invoice_file) VALUES (?,?,?,?,?,?)",
+            (uid, sid, total, SHOPLAB_CURRENCY, "completed", inv_name)
+        )
+        order_id = cur.lastrowid
+
+        for r in items:
+            db.execute(
+                "INSERT INTO order_items (order_id, product_id, quantity, unit_price, currency) VALUES (?,?,?,?,?)",
+                (order_id, r["pid"], r["quantity"], _from_minor(_to_minor(r["price"])), SHOPLAB_CURRENCY)
+            )
+
+        if idem_key:
+            db.execute(
+                "INSERT INTO order_idempotency (key, owner_key, user_id, session_id, order_id, request_hash, created_at) VALUES (?,?,?,?,?,?,?)",
+                (idem_key, owner_key, uid, sid, order_id, req_hash, _now())
+            )
+
         db.execute("DELETE FROM cart WHERE session_id=?", (sid,))
+
+        # Post-commit invoice generation: filesystem side effect tách biệt khỏi DB transaction
+        items_data = [{'name': r['name'], 'quantity': r['quantity'], 'price': r['price']} for r in items]
+        self._post_commit_action = (self._create_invoice_post_commit, (inv_name, full_name, address, total, items_data))
+
         body = f"""
         <div class='card' style='text-align:center;padding:48px'>
           <div style='font-size:64px'>✅</div>
           <h2 style='margin:16px 0'>Order Placed Successfully!</h2>
           <p>Order #{order_id} &bull; Total: <strong>${total:.2f}</strong></p>
-          <p style='margin:12px 0;color:#555'>Lab order only: no payment was charged and no email was sent. Contact: {html_escape(f.get("email",""))}.</p>
+          <p style='margin:12px 0;color:#555'>Lab order only: no payment was charged and no email was sent. Contact: {html_escape(email)}.</p>
           <a href='/download/invoice?file={inv_name}' class='btn btn-secondary' style='margin-top:16px'>Download Invoice</a>
           &nbsp;
           <a href='/products' class='btn btn-primary' style='margin-top:16px'>Continue Shopping</a>
@@ -1066,20 +1448,34 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── Reviews ───────────────────────────────────────────────────────────
     def _review_submit(self, db) -> None:
-        f = self._form()
-        u = self._username()
         if not self._require_user():
             return
+        f = self._form()
+        u = self._username()
+        raw_pid = f.get("product_id", "")
         try:
-            pid = _positive_id(f.get("product_id", "0"))
-            rating = max(1, min(5, int(f.get("rating", "3"))))
+            pid = _positive_id(raw_pid)
         except ValueError:
-            self._redirect("/products"); return
-        body_text = f.get("body", "")
-        uid = self._identity['user_id']
+            self._send_json(400, {'error': 'Invalid product ID'}); return
+        prod = db.execute("SELECT id FROM products WHERE id=?", (pid,)).fetchone()
+        if prod is None:
+            self._send_json(404, {'error': 'Product not found'}); return
+
+        raw_rating = f.get("rating", "")
+        try:
+            rating = int(raw_rating)
+            if rating < 1 or rating > 5 or str(rating) != raw_rating.strip():
+                raise ValueError()
+        except (ValueError, TypeError):
+            self._send_json(400, {'error': 'Rating must be an integer between 1 and 5'}); return
+
+        body_text = f.get("body", "").strip()
+        if not body_text:
+            self._send_json(400, {'error': 'Review body cannot be empty'}); return
         if len(body_text) > 4000:
-            raise ValueError('Review is too long')
-        # Lưu text; output escape khi render.
+            self._send_json(400, {'error': 'Review is too long'}); return
+
+        uid = self._identity['user_id']
         db.execute("INSERT INTO reviews (product_id, user_id, username, rating, body) VALUES (?,?,?,?,?)",
                    (pid, uid, u, rating, body_text))
         self._redirect(f"/products/{pid}")
@@ -1089,18 +1485,32 @@ class Handler(BaseHTTPRequestHandler):
         filename = self._p('file')
         if not re.fullmatch(r'INV-[A-F0-9]{32}\.txt', filename):
             self._send_json(400, {'error': 'Invalid invoice name'}); return
-        order = db.execute('SELECT user_id,session_id FROM orders WHERE invoice_file=?', (filename,)).fetchone()
+        order = db.execute('SELECT * FROM orders WHERE invoice_file=?', (filename,)).fetchone()
         if not owns_order(self._identity, order):
             self._send_json(404, {'error': 'Not found'}); return
         filepath = UPLOAD_DIR / filename
-        _validate_path(filepath, directory=False)
-        try:
-            content = filepath.read_text()
-            self._send(200, content, "text/plain")
-        except FileNotFoundError:
-            self._send(404, _render("Not Found", "<div class='card'><p>Invoice not found.</p></div>"))
-        except OSError:
-            self._send_json(503, {'error': 'Storage is unavailable'})
+        if filepath.is_file():
+            _validate_path(filepath, directory=False)
+            try:
+                content = filepath.read_text(encoding='utf-8')
+                self._send(200, content, "text/plain")
+                return
+            except OSError:
+                self._send_json(503, {'error': 'Storage is unavailable'})
+                return
+        # Dynamic on-demand fallback từ DB order items nếu file chưa ghi
+        order_items = db.execute(
+            'SELECT oi.quantity, oi.unit_price, p.name FROM order_items oi '
+            'JOIN products p ON oi.product_id=p.id WHERE oi.order_id=?', (order['id'],)
+        ).fetchall()
+        content = (
+            f"Invoice: {filename}\n"
+            f"Notice: ShopLab — Lab / Simulated Order Receipt (No payment charged)\n"
+            f"Total: ${order['total']:.2f}\n"
+            + "\n".join(f"  {r['name']} x{r['quantity']} @ ${r['unit_price']:.2f}" for r in order_items)
+            + "\n"
+        )
+        self._send(200, content, "text/plain")
 
     # ── Orders ────────────────────────────────────────────────────────────
     def _orders_list(self, db) -> None:
@@ -1112,41 +1522,465 @@ class Handler(BaseHTTPRequestHandler):
             orders = db.execute('SELECT * FROM orders WHERE user_id IS NULL AND session_id=? ORDER BY id DESC', (self._session(),)).fetchall()
         rows_html = "".join(f"""
         <tr>
-          <td>#{r["id"]}</td>
+          <td><a href='/orders/{r["id"]}'>#{r["id"]}</a></td>
           <td>${r["total"]:.2f}</td>
           <td><span class='badge badge-{html_escape(r["status"] or '')}'>{html_escape(r["status"] or '')}</span></td>
           <td>{html_escape(r["created_at"] or '')}</td>
-          <td><a href='/download/invoice?file={html_escape(urlencode({'file': r['invoice_file'] or ''})[5:])}' class='btn btn-secondary btn-sm'>Invoice</a></td>
+          <td>
+            <a href='/orders/{r["id"]}' class='btn btn-secondary btn-sm'>Detail</a>
+            <a href='/download/invoice?file={html_escape(urlencode({'file': r['invoice_file'] or ''})[5:])}' class='btn btn-secondary btn-sm'>Invoice</a>
+          </td>
         </tr>""" for r in orders)
         body = f"""
         <div class='card'>
           <h2>My Orders</h2>
-          {"<table style='margin-top:16px'><tr><th>#</th><th>Total</th><th>Status</th><th>Date</th><th></th></tr>" + rows_html + "</table>" if orders else "<p>No orders yet.</p>"}
+          {"<table style='margin-top:16px'><tr><th>#</th><th>Total</th><th>Status</th><th>Date</th><th>Actions</th></tr>" + rows_html + "</table>" if orders else "<p>No orders yet.</p>"}
         </div>"""
         self._send(200, _render("My Orders", body, self._nav()))
 
-    # ── Admin panel ───────────────────────────────────────────────────────
-    def _admin_panel(self, db) -> None:
-        # Role đọc từ DB-backed identity của request hiện tại.
-        role = self._role()
-        if role != "admin":
-            self._send(403, _render("Forbidden", "<div class='card'><h2>403 Forbidden</h2><p>Admin access required. <a href='/login'>Login</a></p></div>"))
-            return
-        users = db.execute("SELECT id, username, email, role FROM users").fetchall()
-        orders = db.execute("SELECT o.*, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.id ORDER BY o.id DESC").fetchall()
-        # Customer order endpoints vẫn owner-only, không bypass bởi admin.
-        user_rows = "".join(f"<tr><td>{r['id']}</td><td>{html_escape(r['username'])}</td><td>{html_escape(r['email'] or '')}</td><td>{r['role']}</td></tr>" for r in users)
-        order_rows = "".join(f"<tr><td>#{r['id']}</td><td>{html_escape(r['username'] or 'guest')}</td><td>${r['total']:.2f}</td><td>{html_escape(r['status'] or '')}</td></tr>" for r in orders)
+    def _order_detail(self, db, path: str) -> None:
+        if self._identity is None:
+            self._send_json(403, {'error': 'Request is not authorized'}); return
+        raw_id = path.removeprefix("/orders/").strip()
+        try:
+            oid = _positive_id(raw_id)
+        except ValueError:
+            self._send(404, _render("Not Found", "<div class='card'><h2>Order not found</h2></div>")); return
+        order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+        if order is None or not owns_order(self._identity, order):
+            self._send(404, _render("Not Found", "<div class='card'><h2>Order not found</h2></div>")); return
+        items = db.execute(
+            "SELECT oi.quantity, oi.unit_price, oi.currency, p.name FROM order_items oi "
+            "JOIN products p ON oi.product_id=p.id WHERE oi.order_id=?", (oid,)
+        ).fetchall()
+        items_html = "".join(f"""
+        <tr>
+          <td>{html_escape(item['name'])}</td>
+          <td>${item['unit_price']:.2f}</td>
+          <td>{item['quantity']}</td>
+          <td>${item['unit_price'] * item['quantity']:.2f}</td>
+        </tr>""" for item in items)
+        inv_link = ""
+        if order['invoice_file']:
+            inv_link = f"<a href='/download/invoice?file={html_escape(order['invoice_file'])}' class='btn btn-secondary' style='margin-right:8px'>Download Invoice</a>"
         body = f"""
         <div class='card'>
-          <h2>🔑 Admin Panel</h2>
-          <p style='color:#888;margin-bottom:24px'>Logged in as admin</p>
-          <h3>Users ({len(users)})</h3>
-          <table style='margin:12px 0 24px'><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th></tr>{user_rows}</table>
+          <h2>Order #{order['id']}</h2>
+          <p style='color:#666;margin:8px 0'>Date: {html_escape(order['created_at'] or '')} &bull; Status: <span class='badge badge-{html_escape(order['status'] or '')}'>{html_escape(order['status'] or '')}</span></p>
+          <table style='margin:16px 0'>
+            <tr><th>Product</th><th>Unit Price</th><th>Quantity</th><th>Subtotal</th></tr>
+            {items_html}
+          </table>
+          <p style='font-size:18px;margin-top:16px'><strong>Total: ${order['total']:.2f} {html_escape(order['currency'] or 'USD')}</strong></p>
+          <p style='color:#888;font-size:13px;margin-top:8px'>Lab order snapshot: amounts and items are immutable historical records.</p>
+          <div style='margin-top:16px'>
+            {inv_link}
+            <a href='/orders' class='btn btn-secondary'>← Back to Orders</a>
+          </div>
+        </div>"""
+        self._send(200, _render(f"Order #{order['id']}", body, self._nav()))
+
+    # ── Admin panel ───────────────────────────────────────────────────────
+    def _admin_panel(self, db) -> None:
+        if self._role() != "admin":
+            self._send(403, _render("Forbidden", "<div class='card'><h2>403 Forbidden</h2><p>Admin access required. <a href='/login'>Login</a></p></div>"))
+            return
+        categories = db.execute("SELECT id, name FROM categories ORDER BY id").fetchall()
+        products = db.execute("""
+            SELECT p.*, c.name AS cat_name, pa.archived_at
+            FROM products p
+            JOIN categories c ON p.category_id=c.id
+            LEFT JOIN product_archives pa ON p.id=pa.product_id
+            ORDER BY p.id DESC
+        """).fetchall()
+        orders = db.execute("SELECT o.*, u.username FROM orders o LEFT JOIN users u ON o.user_id=u.id ORDER BY o.id DESC").fetchall()
+        users = db.execute("SELECT id, username, email, role FROM users ORDER BY id").fetchall()
+        activity = db.execute("""
+            SELECT a.*, u.username
+            FROM admin_activity_log a
+            LEFT JOIN users u ON a.user_id=u.id
+            ORDER BY a.id DESC LIMIT 30
+        """).fetchall()
+
+        cat_options = "".join(f'<option value="{c["id"]}">{html_escape(c["name"])}</option>' for c in categories)
+
+        prod_rows = []
+        for p in products:
+            status_badge = "<span class='badge badge-archived'>Archived</span>" if p['archived_at'] else "<span class='badge badge-active'>Active</span>"
+            archive_action = ""
+            if not p['archived_at']:
+                archive_action = f"""
+                <form method='POST' action='/admin/products/archive' style='display:inline'>
+                  {self._csrf_field()}
+                  <input type='hidden' name='product_id' value='{p["id"]}'>
+                  <button class='btn btn-secondary btn-sm'>Archive</button>
+                </form>"""
+            stock_form = f"""
+            <form method='POST' action='/admin/products/stock' style='display:flex;align-items:center;gap:6px'>
+              {self._csrf_field()}
+              <input type='hidden' name='product_id' value='{p["id"]}'>
+              <input type='hidden' name='expected_stock' value='{p["stock"]}'>
+              <input type='number' name='stock' value='{p["stock"]}' min='0' max='1000000' style='width:65px;margin-bottom:0'>
+              <button class='btn btn-secondary btn-sm'>Set</button>
+            </form>"""
+            prod_rows.append(f"""
+            <tr>
+              <td>#{p['id']}</td>
+              <td><strong>{html_escape(p['name'])}</strong></td>
+              <td>{html_escape(p['cat_name'])}</td>
+              <td>${p['price']:.2f}</td>
+              <td>{stock_form}</td>
+              <td>{status_badge}</td>
+              <td>{archive_action}</td>
+            </tr>""")
+
+        order_rows = []
+        for o in orders:
+            order_rows.append(f"""
+            <tr>
+              <td><a href='/admin/orders/{o["id"]}'>#{o["id"]}</a></td>
+              <td>{html_escape(o['username'] or 'guest')}</td>
+              <td>${o['total']:.2f}</td>
+              <td><span class='badge badge-{html_escape(o["status"] or "")}'>{html_escape(o["status"] or "")}</span></td>
+              <td>{html_escape(o['created_at'] or '')}</td>
+              <td><a href='/admin/orders/{o["id"]}' class='btn btn-secondary btn-sm'>Manage</a></td>
+            </tr>""")
+
+        user_rows = [f"<tr><td>{u['id']}</td><td>{html_escape(u['username'])}</td><td>{html_escape(u['email'] or '')}</td><td><span class='badge badge-{u['role']}'>{u['role']}</span></td></tr>" for u in users]
+        act_rows = [f"<tr><td>{html_escape(a['created_at'])}</td><td>{html_escape(a['username'] or 'system')}</td><td><code>{html_escape(a['action'])}</code></td><td>{html_escape(a['target_type'])} #{a['target_id']}</td><td>{html_escape(a['old_value'] or '')} → {html_escape(a['new_value'] or '')}</td></tr>" for a in activity]
+
+        body = f"""
+        <div class='card'>
+          <h2>🔑 Admin Dashboard</h2>
+          <p style='color:#666;margin-bottom:20px'>Logged in as administrator &bull; Lab simulated operations</p>
+          <div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px'>
+            <a href='#products' class='btn btn-secondary btn-sm'>Products ({len(products)})</a>
+            <a href='#add-product' class='btn btn-primary btn-sm'>+ Add Product</a>
+            <a href='#orders' class='btn btn-secondary btn-sm'>Orders ({len(orders)})</a>
+            <a href='#users' class='btn btn-secondary btn-sm'>Users ({len(users)})</a>
+            <a href='#activity' class='btn btn-secondary btn-sm'>Audit Log ({len(activity)})</a>
+          </div>
+        </div>
+
+        <div class='card' id='add-product' style='margin-bottom:24px'>
+          <h3>+ Add New Product</h3>
+          <form method='POST' action='/admin/products/add' style='margin-top:16px'>
+            {self._csrf_field()}
+            <div style='display:grid;grid-template-columns:1fr 1fr;gap:16px'>
+              <div>
+                <label for='prod_name'>Product Name</label>
+                <input id='prod_name' name='name' required placeholder='e.g. Ergonomic Keyboard'>
+              </div>
+              <div>
+                <label for='prod_cat'>Category</label>
+                <select id='prod_cat' name='category_id' required>
+                  {cat_options}
+                </select>
+              </div>
+              <div>
+                <label for='prod_price'>Price (USD)</label>
+                <input id='prod_price' name='price' type='text' required placeholder='49.99'>
+              </div>
+              <div>
+                <label for='prod_stock'>Initial Stock</label>
+                <input id='prod_stock' name='stock' type='number' min='0' max='1000000' value='10' required>
+              </div>
+            </div>
+            <label for='prod_desc'>Description</label>
+            <textarea id='prod_desc' name='description' rows='3' placeholder='Product details...'></textarea>
+            <button class='btn btn-primary'>Create Product</button>
+          </form>
+        </div>
+
+        <div class='card' id='products' style='margin-bottom:24px'>
+          <h3>Catalog Products ({len(products)})</h3>
+          {"<table style='margin-top:16px'><tr><th>ID</th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Status</th><th>Actions</th></tr>" + "".join(prod_rows) + "</table>" if products else "<p style='color:#666;margin-top:12px'>No products in catalog.</p>"}
+        </div>
+
+        <div class='card' id='orders' style='margin-bottom:24px'>
           <h3>All Orders ({len(orders)})</h3>
-          <table style='margin:12px 0'><tr><th>#</th><th>User</th><th>Total</th><th>Status</th></tr>{order_rows}</table>
+          {"<table style='margin-top:16px'><tr><th>#</th><th>User</th><th>Total</th><th>Status</th><th>Date</th><th>Actions</th></tr>" + "".join(order_rows) + "</table>" if orders else "<p style='color:#666;margin-top:12px'>No orders recorded yet.</p>"}
+        </div>
+
+        <div class='card' id='users' style='margin-bottom:24px'>
+          <h3>Users ({len(users)})</h3>
+          {"<table style='margin-top:16px'><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th></tr>" + "".join(user_rows) + "</table>" if users else "<p style='color:#666;margin-top:12px'>No registered users yet.</p>"}
+        </div>
+
+        <div class='card' id='activity'>
+          <h3>Recent Admin Activity Log ({len(activity)})</h3>
+          {"<table style='margin-top:16px'><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Target</th><th>Details</th></tr>" + "".join(act_rows) + "</table>" if activity else "<p style='color:#666;margin-top:12px'>No admin activity recorded yet.</p>"}
         </div>"""
         self._send(200, _render("Admin", body, self._nav()))
+
+    def _admin_order_detail(self, db, path: str) -> None:
+        if self._role() != "admin":
+            self._send(403, _render("Forbidden", "<div class='card'><h2>403 Forbidden</h2><p>Admin access required.</p></div>")); return
+        raw_id = path.removeprefix("/admin/orders/").strip()
+        try:
+            oid = _positive_id(raw_id)
+        except ValueError:
+            self._send(404, _render("Not Found", "<div class='card'><h2>Order not found</h2></div>")); return
+        order = db.execute("SELECT o.*, u.username, u.email FROM orders o LEFT JOIN users u ON o.user_id=u.id WHERE o.id=?", (oid,)).fetchone()
+        if order is None:
+            self._send(404, _render("Not Found", "<div class='card'><h2>Order not found</h2></div>")); return
+
+        items = db.execute(
+            "SELECT oi.quantity, oi.unit_price, oi.currency, p.name FROM order_items oi "
+            "JOIN products p ON oi.product_id=p.id WHERE oi.order_id=?", (oid,)
+        ).fetchall()
+        items_html = "".join(f"""
+        <tr>
+          <td>{html_escape(item['name'])}</td>
+          <td>${item['unit_price']:.2f}</td>
+          <td>{item['quantity']}</td>
+          <td>${item['unit_price'] * item['quantity']:.2f}</td>
+        </tr>""" for item in items)
+
+        curr_status = order['status'] or 'pending'
+        valid_next = ORDER_TRANSITIONS.get(curr_status, set())
+        options_html = "".join(f"<option value='{s}'>{s.title()}</option>" for s in sorted(valid_next))
+
+        status_form = ""
+        if valid_next:
+            status_form = f"""
+            <form method='POST' action='/admin/orders/status' style='margin-top:16px'>
+              {self._csrf_field()}
+              <input type='hidden' name='order_id' value='{oid}'>
+              <label>Update Status</label>
+              <div style='display:flex;gap:12px;align-items:center'>
+                <select name='status' style='max-width:200px;margin-bottom:0'>
+                  {options_html}
+                </select>
+                <button class='btn btn-primary btn-sm'>Update Status</button>
+              </div>
+            </form>"""
+        else:
+            status_form = "<p style='color:#666;margin-top:12px'>Terminal state: no further transitions allowed.</p>"
+
+        history = db.execute(
+            "SELECT * FROM admin_activity_log WHERE target_type='order' AND target_id=? ORDER BY id DESC",
+            (oid,)
+        ).fetchall()
+        history_rows = "".join(f"<tr><td>{html_escape(h['created_at'])}</td><td>{html_escape(h['old_value'] or '')} → {html_escape(h['new_value'] or '')}</td></tr>" for h in history)
+        history_table = f"<h4 style='margin-top:20px'>Status History</h4><table style='margin-top:8px'><tr><th>Timestamp</th><th>Change</th></tr>{history_rows}</table>" if history else ""
+
+        body = f"""
+        <div class='card'>
+          <a href='/admin#orders' style='color:#e94560;text-decoration:none;font-size:14px'>← Back to Admin Orders</a>
+          <h2 style='margin:16px 0 8px'>Admin Order #{order['id']}</h2>
+          <p style='color:#555'>Customer: <strong>{html_escape(order['username'] or 'guest')}</strong> ({html_escape(order['email'] or 'N/A')})</p>
+          <p style='color:#666;margin:8px 0'>Date: {html_escape(order['created_at'] or '')} &bull; Status: <span class='badge badge-{html_escape(curr_status)}'>{html_escape(curr_status)}</span></p>
+          <table style='margin:16px 0'>
+            <tr><th>Product</th><th>Unit Price</th><th>Quantity</th><th>Subtotal</th></tr>
+            {items_html}
+          </table>
+          <p style='font-size:18px;margin-top:16px'><strong>Total: ${order['total']:.2f} {html_escape(order['currency'] or 'USD')}</strong></p>
+          {status_form}
+          {history_table}
+        </div>"""
+        self._send(200, _render(f"Admin Order #{oid}", body, self._nav()))
+
+    def _admin_product_add(self, db) -> None:
+        if not self._require_admin():
+            return
+        f = self._form()
+        name = f.get('name', '').strip()
+        if not name or len(name) > 200:
+            self._send_json(400, {'error': 'Product name must be between 1 and 200 characters'}); return
+        desc = f.get('description', '').strip()
+        if len(desc) > 2000:
+            self._send_json(400, {'error': 'Description must be at most 2000 characters'}); return
+        raw_cat = f.get('category_id', '')
+        try:
+            cat_id = _positive_id(raw_cat)
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid category ID'}); return
+        cat = db.execute("SELECT id FROM categories WHERE id=?", (cat_id,)).fetchone()
+        if cat is None:
+            self._send_json(400, {'error': 'Category does not exist'}); return
+        raw_price = f.get('price', '')
+        try:
+            price = _validate_price(raw_price)
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid price'}); return
+        raw_stock = f.get('stock', '')
+        try:
+            stock = _validate_stock(raw_stock)
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid stock'}); return
+
+        cur = db.execute(
+            "INSERT INTO products (name, description, price, currency, category_id, stock) VALUES (?,?,?,?,?,?)",
+            (name, desc, price, SHOPLAB_CURRENCY, cat_id, stock)
+        )
+        new_id = cur.lastrowid
+        db.execute(
+            "INSERT INTO admin_activity_log (user_id, action, target_type, target_id, new_value, created_at) VALUES (?,?,?,?,?,?)",
+            (self._identity['user_id'], 'create_product', 'product', new_id, f"name={name}, price={price}, stock={stock}", datetime.now(timezone.utc).isoformat())
+        )
+        self._redirect('/admin#products')
+
+    def _admin_product_update(self, db) -> None:
+        if not self._require_admin():
+            return
+        f = self._form()
+        try:
+            pid = _positive_id(f.get('product_id', ''))
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid product ID'}); return
+        prod = db.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
+        if prod is None:
+            self._send_json(404, {'error': 'Product not found'}); return
+
+        name = f.get('name', prod['name']).strip()
+        if not name or len(name) > 200:
+            self._send_json(400, {'error': 'Product name must be between 1 and 200 characters'}); return
+        desc = f.get('description', prod['description'] or '').strip()
+        if len(desc) > 2000:
+            self._send_json(400, {'error': 'Description must be at most 2000 characters'}); return
+
+        cat_id = prod['category_id']
+        if 'category_id' in f and f['category_id'].strip():
+            try:
+                cat_id = _positive_id(f['category_id'])
+            except ValueError:
+                self._send_json(400, {'error': 'Invalid category ID'}); return
+            if db.execute("SELECT id FROM categories WHERE id=?", (cat_id,)).fetchone() is None:
+                self._send_json(400, {'error': 'Category does not exist'}); return
+
+        price = prod['price']
+        if 'price' in f and f['price'].strip():
+            try:
+                price = _validate_price(f['price'])
+            except ValueError:
+                self._send_json(400, {'error': 'Invalid price'}); return
+
+        stock = prod['stock']
+        expected_stock = None
+        if 'expected_stock' in f and f['expected_stock'].strip():
+            try:
+                expected_stock = _validate_stock(f['expected_stock'])
+            except ValueError:
+                self._send_json(400, {'error': 'Invalid expected stock'}); return
+
+        if 'stock' in f and f['stock'].strip():
+            try:
+                stock = _validate_stock(f['stock'])
+            except ValueError:
+                self._send_json(400, {'error': 'Invalid stock'}); return
+
+        if expected_stock is not None:
+            cur = db.execute(
+                "UPDATE products SET name=?, description=?, price=?, category_id=?, stock=? WHERE id=? AND stock=?",
+                (name, desc, price, cat_id, stock, pid, expected_stock)
+            )
+            if cur.rowcount == 0:
+                self._send_json(409, {'error': 'Stock has changed concurrently, please refresh and retry'}); return
+        else:
+            db.execute(
+                "UPDATE products SET name=?, description=?, price=?, category_id=?, stock=? WHERE id=?",
+                (name, desc, price, cat_id, stock, pid)
+            )
+
+        db.execute(
+            "INSERT INTO admin_activity_log (user_id, action, target_type, target_id, old_value, new_value, created_at) VALUES (?,?,?,?,?,?,?)",
+            (self._identity['user_id'], 'update_product', 'product', pid, f"stock={prod['stock']}, price={prod['price']}", f"stock={stock}, price={price}", datetime.now(timezone.utc).isoformat())
+        )
+        self._redirect('/admin#products')
+
+    def _admin_product_archive(self, db) -> None:
+        if not self._require_admin():
+            return
+        f = self._form()
+        try:
+            pid = _positive_id(f.get('product_id', ''))
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid product ID'}); return
+        prod = db.execute("SELECT id FROM products WHERE id=?", (pid,)).fetchone()
+        if prod is None:
+            self._send_json(404, {'error': 'Product not found'}); return
+
+        if db.execute("SELECT 1 FROM product_archives WHERE product_id=?", (pid,)).fetchone() is not None:
+            self._redirect('/admin#products'); return
+
+        db.execute("INSERT INTO product_archives (product_id, archived_at) VALUES (?,?)",
+                   (pid, datetime.now(timezone.utc).isoformat()))
+        db.execute(
+            "INSERT INTO admin_activity_log (user_id, action, target_type, target_id, created_at) VALUES (?,?,?,?,?)",
+            (self._identity['user_id'], 'archive_product', 'product', pid, datetime.now(timezone.utc).isoformat())
+        )
+        self._redirect('/admin#products')
+
+    def _admin_product_stock(self, db) -> None:
+        if not self._require_admin():
+            return
+        f = self._form()
+        try:
+            pid = _positive_id(f.get('product_id', ''))
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid product ID'}); return
+        prod = db.execute("SELECT stock FROM products WHERE id=?", (pid,)).fetchone()
+        if prod is None:
+            self._send_json(404, {'error': 'Product not found'}); return
+        try:
+            new_stock = _validate_stock(f.get('stock', ''))
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid stock value'}); return
+
+        expected_stock = None
+        if 'expected_stock' in f and f['expected_stock'].strip():
+            try:
+                expected_stock = _validate_stock(f['expected_stock'])
+            except ValueError:
+                self._send_json(400, {'error': 'Invalid expected stock'}); return
+
+        if expected_stock is not None:
+            cur = db.execute(
+                "UPDATE products SET stock=? WHERE id=? AND stock=?",
+                (new_stock, pid, expected_stock)
+            )
+            if cur.rowcount == 0:
+                self._send_json(409, {'error': 'Stock has changed concurrently, please refresh and retry'}); return
+        else:
+            db.execute("UPDATE products SET stock=? WHERE id=? AND stock>=0", (new_stock, pid))
+
+        db.execute(
+            "INSERT INTO admin_activity_log (user_id, action, target_type, target_id, old_value, new_value, created_at) VALUES (?,?,?,?,?,?,?)",
+            (self._identity['user_id'], 'stock_update', 'product', pid, str(prod['stock']), str(new_stock), datetime.now(timezone.utc).isoformat())
+        )
+        self._redirect('/admin#products')
+
+    def _admin_order_status(self, db) -> None:
+        if not self._require_admin():
+            return
+        f = self._form()
+        try:
+            oid = _positive_id(f.get('order_id', ''))
+        except ValueError:
+            self._send_json(400, {'error': 'Invalid order ID'}); return
+        new_status = f.get('status', '').strip().lower()
+        if not new_status:
+            self._send_json(400, {'error': 'Status cannot be empty'}); return
+
+        order = db.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
+        if order is None:
+            self._send_json(404, {'error': 'Order not found'}); return
+
+        curr_status = order['status'] or 'pending'
+        if new_status == curr_status:
+            self._redirect(f"/admin/orders/{oid}"); return
+
+        valid_transitions = ORDER_TRANSITIONS.get(curr_status, set())
+        if new_status not in valid_transitions:
+            self._send_json(400, {'error': f"Invalid status transition from '{curr_status}' to '{new_status}'"}); return
+
+        db.execute("UPDATE orders SET status=? WHERE id=?", (new_status, oid))
+        db.execute(
+            "INSERT INTO admin_activity_log (user_id, action, target_type, target_id, old_value, new_value, created_at) VALUES (?,?,?,?,?,?,?)",
+            (self._identity['user_id'], 'order_status_update', 'order', oid, curr_status, new_status, datetime.now(timezone.utc).isoformat())
+        )
+        self._redirect(f"/admin/orders/{oid}")
 
     # ── Auth ──────────────────────────────────────────────────────────────
     def _login_form(self, db) -> None:

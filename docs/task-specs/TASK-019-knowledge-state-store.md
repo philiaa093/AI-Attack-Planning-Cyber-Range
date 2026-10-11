@@ -6,71 +6,75 @@
 
 ## Purpose
 
-Deliver knowledge-state store for bounded AI planning in isolated Web Cyber Range.
+Giữ knowledge-state store đã có và mô tả compatibility verification khi observations đến từ web target snapshot mới.
 
 ## Background
 
-Project covers SQL injection, cross-site scripting, and path traversal with RULE, LLM, RL, and HYBRID planners.
+`VALIDATED` chỉ giới hạn perception evidence hiện có; không xác nhận web mới. StateManager hiện có là API tái dùng, không sửa trong scope này; validation cũ không áp dụng tự động cho snapshot mới.
 
 ## Scope
 
-Topic-specific artifact for knowledge-state store.
+Rà facts/provenance, run identity, session/episode isolation, duplicate/replay và một budget owner khi target surfaces thay đổi. Dẫn runtime/safety/provenance/replay acceptance tới [SL-07](SL-07-lab-runtime.md), [SL-08](SL-08-discovery-safety.md), [SL-09](SL-09-observation-planner.md).
 
 ## Out of Scope
 
-Public targets, Internet scanning, credentials, arbitrary shell, dynamic actions, executable exploit payloads, runtime claims, and fabricated results.
+Không đổi StateManager, state schema, action semantics, target ID, budgets hoặc planner. Không thêm RL, payload, live command, source/ground-truth input hay runtime claim.
 
 ## Inputs
 
-Approved source documents, typed contracts, and dependency outputs.
+Approved snapshot/impact assessment, observations đã redact, StateManager API hiện có, historical perception evidence và approved policy/budget identities.
 
 ## Outputs
 
-Reviewable knowledge-state store artifact with explicit status and evidence boundary.
+Compatibility cases và receipts cần thiết để tái dùng state với observation surfaces bị ảnh hưởng; không tạo claim execution hoặc planner validation.
 
 ## Interfaces
 
-Canonical root docs, typed planner/policy boundaries, and evidence references.
+Tái dùng `apply_observation`, `decrement_requests`, `decrement_seconds`, `get_state` và `reconstruct_from_observations`. Executor/gate theo SL-08 và planner proposal boundary theo SL-09; state không dispatch network.
 
 ## Data Contracts
 
-Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable.
+Facts mang source observation identity/provenance; run/session/episode identifiers tách biệt. Budget chỉ có một owner/source of truth; replay/duplicate không được silently double-decrement hoặc overwrite conflict.
 
 ## Dependencies
 
 TASK-005, TASK-018
+
 ## Implementation Requirements
 
-Produce deterministic reconstruction; preserve source hierarchy and status vocabulary.
+1. Kiểm tra facts/provenance của links/forms/redirects/auth-response observations tương thích snapshot mới mà không đưa source/ground truth vào state.
+2. Kiểm tra identity tách biệt giữa run, session và episode; không merge facts chỉ vì route/UI giống nhau.
+3. Kiểm tra duplicate/replay reconstruction, conflict handling và budget accounting theo API hiện có.
+4. Không suy finding, severity, impact hoặc completed phase từ state fact; observations vẫn là boundary of truth.
 
 ## Safety Requirements
 
-Validate trust-boundary input. Enforce lab target/action allowlists, budget, rate, approval, refusal, and evidence preservation.
+State input là trust boundary: validate/redact trước ingest, preserve lab target/action/approval/refusal constraints ở dispatcher, không log token/credential. Conflict hoặc evidence loss risk phải dừng handoff liên quan.
 
 ## Testing Requirements
 
-Focused check covers deterministic reconstruction; main validator and unit tests deferred to validator repair.
+Sau impact assessment, chạy compatibility cases facts/provenance, identities, session/episode isolation, duplicate/replay và single budget owner. Discovery/refusal/evidence failure theo SL-08; planner replan/provenance theo SL-09, không tự thêm runtime check.
 
 ## Acceptance Criteria
 
-Deterministic reconstruction exists as topic-specific reviewable artifact; no VALIDATED claim without required review and evidence.
+Receipts mới chứng minh phần state interaction bị ảnh hưởng có semantics rõ và replay/budget không sai; evidence lịch sử bảo toàn. Không nâng validation của web snapshot mới hoặc planner/provider từ unit/fixture result.
 
 ## Evidence Required
 
-Source record, check receipt, and immutable evidence or explicit UNRESOLVED marker.
+Giữ perception evidence hiện có. Check mới cần exact command/result, UTC, run ID, snapshot source/hash, redaction, expected/observed, identity/provenance và budget owner khi execution được duyệt.
 
 ## Failure Conditions
 
-Missing dependency, malformed contract, unsupported claim, scope mismatch, broken link, or data-loss risk blocks completion.
+Fact without provenance, identity leakage, cross-session/episode contamination, duplicate overwrite, double budget decrement, ground-truth leak, malformed input hoặc evidence mismatch: block affected handoff and preserve records.
 
 ## Related Guides
 
-See matching exact guide under docs/guides/.
+Xem planning, AI-agent fundamentals và safety guides; requirements executable chuẩn ở SL-08/SL-09.
 
 ## Related Runbooks
 
-See applicable exact runbook under docs/runbooks/; no runtime authorization.
+Không có lệnh live hoặc provider run; áp dụng runbook chỉ sau approved runtime scope.
 
 ## Related ADRs
 
-See applicable decision under docs/adr/.
+ADR-005 giữ separation; ADR-009 giữ ground-truth isolation; ADR-012/ADR-013 giữ policy/runtime boundaries.

@@ -7,7 +7,8 @@
     "lab-clean-001",
     "lab-webapp-a",
     "lab-webapp-b",
-    "lab-clean-control"
+    "lab-clean-control",
+    "lab-ecommerce"
   ],
   "deny_public_targets": true,
   "deny_external_hosts": true

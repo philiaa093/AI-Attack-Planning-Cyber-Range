@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`. Crawler/prototype hiện có chưa chứng minh mọi request đi qua policy và approval.
+`IMPLEMENTED` (chưa `VALIDATED`, cần independent review). Đã hoàn thành triển khai kiến trúc discovery dựa trên quan sát và centralized safety gate (`runtime/discovery_recorder.py`, `runtime/discovery_gate.py`, `runtime/discovery_engine.py`) với toàn bộ 7 preflight tests E01–E07, 9 safety tests D01–D09 và 7/7 pha live Docker runtime verification PASS.
 
 ## Purpose
 
@@ -77,7 +77,7 @@ D01–D09 pass với exact dispatch counters và receipts; tất cả transport 
 
 ## Evidence Required
 
-Case/command/exit/result, gate decisions và dispatch counts; redacted inventory/provenance, budget timeline và failure injection receipts. Live evidence chỉ new approved run, không overwrite.
+Case/command/exit/result, gate decisions và dispatch counts; redacted inventory/provenance, budget timeline và failure injection receipts. Live evidence chỉ new approved run, không overwrite. Live verification evidence lưu trữ tại `evidence/runtime/RUN-SL08-LIVE/` với băm SHA-256 bền vững.
 
 ## Failure Conditions
 

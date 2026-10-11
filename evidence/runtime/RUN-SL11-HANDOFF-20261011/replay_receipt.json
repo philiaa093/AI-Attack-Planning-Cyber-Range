@@ -1,0 +1,25 @@
+{
+  "run_id": "RUN-SL11-HANDOFF-20261011",
+  "run_1": {
+    "success": true,
+    "network_dispatch_count": 0,
+    "provider_call_count": 0,
+    "observations_replayed": 8,
+    "reconstructed_facts_count": 16,
+    "proposed_action": "ACTION-RECON-001",
+    "actual_mode": "RULE"
+  },
+  "run_2": {
+    "success": true,
+    "network_dispatch_count": 0,
+    "provider_call_count": 0,
+    "observations_replayed": 8,
+    "reconstructed_facts_count": 16,
+    "proposed_action": "ACTION-RECON-001",
+    "actual_mode": "RULE"
+  },
+  "deterministic": true,
+  "network_dispatch_count": 0,
+  "provider_call_count": 0,
+  "replayed_at_utc": "2026-10-11T07:47:35.681341Z"
+}

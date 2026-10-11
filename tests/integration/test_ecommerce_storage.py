@@ -518,32 +518,33 @@ class ShopLabStorageTests(unittest.TestCase):
             malformed.do_POST()
         self.assertEqual(malformed.responses, [400])
 
-    def test_invoice_write_failure_rolls_back_and_commit_failure_retains_orphan(self):
+    def test_invoice_write_failure_does_not_rollback_and_commit_failure_creates_no_orphan(self):
         self.start()
         token, row = self.guest()
         with self.app.storage_transaction(write=True) as db:
             db.execute('INSERT INTO cart(session_id,product_id,quantity) VALUES (?,1,1)', (row['cart_key'],))
-        failed = self.authorized_handler('/checkout', token=token, row=row)
-        with patch.object(Path, 'open', side_effect=PermissionError('fixture private path')):
-            failed.do_POST()
-        self.assertEqual(failed.responses, [503])
-        self.assertEqual(self.scalar('SELECT count(*) FROM orders'), 0)
-        self.assertEqual(self.scalar('SELECT count(*) FROM cart'), 1)
+        # Case A: Commit failure -> không invoice mới, không orphan file
         failed = self.authorized_handler('/checkout', token=token, row=row)
         with patch.object(self.app, '_connect', side_effect=self.failing_connection()):
             failed.do_POST()
         self.assertEqual(failed.responses, [503])
         self.assertEqual(self.scalar('SELECT count(*) FROM orders'), 0)
         self.assertEqual(self.scalar('SELECT count(*) FROM cart'), 1)
-        invoices = list(self.app.UPLOAD_DIR.iterdir())
-        self.assertEqual(len(invoices), 1)
-        before = invoices[0].read_bytes()
-        invoice_id = invoices[0].stem.removeprefix('INV-').lower()
-        collided = self.authorized_handler('/checkout', token=token, row=row)
-        with patch.object(self.app.uuid, 'uuid4', return_value=SimpleNamespace(hex=invoice_id)):
-            collided.do_POST()
-        self.assertEqual(collided.responses, [503])
-        self.assertEqual(invoices[0].read_bytes(), before)
+        self.assertEqual(len(list(self.app.UPLOAD_DIR.iterdir())), 0)
+
+        # Case B & C: Invoice filesystem failure post-commit không rollback order đã commit
+        handler = self.authorized_handler('/checkout', token=token, row=row)
+        with patch.object(Path, 'open', side_effect=PermissionError('fixture private path')):
+            handler.do_POST()
+        self.assertEqual(handler.responses, [200])
+        self.assertEqual(self.scalar('SELECT count(*) FROM orders'), 1)
+        self.assertEqual(self.scalar('SELECT count(*) FROM cart'), 0)
+        # Download route vẫn phục vụ được hóa đơn qua on-demand dynamic fallback
+        inv_file = self.scalar('SELECT invoice_file FROM orders')
+        dl = self.authorized_handler('/download/invoice?file=' + inv_file, token=token, row=row)
+        dl.do_GET()
+        self.assertEqual(dl.responses, [200])
+        self.assertIn(b'Invoice: INV-', dl.wfile.getvalue())
 
     def test_reset_remains_refused_and_download_rejects_path_input(self):
         handler = self.handler('/reset')

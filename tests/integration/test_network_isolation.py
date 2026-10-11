@@ -13,6 +13,7 @@ ALLOWED_TARGETS = {
     "lab-webapp-a",
     "lab-webapp-b",
     "lab-clean-control",
+    "lab-ecommerce",
 }
 
 
@@ -45,10 +46,10 @@ class NetworkIsolationTests(unittest.TestCase):
         self.assertEqual(target_ids, ALLOWED_TARGETS)
 
     def test_only_gateways_publish_new_target_ports(self):
-        targets = {"lab-webapp-a", "lab-webapp-b", "lab-clean-control"}
+        targets = {"lab-webapp-a", "lab-webapp-b", "lab-clean-control", "lab-ecommerce"}
         for name in targets:
             self.assertNotIn("ports", self.services[name])
-        for name in ("gateway-webapp-a", "gateway-webapp-b", "gateway-clean-control"):
+        for name in ("gateway-webapp-a", "gateway-webapp-b", "gateway-clean-control", "gateway-ecommerce"):
             self.assertTrue(self.services[name]["ports"])
             self.assertNotIn("TARGET_ID", self.services[name]["environment"])
 

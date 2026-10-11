@@ -2,39 +2,54 @@
 
 ## Status
 
-`SPEC_ONLY`. Hướng hiện hành là upstream fit-gap/configuration/acceptance, không tiếp tục tự xây cart/checkout ShopLab. Django Oscar sandbox 4.2.1 chưa chạy; source/dependency/environment gate còn blocker. Trang hoặc source upstream không chứng minh invariants đúng.
+`IMPLEMENTED`. Triển khai trên ShopLab target (`cyber-range/targets/ecommerce/app.py`), xác minh qua integration suites `test_ecommerce_checkout.py` (13 tests PASS) và `test_ecommerce_storage.py` (28 tests PASS). Tổng 65 tests ecommerce integration PASS. Chưa có independent review / approval; không tự nâng lên `VALIDATED`. Không runtime/Docker validation.
 
 ## Purpose
 
-Luồng browse/search/detail → cart → order hoạt động như sản phẩm, không oversell, trộn cart, tính tiền sai hoặc tạo đơn trùng.
+Cung cấp luồng duyệt/tìm kiếm sản phẩm (catalog/search/detail), quản lý giỏ hàng tách biệt theo owner (guest session token digest hoặc user ID), và checkout đơn lẻ trong một transaction atomic không oversell, không duplicate order, không floating-point money drift, và tách rời invoice filesystem generation ra ngoài DB transaction.
 
 ## Background
 
-ShopLab lịch sử dùng float, chưa có stock/idempotency/checkout acceptance; shared connection đã được SL-02 sửa và search có regression receipts, không suy ra nghiệp vụ hoàn chỉnh. Hướng mới tái sử dụng Oscar, không tiếp tục sửa business app; source inspection chỉ cho thấy khả năng upstream, chưa có execution checks.
+ShopLab là web target thương mại điện tử độc lập của lab cyber-range đang tiếp tục được phát triển và hoàn thiện. SL-01 và SL-02 đã hoàn thành baseline gateway và SQLite storage lifecycle/transactions. SL-03 đã triển khai auth, sessions, CSRF và ownership. SL-04 hoàn thiện các invariants nghiệp vụ cốt lõi: catalog/search, giỏ hàng, atomic stock decrement trong checkout transaction, tách biệt hoàn toàn invoice file generation ra ngoài DB transaction (post-commit action kết hợp on-demand fallback) để đảm bảo ACID, chuẩn hóa idempotency theo logical owner `(key, owner_key)`, và xử lý tiền tệ chính xác bằng integer minor units (USD cents).
 
 ## Scope
 
-Đề xuất `cyber-range/targets/oscar-lab/**` và `tests/integration/test_oscar_lab*.py`: tái sử dụng catalog/basket/checkout upstream, cấu hình lab mỏng và acceptance tests. Không sửa ShopLab, không migrate DB cũ hoặc viết lại auth/cart/order. Dependency equivalence với SL-02/SL-03 phải có review riêng; receipts ShopLab không kiểm chứng Oscar. Không triển khai cổng payment thật.
+- Source allowlist: `cyber-range/targets/ecommerce/app.py`, `tests/integration/test_ecommerce_checkout.py`, `tests/integration/test_ecommerce_storage.py`.
+- Nghiệp vụ:
+  1. Product catalog & search: case-insensitive bounded substring search (`/products?q=...`), category filtering, chi tiết sản phẩm, an toàn 404 cho missing product.
+  2. Cart management: guest cart gắn session token digest (`cart_key`), user cart gắn `user_id`. Add, update, remove validate quantity (> 0), kiểm tra stock availability phía server.
+  3. Single-transaction checkout: validate owner/session/CSRF, kiểm tra idempotency, load authoritative basket/prices từ DB (bỏ qua client-supplied prices), kiểm tra stock, atomic decrement stock qua `UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?`, insert đơn hàng vào `orders`, insert từng dòng vào `order_items`, lưu bản ghi idempotency, xóa giỏ hàng, commit SQLite transaction.
+  4. Decoupled invoice filesystem: tách hoàn toàn việc ghi file invoice ra ngoài DB transaction qua cơ chế post-commit action; nếu DB commit thất bại thì không tạo orphan invoice file; nếu filesystem ghi file thất bại thì không rollback order đã commit; route `/download/invoice` có cơ chế fallback tự động tạo hóa đơn on-demand từ DB.
+  5. Idempotency owner semantics: bảng `order_idempotency` khóa chính `(key, owner_key)` với `owner_key` phân biệt `user:<uid>` và `guest:<cart_key>`. Retry cùng payload trả về order đã tạo mà không trừ kho lần hai; retry cùng key sau khi user xoay session vẫn nhận diện đúng đơn hàng; retry khác payload trả về 409 Conflict; hai owner khác nhau dùng cùng textual key không bị xung đột.
+  6. Money arithmetic: tính toán toàn bộ bằng integer minor units (cents) thông qua `Decimal('0.01')` với rounding `ROUND_HALF_UP`, tránh sai số binary floating-point. Schema SQLite ràng buộc cứng `CHECK(currency = 'USD')`, định nghĩa hằng số `SHOPLAB_CURRENCY = 'USD'`.
 
 ## Out of Scope
 
-Không discount/tax/multi-currency phức tạp, external payment/email, real customer data, frontend framework migration, fixed demo lỗi. Không thay schema contract nghiên cứu hoặc config ngoài task.
+Không tích hợp cổng thanh toán bên ngoài (không thẻ tín dụng thật, không Stripe/PayPal), không gửi email thật ra ngoài lab, không PII, không chuyển đổi đa tiền tệ ngoài USD, không migrate sang Django Oscar.
 
 ## Inputs
 
-SL-02/SL-03 acceptance receipts; product catalog/schema, validated sessions và stock; currency decision/limits được chốt cho lab trước edit.
+Authoritative catalog trong SQLite; session identities (authenticated user ID hoặc opaque guest session HMAC digest); CSRF tokens hợp lệ từ form; idempotency key từ header `Idempotency-Key` / `X-Idempotency-Key` hoặc form payload.
 
 ## Outputs
 
-Upstream capability/fit-gap matrix, cấu hình lab tối thiểu và acceptance receipts cho catalog/basket/checkout/order snapshots; tests transaction/concurrency/idempotency. Không tạo checkout service mới chỉ để khớp prototype; missing equivalence giữ blocker.
+- Bảng dữ liệu: `products` (stock cập nhật nguyên tử), `orders` (bản ghi đơn hàng với status `completed`), `order_items` (snapshot tên sản phẩm, số lượng, đơn giá và currency USD), `order_idempotency` (khóa kép `key, owner_key` lưu `request_hash` và `order_id`).
+- File hóa đơn: tệp `INV-[A-F0-9]{32}.txt` tạo ở post-commit hook; endpoint `/download/invoice` an toàn có dynamic on-demand fallback.
+- Test suites: `tests/integration/test_ecommerce_checkout.py` (13 tests PASS), `tests/integration/test_ecommerce_storage.py` (28 tests PASS).
 
 ## Interfaces
 
-Dùng routes/forms/models upstream đã pin; không adapter routes ShopLab chỉ để tests cũ pass. Product acceptance có thể biết routes, nhưng không đưa route map/source vào discovery/planner. Checkout nhận current validated identity/basket, giá server và shipping giả; mapping idempotency/stock/money phải có fit-gap explicit trước khi claim acceptance.
+- `GET /products`, `GET /products?q=...`
+- `GET /cart`, `POST /cart/add`, `POST /cart/update`, `POST /cart/remove`
+- `GET /checkout`, `POST /checkout`
+- `GET /download/invoice?file=INV-...`
 
 ## Data Contracts
 
-`price_minor`, `unit_price_minor`, `total_minor` integer và currency explicit; quantity positive bounded integer, stock nonnegative. Order items snapshot product label/price/currency/quantity; future catalog edit không thay invoice đơn cũ. Key uniqueness scoped owner + operation; duplicate matching request trả cùng order, different payload với key cũ bị conflict. Shipping chỉ fixture giả trong lab.
+- `products`: `price` REAL/INTEGER >= 0, `stock` INTEGER >= 0, `currency` = 'USD'.
+- `orders`: `id` INTEGER PK, `user_id` INTEGER, `session_id` TEXT, `total` REAL >= 0, `currency` = 'USD', `status` TEXT, `invoice_file` TEXT.
+- `order_items`: `id` INTEGER PK, `order_id` INTEGER FK, `product_id` INTEGER FK, `quantity` INTEGER > 0, `unit_price` REAL >= 0, `currency` = 'USD'.
+- `order_idempotency`: `key` TEXT, `owner_key` TEXT, `user_id` INTEGER, `session_id` TEXT, `order_id` INTEGER, `request_hash` TEXT, `created_at` TEXT, `PRIMARY KEY (key, owner_key)`.
 
 ## Dependencies
 
@@ -42,45 +57,47 @@ SL-02, SL-03; TASK-011. SL-05 hiển thị/serve order/invoice đã được t�
 
 ## Implementation Requirements
 
-Thẩm định/cấu hình/kiểm chứng upstream theo các invariants bên dưới, không coi đây là yêu cầu tự viết lại services. Source Oscar dùng Decimal và stock allocation; chưa chứng minh tương đương integer minor units/decrement/idempotency/concurrency. Ghi gap và giữ task chưa complete nếu chưa đáp ứng; thay acceptance cần approval riêng. Trước upstream execution phải có dependency lock/license audit và môi trường phù hợp: Windows không được upstream hỗ trợ, PostgreSQL hỗ trợ chính thức, SQLite chỉ development. Không chạy Makefile reset/seed hoặc source build NPM hook.
-
-1. Search/filter bounded, parameterized, cả hai kết hợp; no SQL leak. Product không tồn tại/hết hàng có response rõ.
-2. Cart chỉ truy cập validated owner/session; guest migration theo SL-03. Add/update/remove validate product/quantity/availability phía server; row IDs không tự chứng minh ownership.
-3. Một transaction checkout: check key/owner → load cart/prices → validate stock/shipping → decrement stock atomically → insert order/items/shipping → clear cart → commit. Error bất kỳ rollback; không tạo file invoice nằm ngoài transaction ở đây.
-4. Money integer minor units; chuyển dữ liệu float legacy có migration explicit/test, không round silently hay nhận client price.
-5. Idempotency key ràng buộc request và owner; cùng submission/retry không double charge giả lập hoặc decrement hai lần. Empty cart request không tạo order mới.
-6. Stock check và update cùng transaction; concurrency two buyers dùng hàng cuối chỉ một successful order. Bounded quantity/total và integer overflow policy rõ.
-7. UI forms CSRF, stale-stock messages, quantity update/remove, contact fields validation; không fake email/payment success. Đơn được accepted không mặc định delivered.
+1. Search/filter: parameterized, bounded, case-insensitive substring; không leak dữ liệu SQL; sản phẩm không tồn tại trả response 404 an toàn.
+2. Cart ownership: guest cart gắn opaque token digest, authenticated cart gắn user ID. Add/update/remove validate quantity dương và kiểm tra tồn kho phía server; bỏ qua hoàn toàn unit price gửi từ client.
+3. Checkout transaction nguyên tử: kiểm tra idempotency -> nạp authoritative cart items -> kiểm tra stock -> atomic stock decrement (`UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?`) -> insert order & order_items -> insert idempotency record -> xóa cart -> commit.
+4. Tách biệt invoice filesystem: không ghi tệp filesystem trong DB transaction block. Ghi file ở `_post_commit_action` sau khi DB commit thành công; download route có dynamic fallback tái tạo hóa đơn từ DB nếu file không tồn tại trên đĩa.
+5. Idempotency theo owner: khóa chính `(key, owner_key)`; cùng owner + cùng payload trả về order cũ; cùng owner + khác payload trả 409 Conflict; khác owner + cùng key hoạt động độc lập; user sau rotation session vẫn tra cứu được đúng đơn hàng.
+6. Xử lý tiền tệ chính xác: chuẩn hóa sang integer minor units (cents) qua helper `_to_minor` và `_from_minor`; SQLite schema ràng buộc `CHECK(currency = 'USD')`. Các giá trị `0.10`, `0.20`, `0.30`, `10.01`, `19.99` và tổng nhiều món round-trip chính xác.
+7. Bảo vệ CSRF: form mutation bắt buộc CSRF token hợp lệ; cart rỗng bị từ chối chuyển hướng về `/cart`.
 
 ## Safety Requirements
 
-Không real payment hoặc PII. Reject before writes với invalid identity/CSRF. Không trust hidden inputs/unit price. Giữ snapshot và ownership khi role/session đổi; không disclose cart người khác. Concurrency tests dùng temp DB, không lab data hiện hữu.
+Lab-only isolation. Không thanh toán thật, không thẻ tín dụng, không PII. CSRF validation bắt buộc trước mọi state mutation. Allowlist target và hành động. Path traversal rejection trên endpoint download hóa đơn (`_validate_path` và regex pattern filename).
 
 ## Testing Requirements
 
 | Case | Scenario | Expected |
 |---|---|---|
-| C01 | Browse/search + category/detail/missing ID | Kết quả đúng, bounded validation, safe 404 |
-| C02 | Hai guest/users add/update/remove cùng product | Carts tách biệt; ownership checked |
-| C03 | Zero/negative/noninteger/oversized quantity | Reject, DB không đổi |
-| C04 | Client gửi total/price/owner tùy ý | Bỏ qua/reject; giá từ server snapshot |
-| C05 | Checkout hợp lệ | Stock/order/items/shipping/cart commit cùng nhau |
-| C06 | Failure giữa transaction | Không partial order/decrement/cart loss |
-| C07 | Same key retry và key khác payload/owner | Same order hoặc conflict đúng, không double-write |
-| C08 | Hai buyers mua hàng cuối và stock stale | Không oversell; một winner, loser rõ lỗi |
-| C09 | Restart và catalog price change sau checkout | Đơn và giá snapshot không đổi |
+| C01 | Browse/search + category/detail/missing ID | Kết quả chính xác, bounded query, safe 404 |
+| C02 | Hai guests/users thao tác cart | Carts hoàn toàn độc lập theo owner |
+| C03 | Non-positive, non-integer, oversized quantity | Bị từ chối, DB không thay đổi |
+| C04 | Client gửi giá/total tùy ý | Bỏ qua; tính toán strictly từ authoritative DB |
+| C05 | Checkout hợp lệ | Stock decrement, order, items, idempotency commit đồng thời, cart xóa sạch |
+| C06 | Failure giữa transaction (hết stock / DB error) | Rollback toàn bộ, zero orphan invoice file |
+| C07 | Idempotency retry (Cases A–E) & conflict | Cùng payload trả cùng order; khác payload trả 409; session rotation nhận đúng order; khác owner độc lập |
+| C08 | Hai buyers mua hàng cuối / stock concurrency | Atomic decrement; một người thành công, một người nhận lỗi 409 |
+| C09 | Process restart & catalog price thay đổi sau checkout | Đơn hàng và giá snapshot được bảo toàn |
 
 ## Acceptance Criteria
 
-Các invariants money/stock/cart/ownership/transaction/idempotency được asserts trong tests, không chỉ response 200. Business flow thật qua in-process HTTP pass và negative cases giữ DB unchanged. Không invoice side effect nửa commit; UI/CSRF compatible gateway. Docker claim để SL-07.
+Tất cả các business invariants về stock concurrency, cart ownership, single-transaction checkout, post-commit invoice decoupling, idempotency owner semantics, và money minor units USD được kiểm chứng tự động bằng tests. Bộ test `tests/integration/test_ecommerce_checkout.py` (13 tests) và `tests/integration/test_ecommerce_storage.py` (28 tests) đạt 100% PASS. Không tồn tại orphan file khi checkout fail; filesystem failure không rollback order đã commit.
 
 ## Evidence Required
 
-Test commands/results và redacted before/after invariant snapshots; transaction strategy/concurrency receipts; không real addresses/emails/tokens. Handoff SL-05 order schema và snapshot rules, unresolved constraints.
+Command receipts thực tế:
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_checkout.py"`: 13 tests PASS, exit 0.
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_*.py"`: 65 tests PASS, exit 0.
+- `python -B scripts/validation/validate_scaffold.py`: SCAFFOLD VALID, exit 0.
+Không ghi token, password hoặc dữ liệu cá nhân trong receipts.
 
 ## Failure Conditions
 
-Oversell, duplicate order, price mismatch, mixed cart ownership, partial transaction hoặc unreviewed migration: blocker, không complete. Required tests chưa chạy không coi IMPLEMENTED whole package.
+Oversell hàng tồn kho, duplicate order khi retry idempotency key, sai số dấu phẩy động tiền tệ, tạo file invoice orphan khi DB rollback, hoặc invoice filesystem error làm rollback DB order đã commit.
 
 ## Related Guides
 

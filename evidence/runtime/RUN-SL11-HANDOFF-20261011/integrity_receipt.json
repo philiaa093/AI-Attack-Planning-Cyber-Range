@@ -1,0 +1,13 @@
+{
+  "run_id": "RUN-SL11-HANDOFF-20261011",
+  "passed": true,
+  "verified_records_count": 23,
+  "verified_files_count": 23,
+  "reference_graph_ok": true,
+  "ordering_ok": true,
+  "secrets_clean": true,
+  "conflicts_count": 0,
+  "discrepancies_count": 0,
+  "errors": [],
+  "verified_at_utc": "2026-10-11T07:47:35.759475Z"
+}

@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`. Bảy nhánh code/nhãn trong orchestrator không chứng minh bảy phase đã hoàn thành.
+`IMPLEMENTED`. PTES Coordinator đã được triển khai tại `runtime/ptes_coordinator.py`, kết nối SL-08 safety gate/recorder và SL-09 planner. Điều phối 7 giai đoạn PTES với entry/exit criteria, phân định trạng thái trung thực (Phase 1 COMPLETED, Phase 2 COMPLETED_BOUNDED, Phase 3 COMPLETED, Phase 4 COMPLETED, Phase 5 BLOCKED, Phase 6 NOT_RUN, Phase 7 COMPLETED). 8 unit tests T01–T08 (`tests/runtime/test_ptes_coordinator.py`) PASS; xác minh live Docker verification trên ShopLab stack 7/7 phase PASS; chưa có independent review / approval; giữ pending SL-12, không tự nâng `VALIDATED`.
 
 ## Purpose
 

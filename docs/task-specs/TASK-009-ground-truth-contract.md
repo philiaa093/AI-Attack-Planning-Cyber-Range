@@ -34,14 +34,15 @@ Canonical root docs, typed planner/policy boundaries, and evidence references.
 
 ## Data Contracts
 
-Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable.
+Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable. Ground-truth instance phải version theo approved target snapshot cho evaluation; shared schema không tự đổi và ground truth không là planner/runtime input.
 
 ## Dependencies
 
 TASK-008
+
 ## Implementation Requirements
 
-Produce truth isolated; preserve source hierarchy and status vocabulary.
+Produce truth isolated; preserve source hierarchy and status vocabulary. Snapshot mới cần instance/evaluation baseline riêng sau impact assessment, không dùng truth để xác nhận hoặc định hướng discovery.
 
 ## Safety Requirements
 
@@ -53,7 +54,7 @@ Focused check covers truth isolated; validated by scaffold, contract, safety, pl
 
 ## Acceptance Criteria
 
-Truth isolated exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval.
+Truth isolated exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval. Version instance không tự chuyển validation cũ sang snapshot mới.
 
 ## Evidence Required
 

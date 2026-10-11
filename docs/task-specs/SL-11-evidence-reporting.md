@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`. Historical evidence không chứng minh run ShopLab/PTES mới; manifest `IMPLEMENTED` và prose `VALIDATED` cần review linkage riêng, không sửa record cũ.
+`IMPLEMENTED`. Đã triển khai bộ đóng gói bằng chứng bất biến, kiểm chứng tính toàn vẹn hash/reference, sinh báo cáo lab liên kết bằng chứng và bộ máy replay offline xác định với bảo vệ mạng nghiêm ngặt (`ZeroNetworkGuard`) tại `runtime/evidence_package.py` và `runtime/discovery_recorder.py`. Bổ sung kiểm soát root containment chống escape cho custom `base_dir` (B01–B04) và cơ chế khóa bất biến (B05) không cho phép xóa hay tái sử dụng run directory đã khởi tạo. 14 unit tests E01–E09 & B01–B05 (`tests/runtime/test_evidence_reporting.py`) PASS; gói bằng chứng chuẩn mực bàn giao tại `evidence/runtime/RUN-SL11-HANDOFF-20261011/` với replay đạt đúng 0 network dispatches và 0 provider dispatches; ghi nhận minh bạch sai lệch lịch sử trong self-review: `HISTORICAL_EVIDENCE_DISCREPANCY = ABORTED_RUN_DIRECTORY_DELETED_DURING_SELF_REVIEW`. Chưa có independent review / approval; giữ pending SL-12, không tự nâng `VALIDATED`.
 
 ## Purpose
 

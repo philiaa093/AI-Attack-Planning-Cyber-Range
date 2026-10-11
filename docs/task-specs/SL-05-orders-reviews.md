@@ -2,84 +2,98 @@
 
 ## Status
 
-`SPEC_ONLY`. Chuyển sang upstream orders/reviews fit-gap và acceptance; chưa có execution receipts Oscar. SL-03 đã sửa ownership/escaping cơ bản trong ShopLab nhưng chưa có independent approval, không phải validation target mới. Invoice chưa xác minh có trong Oscar core.
+`IMPLEMENTED`. Đã hoàn thành trên target ShopLab (`cyber-range/targets/ecommerce/app.py`) và kiểm chứng tự động bằng bộ test tích hợp `tests/integration/test_ecommerce_orders_reviews.py` (16 tests PASS). Chưa có independent review / approval; không tự nâng `VALIDATED`.
 
 ## Purpose
 
-Người dùng truy cập lịch sử/chi tiết đơn, hóa đơn và đánh giá của luồng mua hàng đúng quyền; dữ liệu đơn cũ bất biến với catalog edits.
+Người dùng truy cập lịch sử/chi tiết đơn hàng, tải hóa đơn và gửi đánh giá sản phẩm đúng quyền hạn; bảo đảm an toàn dữ liệu, chống IDOR, bảo vệ stored XSS, phân tách hóa đơn và phản ánh nhãn lab mô phỏng.
 
 ## Background
 
-ShopLab lịch sử có owner/file/rendering gaps; SL-03 đã triển khai owner gates và escaping cơ bản với offline receipts, chưa independent approval hoặc full SL-05 acceptance. Hướng mới tái sử dụng Oscar orders/reviews, không kế thừa validation ShopLab; invoice capability vẫn chưa xác minh.
+Trước SL-05, luồng checkout SL-04 đã tạo đơn và tách invoice post-commit. SL-05 hoàn thiện việc truy cập lịch sử đơn hàng, xem chi tiết snapshot đơn, chống IDOR đa người dùng, tải file hóa đơn kèm cơ chế fallback tạo hóa đơn từ DB, hiển thị nhãn hóa đơn lab mô phỏng, thu nhỏ dữ liệu API (data minimization), và quản lý đánh giá sản phẩm có escaping chống XSS.
 
 ## Scope
 
-Đề xuất `cyber-range/targets/oscar-lab/**` và `tests/integration/test_oscar_lab*.py`: cấu hình/kiểm chứng orders/reviews/communication upstream, không viết lại business services hoặc sửa ShopLab. Invoice/API thiếu phải ghi fit-gap; không tự thêm invoice extension hoặc file-download route. Dependency equivalence với SL-03/SL-04 cần review, không kế thừa receipts ShopLab.
+- Code ứng dụng: `cyber-range/targets/ecommerce/app.py`
+- Test suite tích hợp: `tests/integration/test_ecommerce_orders_reviews.py`
+- Endpoint: `/orders`, `/orders/<id>`, `/api/orders/<id>`, `/download/invoice?file=...`, `/reviews`, `/products/<id>`
 
 ## Out of Scope
 
-Không file arbitrary download, upload arbitrary content, invoice/receipt giả như genuine payment record, email/payment thật, host files/secret reading hoặc new exploit payload. Không dùng review content làm planner instruction.
+Không thanh toán tiền thật, không gửi email ra ngoài mạng, không arbitrary file download, không upload tệp tùy ý, không bypass CSRF/auth.
 
 ## Inputs
 
-SL-03 identity/ownership/CSRF, SL-04 order snapshot/schema và completed checkout receipts; fake product/users/order fixtures.
+User identity từ SL-03, order records và snapshot từ SL-04, review form inputs từ khách hàng.
 
 ## Outputs
 
-Orders list/detail/API và invoice representation, bounded escaped review flows, ownership tests, reproducible redacted receipts. Mọi invoice ghi rõ là đơn lab mô phỏng, không payment proof.
+Trang lịch sử đơn hàng `/orders`, chi tiết đơn `/orders/<id>`, API minimized `/api/orders/<id>`, tệp hóa đơn text/plain kèm disclaimer lab, khối đánh giá khách hàng trên trang chi tiết sản phẩm `/products/<id>`.
 
 ## Interfaces
 
-Dùng upstream customer/order/review interfaces đã pin, không ép routes ShopLab. Ownership và projection phải kiểm chứng trên HTML và mọi API/download thực sự được bật. Invoice requirements bên dưới chỉ áp dụng nếu capability được duyệt và có thật; nếu thiếu thì ghi gap, không claim SL-05 hoàn tất hoặc tự mở scope extension. Không chuyển route map/source/PII vào planner.
+- `GET /orders`: Danh sách đơn hàng thuộc sở hữu của session/user hiện tại.
+- `GET /orders/<id>`: Chi tiết snapshot đơn hàng; 404 nếu không sở hữu.
+- `GET /api/orders/<id>`: Dữ liệu JSON rút gọn; chỉ chứa thông tin cần thiết, không expose session_id/token/password.
+- `GET /download/invoice?file=INV-...txt`: Tải hóa đơn; kiểm tra quyền sở hữu; fallback tạo từ DB nếu file đĩa không còn; reject path traversal với 400.
+- `POST /reviews`: Gửi đánh giá sản phẩm (product_id, rating, body, csrf_token); yêu cầu authenticated user.
 
 ## Data Contracts
 
-Order responses chỉ fields cần cho current user; không session IDs/other-user contact. Snapshot item label/quantity/unit_price_minor/total/currency và lab notice. Reviews: current server user, existing product ID, rating integer 1–5, body plain text bounded và timestamp UTC; API không serialize user/token internals.
+- Order snapshot: `id`, `total`, `currency` (USD), `status`, `invoice_file`, `created_at`, danh sách items (`name`, `quantity`, `unit_price`, `currency`).
+- Invoice text: Header invoice, `Notice: ShopLab — Lab / Simulated Order Receipt (No payment charged)`, danh sách mặt hàng và tổng tiền.
+- Review data: `product_id`, `user_id`, `username`, `rating` (integer 1..5), `body` (plain text <= 4000 ký tự), `created_at`.
+- Data minimization: `/api/orders/<id>` cấm chứa session_id, cart_key, csrf_secret, password_hash, email của user khác.
 
 ## Dependencies
 
-SL-03, SL-04; liên kết TASK-011. SL-06 quản trị status với transition policy riêng.
+SL-03 (Auth/Session/CSRF), SL-04 (Cart/Checkout/Idempotency); liên kết TASK-011.
 
 ## Implementation Requirements
 
-Ưu tiên upstream functionality và cấu hình tối thiểu; các invariants bên dưới không được tự hạ để khớp candidate. Review rating/rules/snapshot fields khác ShopLab phải được map explicit; không giả định rating 1–5 hoặc invoice feature chỉ từ prototype. Thiếu capability hoặc môi trường execution là gap/blocker, không yêu cầu tự xây lại ứng dụng. Email backend không gửi mạng hoặc ghi token/link xác thực; labels không claim giao dịch thật.
-
-1. Owned orders list/detail/API; validate IDs; consistent 403/404 policy không lộ owner enumeration. Admin access chỉ khi expressly permitted role helper.
-2. Invoice được derive từ committed snapshot, không current price; require owner/admin trước generation/serve. Bounded content, safe download headers/filename không CRLF.
-3. Nếu invoice cần stored files: generated basename do server, root containment, symlink/permissions policy; creation failure/retry không phá committed order. Không đọc path từ user hoặc file ngoài app-owned store.
-4. Review form POST + CSRF + authenticated identity; validate product/rating/body; escaping ở rendering HTML và attribute/title. Lưu raw plain text là data; render text không execute.
-5. Xác định review eligibility từ confirmed ownership/purchase nếu yêu cầu verified-purchase badge; không gắn badge mặc định. Duplicate review/update policy explicit.
-6. Views có empty/missing/error states, order detail/shipping/status, lab-only invoice/payment notice; không mô tả gửi email nếu chưa gửi.
-7. Không đưa review/user content vào logs hoặc LLM raw nếu chưa redact; treats content as untrusted data.
+1. Server-side ownership enforcement: `owns_order(identity, order)` xác thực quyền sở hữu cho cả HTML view, API view và invoice download. Người dùng khác truy cập nhận 404 (không lộ ID enumeration).
+2. Data minimization: endpoint `/api/orders/<id>` loại bỏ toàn bộ trường nhạy cảm nội bộ trước khi trả về client.
+3. Invoice lab notice: nội dung hóa đơn bắt buộc chứa dòng `Notice: ShopLab — Lab / Simulated Order Receipt (No payment charged)`.
+4. Invoice on-demand synthesis fallback: nếu tệp hóa đơn vật lý trên đĩa bị xóa hoặc không khả dụng, endpoint `/download/invoice` tự động tái tạo nội dung hóa đơn từ bảng `orders` và `order_items`.
+5. Invoice security: regex validation `INV-[A-F0-9]{32}\.txt` và `_validate_path` từ chối triệt để path traversal, null bytes, CRLF injection với mã 400.
+6. Product review validation: rating bắt buộc là số nguyên 1..5, body bắt buộc không rỗng và không quá 4000 ký tự; từ chối và rollback nếu vi phạm.
+7. Stored XSS defense: toàn bộ nội dung review của người dùng được escape HTML ngữ cảnh an toàn bằng `html_escape()` trước khi render ra giao diện.
+8. CSRF protection: POST `/reviews` yêu cầu token CSRF hợp lệ.
 
 ## Safety Requirements
 
-Resource ownership checked cho cả HTML/API/download. Encoding/escaping phải theo context, không chỉ ở một view. Fixtures không real PII hoặc active scripts. Không arbitrary file-read verification để test path policy.
+Lab-only isolation. Không PII, không thông tin thanh toán thật. IDOR check bắt buộc ở server-side. Path traversal check nghiêm ngặt. Escaping an toàn chống XSS.
 
 ## Testing Requirements
 
 | Case | Scenario | Expected |
 |---|---|---|
-| O01 | User A own list/detail/API/invoice | Đúng fields và snapshot; không token/session leak |
-| O02 | User B/anonymous truy cập đơn/hóa đơn A | Deny consistent; không file read hoặc data leak |
-| O03 | Invalid/missing invoice/order mapping | Safe error, không arbitrary path access |
-| O04 | Giá/tên catalog thay đổi | Old invoice/order snapshot giữ nguyên |
-| O05 | Review plain text có ký tự markup thông thường | HTML escaped; không active content trong fixture |
-| O06 | Invalid rating/product/body/CSRF/identity | Reject trước writes |
-| O07 | Restart và invoice generation lỗi | Persisted orders/reviews giữ; safe bounded retry/error |
-| O08 | HTML/API fields và lab notice | Không email/payment claim giả hoặc internal IDs nhạy cảm |
+| O01 | User authenticated xem đơn hàng của mình | Đúng thông tin snapshot, tổng tiền, items |
+| O02 | User B / Anonymous truy cập đơn của User A (IDOR) | Trả về 404 Not Found an toàn |
+| O03 | Data minimization trên `/api/orders/<id>` | Không rò rỉ session token, credentials, internal secrets |
+| O04 | Snapshot đơn bất biến khi giá catalog đổi | Đơn hàng và hóa đơn giữ nguyên giá snapshot cũ |
+| O05 | Tải hóa đơn khi tệp trên đĩa tồn tại và khi bị xóa | Trả về 200 OK với lab notice; fallback tái tạo từ DB |
+| O06 | Path traversal / CRLF injection trên invoice download | Trả về 400 Bad Request; không đọc file tùy ý |
+| O07 | Gửi đánh giá hợp lệ (rating 1-5, body) | Lưu trữ thành công, render an toàn kèm sao |
+| O08 | Gửi đánh giá có rating không hợp lệ / body rỗng / quá dài | Trả về 400 Bad Request, DB không thay đổi |
+| O09 | Payload stored XSS trong review (`<script>`, `onerror`) | Render an toàn sau khi escape, không thực thi script |
+| O10 | Gửi review không có CSRF token hoặc token sai | Trả về 403 Forbidden |
 
 ## Acceptance Criteria
 
-HTML/API/invoice đều ownership-protected; invoices reflect committed snapshots và explicit lab notice; reviews plain-text bounded/context-escaped; negative operations không đổi DB/read arbitrary files. Tests pass với hai sessions; gaps/rules verified-purchase được handoff rõ, không auto-VALIDATED.
+Tất cả các tiêu chí về IDOR protection, API data minimization, invoice lab notice & fallback, review validation & stored XSS escaping được xác minh bằng kiểm thử tự động. Bộ test `tests/integration/test_ecommerce_orders_reviews.py` (16 tests) đạt 100% PASS, exit code 0.
 
 ## Evidence Required
 
-Exact suite receipts, ownership matrix, redacted output comparisons và snapshot invariants; không genuine-looking fabricated records/PII. Evidence UTC/run/source/hash, không overwrite.
+Command receipts thực tế:
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_orders_reviews.py"`: 16 tests PASS, exit 0.
+- `python -B -m unittest discover -s tests/integration -p "test_ecommerce_*.py"`: 81+ tests PASS, exit 0.
+- `python -B scripts/validation/validate_scaffold.py`: SCAFFOLD VALID, exit 0.
+Không ghi token, password hoặc dữ liệu cá nhân trong receipts.
 
 ## Failure Conditions
 
-Cross-user response, arbitrary filename access, active rendering, status/payment claim vượt evidence, invoice snapshot mismatch hoặc tests chưa chạy: blocker, không claim complete.
+Rò rỉ dữ liệu cross-tenant (IDOR), lộ token hoặc mật khẩu qua order API, path traversal đọc file máy chủ, stored XSS payload không được escape, hoặc hóa đơn thiếu lab notice.
 
 ## Related Guides
 

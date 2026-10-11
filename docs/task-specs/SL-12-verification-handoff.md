@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`. Không có approval/review mới hoặc observed Docker/provider receipts cho toàn bộ kế hoạch.
+`SPEC_ONLY`. Deterministic pre-review gate hiện ghi nhận `HANDOFF_BLOCKED` do `validate_scaffold.py` phát hiện lỗi schema tại tệp demo `scripts/demo/demo-output/BASELINE-...` (ngoài allowlist). Đã xác lập build ID `SL12-PREVIEW-ee45e60-20261011`, run ID `RUN-SL11-HANDOFF-20261011`, `CURRENT_REVIEW_SOURCE_MANIFEST` 27 files, 18 check receipts PASS; `REVIEW_CONTRACT` đã được tạo sẵn sàng. Dừng theo Stop Rules chờ chỉ thị scope; chưa có independent review / approval mới; không tự nâng `VALIDATED`.
 
 ## Purpose
 

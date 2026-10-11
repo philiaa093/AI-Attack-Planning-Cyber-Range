@@ -1,0 +1,1 @@
+{"action_id":"ACTION-RECON-001","approval_id":"APP-AUTO-1791708234","decision":"DISPATCH_PERMITTED","depth":0,"headers":{},"method":"GET","redirect_hops":0,"run_id":"RUN-AUTONOMOUS-LIVE-1791708234","target_id":"lab-ecommerce","timestamp_utc":"2026-10-11T08:43:54.048064Z","url":"http://127.0.0.1:18088/health"}

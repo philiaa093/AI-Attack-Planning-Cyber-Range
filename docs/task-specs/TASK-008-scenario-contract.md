@@ -34,14 +34,15 @@ Canonical root docs, typed planner/policy boundaries, and evidence references.
 
 ## Data Contracts
 
-Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable.
+Typed IDs, canonical fields, explicit status, and redacted or append-only evidence where applicable. Mỗi instance scenario phải version theo target snapshot được duyệt và liên kết identity/provenance có chứng cứ; shared schema không tự đổi chỉ vì snapshot thay đổi.
 
 ## Dependencies
 
 TASK-001, TASK-003
+
 ## Implementation Requirements
 
-Produce scenario and scope; preserve source hierarchy and status vocabulary.
+Produce scenario and scope; preserve source hierarchy and status vocabulary. Snapshot mới cần instance/baseline và impact assessment riêng; không đưa ground truth vào scenario hoặc planner input.
 
 ## Safety Requirements
 
@@ -53,7 +54,7 @@ Focused check covers scenario and scope; validated by scaffold, contract, safety
 
 ## Acceptance Criteria
 
-Scenario and scope exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval.
+Scenario and scope exists as topic-specific reviewable artifact; validated by required checks, immutable hashed receipts, and final read-only approval. Instance versioning không chuyển validation lịch sử sang target snapshot mới.
 
 ## Evidence Required
 
