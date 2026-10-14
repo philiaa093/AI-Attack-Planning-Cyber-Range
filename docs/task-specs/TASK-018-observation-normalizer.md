@@ -2,7 +2,9 @@
 
 ## Status
 
-`VALIDATED`.
+`IMPLEMENTED` cho phần mở rộng Observation Normalizer/Nuclei ngoại tuyến hiện hành, theo yêu cầu người dùng chuyển lại trạng thái. Independent review chưa hoàn tất; report thật, durable evidence integration và runtime giữ `UNRESOLVED`.
+
+Ghi nhận `VALIDATED` trước đây chỉ áp dụng normalizer/perception subset được evidence lịch sử bao phủ; giữ nguyên receipts cũ, không mở rộng claim sang code/schema Nuclei mới. Phạm vi mở rộng theo yêu cầu người dùng, API, hai JSON Schema, receipts và pending handoff được mô tả tại [Interface Contract](../../agent/perception/normalizers/NUCLEI_INTERFACE.md) và [TASKS.md](../../TASKS.md#task-018--observation-normalizer-và-giao-tiếp-nuclei-ngoại-tuyến).
 
 ## Purpose
 

@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
@@ -47,18 +47,18 @@ from runtime.discovery_gate import (
     TokenBucketRateLimiter,
     load_canonical_target_allowlist,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
     EvidenceFailure,
     _utc_now_iso,
 )
-from runtime.evidence_package import (
+from runtime.evidence.evidence_package import (
     EvidenceManifest,
     EvidenceVerifier,
     LabReportBuilder,
     OfflineEvidenceReplayer,
 )
-from runtime.ptes_coordinator import (
+from runtime.orchestration.ptes_coordinator import (
     CoordinatorReport,
     PTESCoordinator,
 )

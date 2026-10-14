@@ -8,6 +8,27 @@ from scripts.validation import validate_scaffold
 
 
 class ValidatorTests(unittest.TestCase):
+    def test_frozen_source_link_requires_exact_handoff_and_existing_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "reports/TASK-015-offline-handoff.md"
+            source = root / "runtime/discovery/discovery_report_importer.py"
+            report.parent.mkdir(parents=True)
+            source.parent.mkdir(parents=True)
+            report.write_text("[source](../runtime/discovery_report_importer.py)")
+            with mock.patch.object(validate_scaffold, "ROOT", root):
+                errors = []
+                validate_scaffold.validate_markdown_links(errors)
+                self.assertEqual(len(errors), 1)
+                source.write_text("# fixture")
+                errors = []
+                validate_scaffold.validate_markdown_links(errors)
+                self.assertEqual(errors, [])
+                report.rename(report.with_name("other-handoff.md"))
+                errors = []
+                validate_scaffold.validate_markdown_links(errors)
+                self.assertEqual(len(errors), 1)
+
     def test_current_repo_validates(self):
         self.assertEqual(validate_scaffold.validate(), [])
 
@@ -217,7 +238,7 @@ class ValidatorTests(unittest.TestCase):
 
     def test_no_results_guard_is_exact(self):
         expected = "# 09 Results\n\nStatus: SPEC_ONLY\n\nNo experimental results are available.\nDo not populate this chapter until experiment evidence exists.\n"
-        self.assertEqual((Path(validate_scaffold.ROOT) / "report/chapters/09-results.md").read_text(encoding="utf-8"), expected)
+        self.assertEqual((Path(validate_scaffold.ROOT) / "docs/thesis/chapters/09-results.md").read_text(encoding="utf-8"), expected)
 
     def test_walk_keys_is_recursive(self):
         self.assertEqual(list(validate_scaffold.walk_keys({"outer": {"inner": 1}}))[-1][1], "inner")

@@ -21,18 +21,18 @@ import time
 import unittest
 from pathlib import Path
 
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
     KillSwitch,
     TokenBucketRateLimiter,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
     EvidenceFailure,
 )
-from runtime.ptes_coordinator import (
+from runtime.orchestration.ptes_coordinator import (
     CoordinatorReport,
     PTESCoordinator,
     PhaseRecord,
@@ -581,7 +581,7 @@ class PTESCoordinatorTests(unittest.TestCase):
         # Let's test with the actual cached digest by reusing the exact observation if available
         # or verify ingest_observation returns False when previous_digest matches
         coord.state_adapter.seen_observations[obs_id] = "dummy_hash_for_test"
-        from runtime.planner_adapter import _hash_observation
+        from runtime.planners.planner_adapter import _hash_observation
         real_hash = _hash_observation(replayed_obs)
         coord.state_adapter.seen_observations[obs_id] = real_hash
 

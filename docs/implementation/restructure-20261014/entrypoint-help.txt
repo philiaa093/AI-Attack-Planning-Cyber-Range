@@ -1,0 +1,35 @@
+usage: python.exe -m runtime.evaluation.evaluate_all [-h] (--demo |
+                                                     --protocol PROTOCOL |
+                                                     --usage-ledger USAGE_LEDGER |
+                                                     --defensive-log DEFENSIVE_LOG)
+                                                     [--protocol-sha256 PROTOCOL_SHA256]
+                                                     [--usage-sha256 USAGE_SHA256]
+                                                     [--defensive-sha256 DEFENSIVE_SHA256]
+                                                     [--output OUTPUT]
+                                                     [--cost-per-step COST_PER_STEP]
+                                                     [--alpha ALPHA]
+
+Task 28-31 offline orchestration: replay -> hashed logs -> KPIs -> report. Run
+from the repository root: python -B -m runtime.evaluation.evaluate_all --demo
+Only the two fixed, stateless metadata selectors below are executable. There
+is no live runner, plugin loading, training, provider, shell or network
+integration.
+
+options:
+  -h, --help            show this help message and exit
+  --demo                evaluate only explicit synthetic metadata fixtures
+  --protocol PROTOCOL   load a pinned offline metadata protocol under runtime
+  --protocol-sha256 PROTOCOL_SHA256
+                        independently supplied protocol file SHA-256
+  --usage-ledger USAGE_LEDGER
+                        report a sealed provider-usage ledger offline
+  --usage-sha256 USAGE_SHA256
+                        expected SHA-256 of the sealed ledger
+  --defensive-log DEFENSIVE_LOG
+                        normalize an externally captured defensive JSONL log
+  --defensive-sha256 DEFENSIVE_SHA256
+                        expected SHA-256 of the defensive log
+  --output OUTPUT
+  --cost-per-step COST_PER_STEP
+                        modeled credits per transition
+  --alpha ALPHA

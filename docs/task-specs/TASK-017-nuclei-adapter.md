@@ -2,7 +2,7 @@
 
 ## Status
 
-`SPEC_ONLY`.
+`IMPLEMENTED` trong phạm vi parser/safety wrapper nhập báo cáo Nuclei ngoại tuyến, theo yêu cầu người dùng. Chưa `VALIDATED`; scanner runtime scaffold giữ `SPEC_ONLY`, thực thi scanner và durable evidence integration còn `UNRESOLVED`. Trạng thái này không cấp runtime approval hoặc đóng acceptance/review.
 
 ## Purpose
 
@@ -14,7 +14,7 @@ Project covers SQL injection, cross-site scripting, and path traversal with RULE
 
 ## Scope
 
-Topic-specific artifact for nuclei adapter.
+Parser/wrapper ngoại tuyến: nhập JSON list hoặc JSONL đã có trong bộ nhớ, validate all-or-nothing, allowlist template ID cụ thể mặc định rỗng, target/HTTP origin checks, dữ liệu tối giản và giới hạn quota/rate. `execute` luôn `DENIED`; không scanner, network, process hoặc ghi evidence. Chi tiết implementation/handoff tại [adapter README](../../tools/adapters/nuclei/README.md).
 
 ## Out of Scope
 
@@ -49,7 +49,7 @@ Validate trust-boundary input. Enforce lab target/action allowlists, budget, rat
 
 ## Testing Requirements
 
-Focused check covers allowlisted templates; main validator and unit tests deferred to validator repair.
+Focused checks của phiên triển khai ngày 2026-10-11: 28 Nuclei offline + 27 shared adapter + 17 safety tests PASS (exit 0), AST và scoped diff check PASS. Repository validator exit 1 với 643 lỗi ngoài scope, không có lỗi thuộc năm paths TASK-017 trong lần chạy cuối của phiên đó. Receipts tại [TASKS.md](../../TASKS.md#task-017--parser-và-safety-wrapper-nuclei-ngoại-tuyến). Tương thích report thật và independent review chưa được xác minh; không tái chạy suites khi chỉ sửa trạng thái.
 
 ## Acceptance Criteria
 

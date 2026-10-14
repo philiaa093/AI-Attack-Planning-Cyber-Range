@@ -1,0 +1,12 @@
+usage: python.exe -m runtime.lab.cli [-h]
+                                     {health,reset,action}
+                                     {lab-sqli-001,lab-xss-001,lab-path-001,lab-clean-001}
+                                     [{ACTION-WEB-001,ACTION-WEB-002,ACTION-WEB-003}]
+
+positional arguments:
+  {health,reset,action}
+  {lab-sqli-001,lab-xss-001,lab-path-001,lab-clean-001}
+  {ACTION-WEB-001,ACTION-WEB-002,ACTION-WEB-003}
+
+options:
+  -h, --help            show this help message and exit

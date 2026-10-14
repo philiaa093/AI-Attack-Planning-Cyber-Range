@@ -29,23 +29,23 @@ if str(ROOT) not in sys.path:
 
 from agent.memory.state.state_manager import StateManager
 from agent.perception.normalizers.observation_normalizer import ObservationNormalizer
-from runtime.discovery_engine import (
+from runtime.discovery.discovery_engine import (
     ObservationDrivenDiscovery,
 )
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
     KillSwitch,
     TokenBucketRateLimiter,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
 )
-from runtime.observed_planner import (
+from runtime.planners.observed_planner import (
     ObservedStatePlanner,
 )
-from runtime.planner_adapter import (
+from runtime.planners.planner_adapter import (
     PlannerStateAdapter,
 )
 

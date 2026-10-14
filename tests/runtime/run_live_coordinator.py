@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
@@ -14,8 +14,8 @@ from runtime.discovery_gate import (
     TokenBucketRateLimiter,
     load_canonical_target_allowlist,
 )
-from runtime.discovery_recorder import DurableEvidenceRecorder
-from runtime.ptes_coordinator import PTESCoordinator
+from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
+from runtime.orchestration.ptes_coordinator import PTESCoordinator
 
 
 def main() -> None:

@@ -26,17 +26,17 @@ import unittest
 from dataclasses import asdict
 from pathlib import Path
 
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     CentralizedSafetyGate,
     DiscoveryRequest,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
     EvidenceFailure,
     redact_secrets,
 )
-from runtime.evidence_package import (
+from runtime.evidence.evidence_package import (
     EvidenceManifest,
     EvidencePackageError,
     EvidenceVerifier,
@@ -46,7 +46,7 @@ from runtime.evidence_package import (
     OfflineEvidenceReplayer,
     ZeroNetworkGuard,
 )
-from runtime.ptes_coordinator import (
+from runtime.orchestration.ptes_coordinator import (
     CoordinatorReport,
     PTESCoordinator,
     PhaseRecord,

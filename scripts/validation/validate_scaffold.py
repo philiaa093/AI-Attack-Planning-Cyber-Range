@@ -6,6 +6,7 @@ import datetime as dt
 import ipaddress
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -66,7 +67,7 @@ ROOT_FILES = {
     "README.md", "AGENTS.md", "PROJECT_CONTEXT.md", "PROJECT_PLAN.md", "TASKS.md", "CHANGELOG.md", ".gitignore", "Makefile", ".env.example",
     "actions/README.md", "actions/catalog/README.md", "actions/catalog/action-catalog.json",
     "agent/planner/contracts/README.md", "evaluation/README.md", "evidence/README.md", "evidence/policy.json", "evidence/manifest.json",
-    "scenarios/README.md", "report/README.md", "docs/guides/index.md", "docs/task-specs/index.md", "docs/runbooks/index.md", "docs/adr/index.md",
+    "scenarios/README.md", "docs/thesis/README.md", "docs/guides/index.md", "docs/task-specs/index.md", "docs/runbooks/index.md", "docs/adr/index.md",
 }
 CONTRACT_DIR = "agent/planner/contracts"
 SAFETY_FILES = {
@@ -92,6 +93,24 @@ SCAFFOLD_PLACEHOLDER_DIRS = {
 }
 FORBIDDEN_KEY = re.compile(r"(?:command|payload)", re.IGNORECASE)
 FORBIDDEN_ARTIFACTS = {"__pycache__", ".pytest_cache", ".pyc", ".pyo"}
+# Exact workspace-relative trees, not arbitrary directory basenames. In
+# particular, a node_modules directory under contracts/configs remains checked.
+SCAN_EXCLUDED_TREES = frozenset({
+    ".git", ".venv", "venv",
+    "dashboards/app/frontend/node_modules", "dashboards/app/frontend/dist",
+})
+FRONTEND_METADATA_FILES = frozenset({
+    "dashboards/app/frontend/package.json",
+    "dashboards/app/frontend/package-lock.json",
+    "dashboards/app/frontend/tsconfig.json",
+})
+COMMENT_JSON_FILES = frozenset({"dashboards/app/frontend/tsconfig.json"})
+# ponytail: one frozen handoff link; extend only for documented source moves.
+HISTORICAL_SOURCE_LINKS = {
+    ("reports/TASK-015-offline-handoff.md", "../runtime/discovery_report_importer.py"):
+        "runtime/discovery/discovery_report_importer.py",
+}
+_JSON_COMMENTS = re.compile(r'("(?:\\.|[^"\\])*")|//[^\r\n]*|/\*[\s\S]*?\*/')
 PROMPT_HEADINGS = ()
 GUIDE_HEADINGS = ("Learning Objectives", "Why This Matters", "Core Concepts", "Terminology", "Mathematical / Technical Foundations", "Project Mapping", "Security Boundaries", "Common Mistakes", "Self-check Questions", "Related Artifacts", "Read Next", "References", "Status")
 TASK_HEADINGS = ("Status", "Purpose", "Background", "Scope", "Out of Scope", "Inputs", "Outputs", "Interfaces", "Data Contracts", "Dependencies", "Implementation Requirements", "Safety Requirements", "Testing Requirements", "Acceptance Criteria", "Evidence Required", "Failure Conditions", "Related Guides", "Related Runbooks", "Related ADRs")
@@ -104,7 +123,7 @@ ROOT_HEADINGS = {
     "PROJECT_PLAN.md": ("Foundation", "Literature/Threat", "Cyber Range", "Perception/Tooling", "Rule", "LLM", "RL Environment", "RL Planner", "Hybrid", "Evaluation", "Dashboard", "Final Reproducibility", "Completion rule"),
     "TASKS.md": ("ShopLab/PTES implementation backlog", "Checks and observed implementation state", "Blockers"),
     "docs/guides/index.md": (), "docs/task-specs/index.md": (), "docs/runbooks/index.md": (), "docs/adr/index.md": (),
-    "report/README.md": (),
+    "docs/thesis/README.md": (),
 }
 
 
@@ -116,13 +135,96 @@ def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
+def _workspace_files():
+    """Walk owned files deterministically, pruning installed/generated trees.
+
+    This does not use .gitignore, whose user-controlled patterns must not hide
+    canonical contracts, evidence or forbidden artifacts from validation.
+    """
+    def fail_walk(error):
+        raise error
+
+    for directory, dirs, files in os.walk(ROOT, onerror=fail_walk, followlinks=False):
+        base = Path(directory)
+        dirs[:] = sorted(name for name in dirs
+                         if rel(base / name) not in SCAN_EXCLUDED_TREES)
+        for name in sorted(files):
+            path = base / name
+            if path.is_file():
+                yield path
+
+
+def _is_contract_data(path: Path) -> bool:
+    """Task status and action-field rules do not describe npm or audit receipts.
+
+    These documents still undergo syntax validation. This role assignment is
+    path-based; a document_type field cannot exempt a runtime contract.
+    """
+    relative = rel(path)
+    return (_metadata_origin(path) not in FRONTEND_METADATA_FILES
+            and relative != ".demo-session.json"
+            and not re.fullmatch(r"dashboards/app/handoffs/UI-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}/receipts\.json", relative)
+            and not re.fullmatch(r"runtime/gate-hygiene/UI-(?:CHECK|REPAIR)-[0-9a-f]{32}/(?:(?:[a-z-]+\.)?receipt|viewer-process|inspection)\.json", relative)
+            and not relative.startswith("reports/"))
+
+
+def _metadata_origin(path: Path) -> str:
+    relative = rel(path)
+    match = re.fullmatch(
+        r"dashboards/app/handoffs/UI-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}/(?:source|before)/(dashboards/app/frontend/(?:package\.json|package-lock\.json|tsconfig\.json))",
+        relative)
+    return match[1] if match else relative
+
+
+def _session_errors(data) -> list[str]:
+    fields = {"session_id", "started_at_utc", "status", "backend_pid", "frontend_pid",
+              "backend_url", "frontend_url", "gateway_url", "project_root"}
+    if not isinstance(data, dict) or set(data) != fields:
+        return ["invalid session fields"]
+    errors = []
+    if data["status"] not in ("INITIALIZING", "READY", "DEGRADED"):
+        errors.append("invalid session lifecycle status")
+    if not isinstance(data["session_id"], str) or not re.fullmatch(r"DEMO-SES-[0-9a-f]{8}", data["session_id"]):
+        errors.append("invalid session identity")
+    for key in ("backend_pid", "frontend_pid"):
+        if type(data[key]) is not int or not 0 < data[key] <= 2**32 - 1:
+            errors.append(f"invalid {key}")
+    for key in ("backend_url", "frontend_url", "gateway_url"):
+        match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})", data[key]) if isinstance(data[key], str) else None
+        if not match or int(match[1]) > 65535:
+            errors.append(f"invalid loopback {key}")
+    if not isinstance(data["project_root"], str) or Path(data["project_root"]) != ROOT:
+        errors.append("session project_root mismatch")
+    if not isinstance(data["started_at_utc"], str):
+        errors.append("invalid session UTC timestamp")
+    else:
+        errors.extend(_format_errors(data["started_at_utc"], {"format": "date-time"}, "started_at_utc"))
+    return errors
+
+
+def _strip_json_comments(text: str) -> str:
+    """Allow comments in the single frontend tsconfig, preserving strings/lines.
+
+    This is not a relaxed parser for safety files: JSON syntax, finite numbers
+    and errors such as unterminated comments remain enforced by json.loads.
+    """
+    return _JSON_COMMENTS.sub(
+        lambda match: match.group(0) if match.group(1) is not None
+        else re.sub(r"[^\r\n]", " ", match.group(0)), text)
+
+
 def load_json(path: Path, errors: list[str]):
     try:
         text = path.read_text(encoding="utf-8")
         if not text.strip():
             fail(errors, f"{rel(path)}: empty file")
             return None
-        return json.loads(text, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"non-finite constant {value}")))
+        if _metadata_origin(path) in COMMENT_JSON_FILES:
+            text = _strip_json_comments(text)
+        data = json.loads(text, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(f"non-finite constant {value}")))
+        if rel(path) == ".demo-session.json":
+            errors.extend(f"{rel(path)}: {error}" for error in _session_errors(data))
+        return data
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         fail(errors, f"{rel(path)}: invalid JSON-compatible YAML/JSON: {exc}")
         return None
@@ -278,9 +380,9 @@ def validate_documents(errors: list[str]) -> None:
     _exact_dir(errors, "docs/task-specs", TASK_SPECS | SL_SPECS)
     _exact_dir(errors, "docs/runbooks", RUNBOOKS)
     _exact_dir(errors, "docs/adr", ADRS)
-    _exact_dir(errors, "report/chapters", CHAPTERS)
-    _exact_dir(errors, "report/appendices", APPENDICES, set())
-    heading_sets = {**ROOT_HEADINGS, "docs/guides/index.md": (), "docs/task-specs/index.md": (), "docs/runbooks/index.md": (), "docs/adr/index.md": (), "report/README.md": (), "report/chapters/09-results.md": ()}
+    _exact_dir(errors, "docs/thesis/chapters", CHAPTERS)
+    _exact_dir(errors, "docs/thesis/appendices", APPENDICES, set())
+    heading_sets = {**ROOT_HEADINGS, "docs/guides/index.md": (), "docs/task-specs/index.md": (), "docs/runbooks/index.md": (), "docs/adr/index.md": (), "docs/thesis/README.md": (), "docs/thesis/chapters/09-results.md": ()}
     for relative, headings in heading_sets.items():
         path = ROOT / relative
         if path.is_file(): _check_markdown(path, errors, headings if headings else None)
@@ -294,11 +396,11 @@ def validate_documents(errors: list[str]) -> None:
         _check_markdown(path, errors, RUNBOOK_HEADINGS)
     for path in (ROOT / "docs/adr").glob("ADR-*.md"):
         _check_markdown(path, errors, ADR_HEADINGS)
-    for path in (ROOT / "report/chapters").glob("[0-9][0-9]-*.md"):
+    for path in (ROOT / "docs/thesis/chapters").glob("[0-9][0-9]-*.md"):
         _check_markdown(path, errors)
-    results = ROOT / "report/chapters/09-results.md"
+    results = ROOT / "docs/thesis/chapters/09-results.md"
     if results.is_file() and results.read_text(encoding="utf-8") != "# 09 Results\n\nStatus: SPEC_ONLY\n\nNo experimental results are available.\nDo not populate this chapter until experiment evidence exists.\n":
-        fail(errors, "report/chapters/09-results.md: exact no-results guard mismatch")
+        fail(errors, "docs/thesis/chapters/09-results.md: exact no-results guard mismatch")
     readme = ROOT / "README.md"
     if readme.is_file() and not all(re.search(rf"^##\s+{re.escape(heading)}\s*$", readme.read_text(encoding="utf-8"), re.MULTILINE) for heading in PROMPT_HEADINGS):
         fail(errors, "README.md: master prompt headings incomplete")
@@ -319,7 +421,8 @@ def _link_target(raw: str):
 
 def validate_markdown_links(errors: list[str]) -> None:
     pattern = re.compile(r"!?(?:\[[^\]]*\])\(([^)]+)\)")
-    for path in ROOT.rglob("*.md"):
+    for path in _workspace_files():
+        if path.suffix.lower() != ".md": continue
         try: text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError): continue
         for raw in pattern.findall(text):
@@ -328,12 +431,15 @@ def validate_markdown_links(errors: list[str]) -> None:
             if kind == "invalid": fail(errors, f"{rel(path)}: invalid Markdown link {target}")
             elif kind == "external":
                 if rel(path) != "docs/references.md": fail(errors, f"{rel(path)}: external URL outside docs/references.md")
-            elif not (path.parent / target).resolve().is_relative_to(ROOT) or not (path.parent / target).resolve().exists():
-                fail(errors, f"{rel(path)}: broken or escaping local link {target}")
+            else:
+                moved = HISTORICAL_SOURCE_LINKS.get((rel(path), target))
+                destination = (ROOT / moved if moved else path.parent / target).resolve()
+                if not destination.is_relative_to(ROOT) or not destination.exists():
+                    fail(errors, f"{rel(path)}: broken or escaping local link {target}")
 
 
 def _all_data_files():
-    return [path for path in ROOT.rglob("*") if path.is_file() and path.suffix.lower() in {".json", ".yaml", ".yml"}]
+    return [path for path in _workspace_files() if path.suffix.lower() in {".json", ".yaml", ".yml"}]
 
 
 def validate_ids_and_status(errors: list[str]) -> None:
@@ -371,7 +477,7 @@ def validate_ids_and_status(errors: list[str]) -> None:
         if set(ids) != ACTION_IDS or len(ids) != len(set(ids)): fail(errors, "action catalog IDs are not exact 13-action set")
     for path in _all_data_files():
         data = load_json(path, errors)
-        if data is None: continue
+        if data is None or not _is_contract_data(path): continue
         for _, key, value in walk_keys(data):
             if key == "status" and isinstance(value, str) and value not in STATUSES and value not in {"COMPLETED", "ERROR", "ok", "reset", "detected", "not_detected", "ready", "not_found"}:
                 fail(errors, f"{rel(path)}: invalid status {value!r}")
@@ -494,7 +600,8 @@ def validate_structured_data(errors: list[str]) -> None:
     for path in _all_data_files():
         data = load_json(path, errors)
         if data is None: continue
-        _check_forbidden(data, path, errors)
+        if _is_contract_data(path):
+            _check_forbidden(data, path, errors)
     action_fixture_names = {f"{action}.json" for action in ACTION_IDS}
     action_fixtures: dict[str, dict] = {}
     for path in sorted((ROOT / "actions/catalog").glob("ACTION-*.json")):
@@ -743,8 +850,7 @@ def validate_experiment_identity(errors: list[str]) -> None:
 
 
 def validate_ast_and_artifacts(errors: list[str]) -> None:
-    for path in ROOT.rglob("*"):
-        if not path.is_file(): continue
+    for path in _workspace_files():
         if any(part in FORBIDDEN_ARTIFACTS for part in path.parts) or path.suffix.lower() in {".exe", ".dll", ".so", ".bin", ".pyc", ".pyo"}:
             fail(errors, f"forbidden artifact {rel(path)}")
         if path.suffix == ".py":
@@ -771,7 +877,7 @@ def main() -> int:
         print("SCAFFOLD INVALID")
         for error in errors: print(f"- {error}")
         return 1
-    file_count = sum(1 for path in ROOT.rglob("*") if path.is_file() and not any(part in FORBIDDEN_ARTIFACTS for part in path.parts))
+    file_count = sum(1 for path in _workspace_files() if not any(part in FORBIDDEN_ARTIFACTS for part in path.parts))
     action_count = len([path for path in (ROOT / "actions/catalog").glob("ACTION-*.json") if path.name != "action-catalog.json"])
     task_count = len(list((ROOT / "docs/task-specs").glob("TASK-*.md")))
     adr_count = len(list((ROOT / "docs/adr").glob("ADR-*.md")))

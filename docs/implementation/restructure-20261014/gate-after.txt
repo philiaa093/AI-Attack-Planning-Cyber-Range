@@ -1,0 +1,3 @@
+SCAFFOLD INVALID
+- docs/repository-layout.md: broken or escaping local link implementation/restructure-handoff.md
+- reports/TASK-015-offline-handoff.md: broken or escaping local link ../runtime/discovery_report_importer.py

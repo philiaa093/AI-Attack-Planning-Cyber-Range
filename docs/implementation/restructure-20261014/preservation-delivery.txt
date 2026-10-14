@@ -1,0 +1,4 @@
+Observed: 4827 protected historical files exist with unchanged SHA-256.
+45 Word/PDF files retain exact pre-move bytes.
+All 124 source moves have existing destinations and absent former files.
+No content deleted.

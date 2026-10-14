@@ -1,0 +1,24 @@
+....................F...........................
+======================================================================
+FAIL: test_current_repo_validates (test_validator.ValidatorTests.test_current_repo_validates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "E:\PBL6_FINAL\tests\scaffold\test_validator.py", line 12, in test_current_repo_validates
+    self.assertEqual(validate_scaffold.validate(), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['docs/repository-layout.md: broken or esc[161 chars].py'] != []
+
+First list contains 2 additional elements.
+First extra element 0:
+'docs/repository-layout.md: broken or escaping local link implementation/restructure-handoff.md'
+
++ []
+- ['docs/repository-layout.md: broken or escaping local link '
+-  'implementation/restructure-handoff.md',
+-  'reports/TASK-015-offline-handoff.md: broken or escaping local link '
+-  '../runtime/discovery_report_importer.py']
+
+----------------------------------------------------------------------
+Ran 48 tests in 11.916s
+
+FAILED (failures=1)

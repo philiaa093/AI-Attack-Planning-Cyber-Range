@@ -1,0 +1,75 @@
+[
+  {
+    "file": "demo-overview-live.png",
+    "url": "http://127.0.0.1:5173/#overview",
+    "resolution": "1920x1080",
+    "bytes": 168323,
+    "verified_dom_selectors": [
+      "header",
+      "h1",
+      "[aria-label=\"System Components Overview\"]"
+    ],
+    "description": "Control Center Overview (Presentation Mode Active + Operational Cards)",
+    "captured_at_utc": "2026-10-12T10:18:38.070Z"
+  },
+  {
+    "file": "demo-presentation-mode-live.png",
+    "url": "http://127.0.0.1:5173/#overview",
+    "resolution": "1366x768",
+    "bytes": 125060,
+    "verified_dom_selectors": [
+      "[aria-label=\"Professor Presentation Mode Hero\"]"
+    ],
+    "description": "Presentation Mode Hero View (Current Step Hero + Safety Gate Hero)",
+    "captured_at_utc": "2026-10-12T10:18:54.832Z"
+  },
+  {
+    "file": "demo-runs-live.png",
+    "url": "http://127.0.0.1:5173/#runs",
+    "resolution": "1920x1080",
+    "bytes": 192958,
+    "verified_dom_selectors": [
+      "header",
+      "table",
+      "input[placeholder]"
+    ],
+    "description": "Run History & Indexed Run Ledger (RULE vs LLM Fallback runs)",
+    "captured_at_utc": "2026-10-12T10:19:11.634Z"
+  },
+  {
+    "file": "demo-compare-live.png",
+    "url": "http://127.0.0.1:5173/#compare",
+    "resolution": "1920x1080",
+    "bytes": 98367,
+    "verified_dom_selectors": [
+      "header",
+      "select"
+    ],
+    "description": "Planner Experiment Comparison (RULE Baseline vs LLM Fallback)",
+    "captured_at_utc": "2026-10-12T10:19:28.320Z"
+  },
+  {
+    "file": "demo-replay-live.png",
+    "url": "http://127.0.0.1:5173/#runs/RUN-AUTONOMOUS-PENTEST-1791712598",
+    "resolution": "1920x1080",
+    "bytes": 92473,
+    "verified_dom_selectors": [
+      "header",
+      "button",
+      "input[type=\"range\"]"
+    ],
+    "description": "Historical Run Replay Player (Verified Audit Ledger, Step Scrubber & Zero Dispatch Guarantee)",
+    "captured_at_utc": "2026-10-12T10:19:45.044Z"
+  },
+  {
+    "file": "demo-safety-deny-live.png",
+    "url": "http://127.0.0.1:5173/#overview",
+    "resolution": "1920x1080",
+    "bytes": 202917,
+    "verified_dom_selectors": [
+      "[aria-label=\"Professor Presentation Mode Hero\"]"
+    ],
+    "description": "Safety Gate Refusal Hero (Live Deny State, Red Alert & Zero Outbound Network Dispatch Guarantee)",
+    "captured_at_utc": "2026-10-12T10:20:04.633Z"
+  }
+]

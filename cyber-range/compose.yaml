@@ -3,7 +3,7 @@
     "executor": {
       "build": {"context": "..", "dockerfile": "cyber-range/Dockerfile"},
       "image": "cyber-range-executor:latest",
-      "entrypoint": ["python", "-m", "runtime.cli"],
+      "entrypoint": ["python", "-m", "runtime.lab.cli"],
       "networks": ["lab"]
     },
     "lab-sqli-001": {

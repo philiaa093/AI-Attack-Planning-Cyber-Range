@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_spec = importlib.util.spec_from_file_location("runtime_executor", Path(__file__).resolve().parents[2] / "runtime" / "executor.py")
+_spec = importlib.util.spec_from_file_location("runtime_executor", Path(__file__).resolve().parents[2] / "runtime" / "lab" / "executor.py")
 _module = importlib.util.module_from_spec(_spec)
 import sys
 sys.modules["runtime_executor"] = _module

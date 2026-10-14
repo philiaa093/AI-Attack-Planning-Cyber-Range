@@ -1,0 +1,8 @@
+# Markdown uses trailing spaces for intentional line breaks.
+*.md whitespace=-blank-at-eol
+
+# Keep existing evidence Git blobs unchanged; new pentest runs retain raw bytes.
+evidence/** whitespace=-blank-at-eol,-blank-at-eof
+evidence/runtime/RUN-AUTONOMOUS-PENTEST-*/** -text
+reports/TASK-* -text whitespace=-blank-at-eol,-blank-at-eof
+docs/implementation/restructure-20261014/** -text whitespace=-blank-at-eol,-blank-at-eof

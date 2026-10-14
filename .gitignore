@@ -1,30 +1,81 @@
-# Word temp lock files
+# Secrets and machine-specific environment; keep safe templates
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
+
+# Python dependencies, bytecode, test and coverage caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+/build/
+
+# JavaScript dependencies and generated frontend output; keep lockfiles
+node_modules/
+/dashboards/app/frontend/dist/
+*.tsbuildinfo
+
+# Local app sessions, logs and mutable databases
+/.demo-session.json
+*.pid
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+/cyber-range/targets/ecommerce/data/
+
+# Generated runs and duplicate frozen-source/build archives (preserve locally)
+/scripts/demo/demo-output/
+/dashboards/app/handoffs/
+/runtime/audit-artifacts/
+/runtime/cache-quarantine/
+/runtime/evaluation-runs/
+/runtime/gate-hygiene/
+/runtime/gate-remediation/
+/runtime/sequence-artifacts/
+/reports/evaluation-runs/
+/reports/defense_receipts.json
+
+# Local literature, personal drafts and generated thesis exports
+/docs/literature/
+/docs/thesis/drafts/
+/docs/thesis/checks/
+/docs/thesis/word/*.docx
+/docs/thesis/word/*.pdf
+/MicroWord/
+/pdf/
+/headings.txt
+/math_check.txt
+/violations.txt
 ~$*
 *.tmp
 
-# Generated documents
-*.docx
-*.pdf
-MicroWord/
-headings.txt
-math_check.txt
-violations.txt
-
-# Python
-__pycache__/
-*.py[cod]
-*.class
-.venv/
-venv/
-
-# IDE & Editor
+# IDE/editor state and operating-system files
 .vscode/
 .idea/
 .claude/
 *.swp
 *.swo
-
-# Operating System
 Thumbs.db
 Desktop.ini
 .DS_Store

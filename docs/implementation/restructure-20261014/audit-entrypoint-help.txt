@@ -1,0 +1,13 @@
+usage: python.exe -m runtime.audit.generate_audit_package [-h]
+                                                          {capture-checks,build,verify} ...
+
+Ed25519-signed audit submission; signing is never independent approval.
+capture-checks runs only three fixed offline suites (61 expected tests), the
+repository validator and read-only Git metadata. build seals supplied
+receipts. verify requires an independently trusted public-key fingerprint.
+
+positional arguments:
+  {capture-checks,build,verify}
+
+options:
+  -h, --help            show this help message and exit

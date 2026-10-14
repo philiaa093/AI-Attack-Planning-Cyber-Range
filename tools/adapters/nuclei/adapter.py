@@ -1,95 +1,65 @@
-"""Nuclei adapter — bounded template scanning for lab targets.
+"""Offline Nuclei report wrapper; scanner execution is always denied."""
 
-Handles:
-- ACTION-SCAN-002: Nuclei template scan
+import re
+from threading import Lock
+from uuid import uuid4
 
-Template allowlist: only SQLi, XSS, Path Traversal templates.
-Rate limiting enforcement. Parser converts Nuclei JSON to scanner-result.schema.json.
-"""
-
-from tools.adapters.base import BaseAdapter, build_observation, build_scanner_result, load_request_budget
-
-
-# Only these template categories are permitted
-TEMPLATE_ALLOWLIST = frozenset([
-    "sqli",
-    "xss",
-    "path-traversal",
-])
+from tools.adapters.base import BaseAdapter, build_observation, load_request_budget
+from tools.parsers.nuclei_parser import (
+    parse_nuclei_jsonl,
+    parse_nuclei_results,
+    validate_lab_target,
+    validate_template_manifest,
+)
 
 
 class NucleiAdapter(BaseAdapter):
     ADAPTER_SOURCE = "NUCLEI"
-    ALLOWED_ACTIONS = {
-        "ACTION-SCAN-002": "SCAN",
-    }
+    ALLOWED_ACTIONS = {"ACTION-SCAN-002": "SCAN"}
 
-    def __init__(self):
+    def __init__(self, *, allowed_templates=None):
         super().__init__()
-        budget = load_request_budget()
-        self._max_requests = budget["max_requests"]
-        self._request_count = 0
+        self._allowed_templates = validate_template_manifest(allowed_templates)
+        self._max_imports = load_request_budget()["max_actions"]
+        if type(self._max_imports) is not int or not 1 <= self._max_imports <= 100:
+            raise ValueError("Invalid offline import budget")
+        self._import_count = 0
+        self._import_lock = Lock()
 
-    def _check_budget(self):
-        if self._request_count >= self._max_requests:
-            raise RuntimeError(f"request budget exhausted ({self._max_requests})")
-        self._request_count += 1
+    def validate_request(self, action_id, target_id, run_id):
+        validate_lab_target(target_id)
+        if type(action_id) is not str or action_id not in self.ALLOWED_ACTIONS:
+            raise ValueError("Unsupported Nuclei action")
+        if type(run_id) is not str or not re.fullmatch(r"RUN-[A-Za-z0-9_-]{1,120}", run_id):
+            raise ValueError("Invalid run ID")
+        super().validate_request(action_id, target_id, run_id)
+
+    def execute(self, action_id, target_id, run_id, parameters=None):
+        if parameters is not None and (type(parameters) is not dict or parameters):
+            raise ValueError("Offline wrapper accepts no execution parameters")
+        return super().execute(action_id, target_id, run_id, parameters)
 
     def _run(self, action_id, target_id, run_id, parameters):
-        self._check_budget()
-        templates = parameters.get("templates", list(TEMPLATE_ALLOWLIST))
-        self._validate_templates(templates)
-        return self._nuclei_scan(target_id, run_id, templates)
-
-    @staticmethod
-    def _validate_templates(templates):
-        """Reject any template not in the allowlist."""
-        for t in templates:
-            if t not in TEMPLATE_ALLOWLIST:
-                raise ValueError(f"template '{t}' not in allowlist; allowed: {sorted(TEMPLATE_ALLOWLIST)}")
-
-    def _nuclei_scan(self, target_id, run_id, templates):
-        """Simulate Nuclei scan. In production, wraps nuclei CLI."""
-        # ponytail: simulated results; swap for subprocess nuclei wrapper when runtime authorized
-        from tools.parsers.nuclei_parser import parse_nuclei_results
-
-        simulated_nuclei_output = [
-            {
-                "template-id": "sqli-error-based",
-                "type": "http",
-                "host": target_id,
-                "matched-at": f"http://{target_id}/login?id=1",
-                "severity": "high",
-                "tags": ["sqli"],
-            },
-            {
-                "template-id": "xss-reflected",
-                "type": "http",
-                "host": target_id,
-                "matched-at": f"http://{target_id}/search?q=test",
-                "severity": "medium",
-                "tags": ["xss"],
-            },
-        ]
-
-        # Filter to only requested templates
-        filtered = [r for r in simulated_nuclei_output if any(t in r.get("tags", []) for t in templates)]
-        scanner_results = parse_nuclei_results(filtered, target_id)
-
-        facts = []
-        for i, sr in enumerate(scanner_results):
-            facts.append({
-                "fact_id": f"FACT-NUCLEI-{target_id}-{i:03d}",
-                "fact_type": "CANDIDATE_FINDING",
-                "subject": target_id,
-                "value": sr["finding_type"],
-                "confidence": sr["confidence"],
-            })
-
         return build_observation(
-            observation_id=f"OBS-SCAN-002-{run_id}",
+            observation_id=f"OBS-SCAN-002-{run_id}-{uuid4().hex}",
             run_id=run_id,
-            action_id="ACTION-SCAN-002",
-            outcome="SUCCESS",
-            new_facts=facts,
-        ), scanner_results
+            action_id=action_id,
+            outcome="DENIED",
+            new_facts=[],
+            evidence_refs=[],
+        ), []
+
+    def import_report(self, report, *, target_id):
+        """Return candidates only; caller owns evidence and normalization.
+
+        Accept decoded lists or JSONL text. Quotas are per adapter instance,
+        count attempts including malformed imports, and are not network budgets.
+        """
+        validate_lab_target(target_id)
+        with self._import_lock:
+            if self._import_count >= self._max_imports:
+                raise RuntimeError("Offline import budget exhausted")
+            self._rate_limiter.acquire("OFFLINE-NUCLEI-IMPORT", target_id)
+            self._import_count += 1
+        parser = parse_nuclei_jsonl if type(report) is str else parse_nuclei_results
+        return parser(report, target_id, allowed_templates=self._allowed_templates)

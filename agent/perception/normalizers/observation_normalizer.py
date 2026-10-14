@@ -70,6 +70,16 @@ class ObservationNormalizer:
         """Clear deduplication state between runs."""
         self._seen.clear()
 
+    def normalize_nuclei(self, envelope, *, allowed_target_ids, target_origin,
+                         template_families):
+        """Strict offline report boundary; returns observation and audit sidecar."""
+        from .nuclei_normalizer import normalize_nuclei_report
+
+        return normalize_nuclei_report(
+            envelope, allowed_target_ids=allowed_target_ids,
+            target_origin=target_origin, template_families=template_families,
+        )
+
     def normalize(self, scanner_results, run_id, action_id, observation_id=None):
         """Normalize list of scanner-result dicts → single observation dict.
 

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/normalizers/normalization-result.schema.json",
+  "title": "Canonical observation with offline normalization provenance v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "observation", "provenance"],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "recordSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_index", "record_sha256", "template_id", "matcher_status", "fact_id"],
+      "properties": {
+        "record_index": {"type": "integer", "minimum": 0, "maximum": 999},
+        "record_sha256": {"$ref": "#/$defs/sha256"},
+        "template_id": {"type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"},
+        "matcher_status": {"type": "boolean"},
+        "fact_id": {"type": ["string", "null"], "pattern": "^FACT-CAND-[a-f0-9]{12}$"}
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "observation": {
+      "allOf": [
+        {"$ref": "../contracts/observation.schema.json"},
+        {
+          "required": ["new_facts", "evidence_refs"],
+          "properties": {
+            "observation_id": {"type": "string", "pattern": "^OBS-NORM-[a-f0-9]{64}$"},
+            "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+            "action_id": {"const": "ACTION-SCAN-002"},
+            "timestamp_utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?Z$"},
+            "outcome": {"enum": ["PARTIAL", "FAILURE", "DENIED", "ERROR"]},
+            "new_facts": {
+              "type": "array", "maxItems": 3,
+              "items": {"properties": {
+                "fact_id": {"type": "string", "pattern": "^FACT-CAND-[a-f0-9]{12}$"},
+                "fact_type": {"const": "CANDIDATE_FINDING"},
+                "subject": {"type": "string", "pattern": "^lab-[a-z0-9-]+$"},
+                "value": {"enum": ["sqli", "xss", "path-traversal"]},
+                "confidence": {"const": 0.0}
+              }}
+            },
+            "evidence_refs": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^EV-[A-Za-z0-9._-]{1,125}$"}}
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "report_id", "input_kind", "input_sha256", "adapter_status", "normalizer_version", "redacted", "redaction_policy", "confidence_basis", "evidence_status", "input_record_count", "matched_record_count", "fact_count", "coalesced_record_count", "record_sources"],
+      "properties": {
+        "source": {"const": "NUCLEI"},
+        "report_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "input_kind": {"enum": ["RAW_OUTPUT", "SCANNER_RESULTS"]},
+        "input_sha256": {"$ref": "#/$defs/sha256"},
+        "adapter_status": {"enum": ["SUCCESS", "PARTIAL", "FAILURE", "DENIED", "ERROR", "TIMEOUT"]},
+        "normalizer_version": {"const": "1.0"},
+        "redacted": {"const": true},
+        "redaction_policy": {"const": "metadata-only-v1"},
+        "confidence_basis": {"const": "not-assessed"},
+        "evidence_status": {"enum": ["REFERENCED_UNVERIFIED", "UNRESOLVED"]},
+        "input_record_count": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "matched_record_count": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "fact_count": {"type": "integer", "minimum": 0, "maximum": 3},
+        "coalesced_record_count": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "record_sources": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/recordSource"}}
+      }
+    }
+  }
+}

@@ -8,24 +8,40 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
 import uuid
 
+def _ensure_docker_on_path() -> None:
+    if shutil.which("docker"):
+        return
+    candidates = [
+        r"C:\Program Files\Docker\Docker\resources\bin",
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin"),
+        os.path.expanduser(r"~\AppData\Local\Programs\DockerDesktop\resources\bin"),
+    ]
+    for cand in candidates:
+        if os.path.isdir(cand) and (os.path.isfile(os.path.join(cand, "docker.exe")) or os.path.isfile(os.path.join(cand, "docker"))):
+            os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
+            break
+
+_ensure_docker_on_path()
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from agent.memory.state.state_manager import StateManager
-from runtime.discovery_engine import ObservationDrivenDiscovery
-from runtime.discovery_gate import (
+from runtime.discovery.discovery_engine import ObservationDrivenDiscovery
+from runtime.safety.discovery_gate import (
     ApprovalToken, BudgetTracker, CentralizedSafetyGate, DiscoveryRequest,
     TokenBucketRateLimiter, load_canonical_target_registry,
 )
-from runtime.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure, redact_secrets
-from runtime.evidence_package import EvidenceVerifier
-from runtime.observed_planner import ObservedStatePlanner
-from runtime.planner_adapter import PlannerStateAdapter
+from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure, redact_secrets
+from runtime.evidence.evidence_package import EvidenceVerifier
+from runtime.planners.observed_planner import ObservedStatePlanner
+from runtime.planners.planner_adapter import PlannerStateAdapter
 
 TARGET = "lab-ecommerce"
 ORIGIN = "http://127.0.0.1:18088"

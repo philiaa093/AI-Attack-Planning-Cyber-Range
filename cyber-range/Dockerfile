@@ -4,4 +4,4 @@ COPY runtime /app/runtime
 ENV PYTHONPATH=/app
 USER nobody
 EXPOSE 8080
-ENTRYPOINT ["python", "-m", "runtime.server"]
+ENTRYPOINT ["python", "-m", "runtime.lab.server"]

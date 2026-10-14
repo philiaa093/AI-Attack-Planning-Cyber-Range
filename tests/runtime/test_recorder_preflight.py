@@ -21,12 +21,12 @@ import time
 import unittest
 from pathlib import Path
 
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     CentralizedSafetyGate,
     DiscoveryRequest,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
     EvidenceFailure,
 )

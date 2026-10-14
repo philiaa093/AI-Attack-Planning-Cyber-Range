@@ -27,7 +27,7 @@ from tools.adapters.base import (
 )
 from tools.adapters.discovery.adapter import DiscoveryAdapter
 from tools.adapters.zap.adapter import ZapAdapter
-from tools.adapters.nuclei.adapter import NucleiAdapter, TEMPLATE_ALLOWLIST
+from tools.adapters.nuclei.adapter import NucleiAdapter
 from tools.parsers.zap_parser import parse_zap_results
 from tools.parsers.nuclei_parser import parse_nuclei_results
 
@@ -152,16 +152,14 @@ class TestZapAdapter(unittest.TestCase):
     def setUp(self):
         self.adapter = ZapAdapter()
 
-    def test_zap_scan_returns_observation_and_results(self):
+    def test_zap_scan_is_denied_without_fabricated_results(self):
         obs, results = self.adapter.execute("ACTION-SCAN-001", "lab-sqli-001", "RUN-010")
         schema = load_schema("observation")
         self.assertEqual(schema_errors(obs, schema), [])
         self.assertEqual(obs["action_id"], "ACTION-SCAN-001")
-        self.assertTrue(len(results) > 0)
-        sr_schema = load_schema("scanner-result")
-        for sr in results:
-            self.assertEqual(schema_errors(sr, sr_schema), [])
-            self.assertEqual(sr["source"], "ZAP")
+        self.assertEqual(obs["outcome"], "DENIED")
+        self.assertEqual(obs["new_facts"], [])
+        self.assertEqual(results, [])
 
     def test_reject_non_lab_target(self):
         with self.assertRaises(ValueError):
@@ -181,7 +179,7 @@ class TestZapParser(unittest.TestCase):
             "site": [{
                 "host": "lab-sqli-001",
                 "alerts": [
-                    {"alert": "SQL Injection", "riskcode": "3", "uri": "http://lab-sqli-001/login"},
+                    {"alert": "SQL Injection", "riskcode": "3", "confidence": "2", "uri": "http://lab-sqli-001/login"},
                 ]
             }]
         }
@@ -198,16 +196,14 @@ class TestNucleiAdapter(unittest.TestCase):
     def setUp(self):
         self.adapter = NucleiAdapter()
 
-    def test_nuclei_scan_returns_observation_and_results(self):
+    def test_nuclei_scan_is_denied_without_fabricated_results(self):
         obs, results = self.adapter.execute("ACTION-SCAN-002", "lab-xss-001", "RUN-020")
         schema = load_schema("observation")
         self.assertEqual(schema_errors(obs, schema), [])
         self.assertEqual(obs["action_id"], "ACTION-SCAN-002")
-        self.assertTrue(len(results) > 0)
-        sr_schema = load_schema("scanner-result")
-        for sr in results:
-            self.assertEqual(schema_errors(sr, sr_schema), [])
-            self.assertEqual(sr["source"], "NUCLEI")
+        self.assertEqual(obs["outcome"], "DENIED")
+        self.assertEqual(obs["new_facts"], [])
+        self.assertEqual(results, [])
 
     def test_reject_forbidden_template(self):
         with self.assertRaises(ValueError):
@@ -224,8 +220,9 @@ class TestNucleiAdapter(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.adapter.execute("ACTION-RECON-001", "lab-xss-001", "RUN-023")
 
-    def test_template_allowlist_contents(self):
-        self.assertEqual(TEMPLATE_ALLOWLIST, {"sqli", "xss", "path-traversal"})
+    def test_template_allowlist_defaults_to_empty(self):
+        with self.assertRaises(ValueError):
+            self.adapter.import_report([{"template-id": "unreviewed"}], target_id="lab-xss-001")
 
 
 class TestNucleiParser(unittest.TestCase):
@@ -234,17 +231,19 @@ class TestNucleiParser(unittest.TestCase):
 
     def test_parse_findings(self):
         data = [{
-            "template-id": "sqli-error",
-            "severity": "high",
-            "host": "lab-sqli-001",
+            "template-id": "fixture-sqli",
+            "info": {"severity": "high", "tags": ["sqli"]},
+            "type": "http",
+            "matcher-status": True,
+            "host": "http://lab-sqli-001",
             "matched-at": "http://lab-sqli-001/login?id=1",
-            "tags": ["sqli"],
         }]
-        results = parse_nuclei_results(data, "lab-sqli-001")
+        results = parse_nuclei_results(data, "lab-sqli-001", allowed_templates={"fixture-sqli": "sqli"})
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["source"], "NUCLEI")
         self.assertEqual(results[0]["finding_type"], "sqli")
-        self.assertAlmostEqual(results[0]["confidence"], 0.9)
+        self.assertEqual(results[0]["confidence"], 0.0)
+        self.assertIsNone(results[0]["endpoint_id"])
 
 
 if __name__ == "__main__":

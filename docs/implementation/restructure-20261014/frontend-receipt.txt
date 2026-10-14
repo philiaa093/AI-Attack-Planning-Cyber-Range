@@ -1,0 +1,5 @@
+Observed command: npm run typecheck; npm test; npm run build
+Working directory: E:/PBL6_FINAL/dashboards/app/frontend
+Combined process exit code: 0
+TypeScript PASS; Vitest 5 files, 37 tests PASS; Vite build PASS, 1598 modules.
+This records the raw tool output returned in the active chat.

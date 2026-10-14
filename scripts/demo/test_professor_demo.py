@@ -13,7 +13,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_professor_demo as demo
-from runtime.discovery_gate import DispatchResponse
+from runtime.safety.discovery_gate import DispatchResponse
 
 
 class DemoTests(unittest.TestCase):
@@ -55,7 +55,7 @@ class DemoTests(unittest.TestCase):
             return demo.assess(gate or self.gate(), self.rec, demo.approval_for(self.run_id), **kwargs)
 
     def test_safe_one_page_fixture(self):
-        with patch("runtime.observed_planner._call_real_provider", side_effect=AssertionError("provider must not run")):
+        with patch("runtime.planners.observed_planner._call_real_provider", side_effect=AssertionError("provider must not run")):
             result = self.assess(preview=True)
         self.assertEqual(result["discovery"]["resources"], 1)
         self.assertEqual(result["discovery"]["forms_submitted"], 0)
@@ -82,7 +82,7 @@ class DemoTests(unittest.TestCase):
 
     def test_deny_zero_http(self):
         with contextlib.redirect_stdout(self.sink), \
-             patch("runtime.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
+             patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
             result = demo.deny_case(self.gate(), self.rec)
         self.assertEqual(result["decision"], "DENIED")
         self.assertEqual(result["network_dispatch_delta"], 0)
@@ -91,7 +91,7 @@ class DemoTests(unittest.TestCase):
 
     def test_missing_approval_zero_http(self):
         gate = self.gate()
-        with patch("runtime.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
+        with patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
             response = gate.dispatch(demo.DiscoveryRequest(self.run_id, demo.TARGET, demo.ACTION, self.origin + "/"))
             self.assertEqual(response.refusal_reason, "MISSING_APPROVAL")
             with self.assertRaisesRegex(demo.DemoBlocked, "MISSING_OR_INVALID"):
@@ -99,7 +99,7 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(self.hits, [])
 
     def test_provider_absent_explicit_fallback(self):
-        with patch("runtime.observed_planner._call_real_provider", side_effect=AssertionError("Internet provider forbidden")):
+        with patch("runtime.planners.observed_planner._call_real_provider", side_effect=AssertionError("Internet provider forbidden")):
             result = self.assess(planner_mode="llm-unavailable", fallback=True)
         self.assertEqual(result["planner_provenance"]["requested_mode"], "LLM")
         self.assertEqual(result["planner_provenance"]["actual_mode"], "RULE")
@@ -114,7 +114,7 @@ class DemoTests(unittest.TestCase):
     def test_intent_failure_zero_http(self):
         self.rec.inject_intent_failure()
         with self.assertRaisesRegex(demo.DemoBlocked, "EVIDENCE_NOT_DURABLE"), \
-             patch("runtime.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
+             patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
             self.assess(self.gate(2))
         self.assertEqual(self.hits, [])
 

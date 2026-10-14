@@ -27,19 +27,19 @@ import unittest
 from pathlib import Path
 from typing import Any
 
-from runtime.autonomous_runner import AutonomousRunner, DecisionTrace
-from runtime.discovery_gate import (
+from runtime.orchestration.autonomous_runner import AutonomousRunner, DecisionTrace
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
     KillSwitch,
     TokenBucketRateLimiter,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
     EvidenceFailure,
 )
-from runtime.observed_planner import ObservedStatePlanner
+from runtime.planners.observed_planner import ObservedStatePlanner
 
 
 class EphemeralMockServer:
@@ -468,7 +468,7 @@ class AutonomousRunnerTests(unittest.TestCase):
     def test_a12_direct_transport_bypass_inspection(self) -> None:
         """A12: Verifies that AutonomousRunner contains ZERO direct HTTP/socket clients and strictly routes through gate."""
         import inspect
-        import runtime.autonomous_runner as ar_mod
+        import runtime.orchestration.autonomous_runner as ar_mod
 
         src = inspect.getsource(ar_mod)
 

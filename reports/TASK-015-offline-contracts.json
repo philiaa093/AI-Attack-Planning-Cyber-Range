@@ -1,0 +1,106 @@
+{
+  "document_type": "TASK_HANDOFF_DOCUMENTS",
+  "schema_version": "1.0",
+  "task_id": "TASK-015",
+  "document_scope": "REPOSITORY_COPY_OF_EXISTING_OFFLINE_PLAN_AND_BUILD_CONTRACTS",
+  "authority": "Người dùng: bàn giao lại các tài liệu trong thư mục chính đi",
+  "source": "Hồ sơ phiên làm việc misty-napping-book.md; contracts và receipts được giữ nguyên về nội dung, không chạy lại tests khi chép tài liệu",
+  "status": "HANDOFF_BLOCKED",
+  "historical_baseline_replaced": false,
+  "task_status_mutation": false,
+  "review": "NOT_RUN",
+  "commit": "NOT_AUTHORIZED",
+  "contracts": [
+    {
+      "type": "PLAN_CONTRACT",
+      "schema_version": "1.0",
+      "task_id": "TASK-015",
+      "plan_id": "PLAN-TASK015-OFFLINE-SIM-005",
+      "base_head": "d9ae6ca0d5bb03ce381d7249665237f272eeddc9",
+      "authority_inputs": ["Người dùng: bắt đầu áp dụng với task15 kiểu mô phỏng ngoại tuyến", "Người dùng cho phép implementer self-review", "AGENTS.md", "PROJECT_CONTEXT.md", "PROJECT_PLAN.md", "TASKS.md", "docs/task-specs/TASK-015-discovery-adapter.md", "docs/adr/ADR-004-bounded-action-catalog.md", "docs/adr/ADR-005-planner-executor-perception-separation.md", "docs/adr/ADR-010-evidence-immutability.md", "agent/planner/contracts/observation.schema.json"],
+      "baseline_worktree": {
+        "root": "E:/PBL6_FINAL",
+        "status": "DIRTY",
+        "inventory_observed": ["PROJECT_CONTEXT.md", "PROJECT_PLAN.md", "TASKS.md", "agent/planner/contracts/plan.schema.json", "docs/task-specs/SL-09-observation-planner.md", "runtime/autonomous_runner.py", "runtime/discovery_gate.py", "runtime/observed_planner.py", "dashboards/app/", "evidence/runtime/RUN-AUTONOMOUS-PENTEST-1791712555/", "evidence/runtime/RUN-AUTONOMOUS-PENTEST-1791712598/", "evidence/runtime/RUN-AUTONOMOUS-PENTEST-1791723996/", "runtime/capability_registry.py", "runtime/discovery_report_importer.py", "scripts/cyber-range/run_autonomous_pentest.py", "scripts/demo/demo-output/", "tests/backend/", "tests/runtime/test_autonomous_pentest.py", "tests/runtime/test_discovery_report_importer.py"],
+        "pin_before_edits": true,
+        "preserve_outside_scope": true,
+        "peer_coordination": "TASK-016 ZAP-only; không sửa shared files từ phiên này"
+      },
+      "allowed_paths": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py"],
+      "forbidden_paths": ["runtime/autonomous_runner.py", "runtime/observed_planner.py", "runtime/capability_registry.py", "runtime/discovery_gate.py", "runtime/discovery_recorder.py", "agent/**", "tools/**", "actions/**", "configs/**", "cyber-range/**", "docs/**", "evidence/**", "scripts/**", "PROJECT_CONTEXT.md", "PROJECT_PLAN.md", "TASKS.md", "AGENTS.md", "tests/unit/**"],
+      "constants": {
+        "scope": "OFFLINE_DEFENSIVE_REVIEW_SIMULATION", "policy_action": "ACTION-RECON-002", "review_action": "ACTION-PLAN-003", "network_dispatch_count": 0, "subprocess_count": 0, "provider_count": 0, "autonomous_attack_integration": false, "state_ingestion": false, "max_simulation_steps": 3, "max_simulation_seconds": 5, "max_fixture_bytes": 16384, "new_dependencies": false, "external_execution": "UNRESOLVED", "review_mode": "IMPLEMENTER_SELF_REVIEW", "independent_review": false
+      },
+      "acceptance_checks": ["BACKWARD_COMPATIBILITY", "STRICT_BOUNDED_FIXTURES", "DETERMINISTIC_DEFENSIVE_REPLAN", "NO_EVASION_OR_TARGET_EXECUTION", "EXPECTED_OBSERVED_SEPARATE", "BUDGET_AND_NO_PROGRESS_STOPS", "APPROVAL_POLICY_KILL_FAIL_CLOSED", "IMMUTABLE_LINKED_EVIDENCE", "ZERO_NETWORK_PROCESS_PROVIDER"],
+      "required_checks": [
+        "python -B -m unittest discover -s tests/runtime -p test_discovery_report_importer.py -v",
+        "python -B -m unittest discover -s tests/unit -p test_tool_adapters.py -v",
+        "python -B -m unittest discover -s tests/unit -p test_observation_normalizer.py -v",
+        "python -B scripts/validation/validate_scaffold.py",
+        "git diff --check",
+        "python -B -c \"import ast,pathlib; files=('runtime/discovery_report_importer.py','tests/runtime/test_discovery_report_importer.py'); [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'),filename=p) for p in files]; print('AST PASS: 2 files')\""
+      ],
+      "repair_budget": 1,
+      "external_attempt_budget": 0,
+      "blockers": [],
+      "handoff": {"build_contract_required": true, "review_contract_required": true, "pre_review_gate_required": true, "approval_scope": "OFFLINE_SIMULATION_ONLY", "full_task_completion": "NOT_CLAIMED", "commit": "NOT_AUTHORIZED", "task_status_mutation": false}
+    },
+    {
+      "type": "BUILD_CONTRACT",
+      "schema_version": "1.0",
+      "task_id": "TASK-015",
+      "plan_id": "PLAN-TASK015-OFFLINE-SIM-005",
+      "base_head": "d9ae6ca0d5bb03ce381d7249665237f272eeddc9",
+      "build_id": "BUILD-TASK015-OFFLINE-SIM-005",
+      "status": "HANDOFF_BLOCKED",
+      "observed_paths": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py", "runtime/discovery_gate.py", "runtime/discovery_recorder.py", "configs/safety/target-allowlist.yaml", "configs/safety/action-allowlist.yaml", "cyber-range/targets/manifests/targets.json", "agent/planner/contracts/observation.schema.json", "agent/planner/contracts/evidence.schema.json", "scripts/validation/validate_scaffold.py", "tests/unit/test_tool_adapters.py", "tools/adapters/zap/adapter.py", "tools/parsers/zap_parser.py", "tests/unit/test_zap_adapter_offline.py"],
+      "changed_files": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py"],
+      "check_receipts": [
+        {"command": "python -B -m unittest discover -s tests/runtime -p test_discovery_report_importer.py -v", "utc": "2026-10-11T14:01:57.966957+00:00", "exit_code": 0, "result": "45 tests OK; không skip"},
+        {"command": "python -B -m unittest discover -s tests/unit -p test_tool_adapters.py -v", "utc": "2026-10-11T14:02:07.705693+00:00", "exit_code": 0, "result": "27 tests OK; snapshot ZAP-only đã thay đổi so với tranche trước"},
+        {"command": "python -B -m unittest discover -s tests/unit -p test_observation_normalizer.py -v", "utc": "2026-10-11T14:02:07.975881+00:00", "exit_code": 0, "result": "33 tests OK"},
+        {"command": "python -B scripts/validation/validate_scaffold.py", "utc": "2026-10-11T14:02:08.223447+00:00", "exit_code": 0, "result": "SCAFFOLD VALID; files_checked=6007 schemas_checked=10 actions_checked=13 tasks_checked=35 adrs_checked=13"},
+        {"command": "git diff --check", "utc": "2026-10-11T14:02:20.488032+00:00", "exit_code": 0, "result": "Không lỗi whitespace; LF/CRLF warnings ngoài scope. Không kiểm untracked content; own whitespace scan riêng PASS"},
+        {"command": "python -B -c \"import ast,pathlib; files=('runtime/discovery_report_importer.py', 'tests/runtime/test_discovery_report_importer.py'); [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'),filename=p) for p in files]; print('AST PASS: 2 files')\"", "utc": "2026-10-11T14:02:20.624209+00:00", "exit_code": 0, "result": "AST PASS: 2 files"}
+      ],
+      "self_check": {
+        "deleted_files": [], "own_edits_allowlist_only": true, "new_dependencies": false, "external_attempts": 0, "repair_budget_consumed": 0, "review_started": false,
+        "file_sha256": {"runtime/discovery_report_importer.py": "ad466bd05296c577e0404a2cc1ae145ee2f33d0525e98c3320a3c9c1df163c4e", "tests/runtime/test_discovery_report_importer.py": "946919c38dcf41ab01faea483b274ea27eef20d056d960f53c4f9729b2d7faa0"},
+        "baseline_utc": "2026-10-11T13:57:38.649650+00:00", "baseline_outside_files": 1483, "baseline_outside_sha256": "a52a43929c3445a90e64f1e5ef36301dc32fa44413b642b82ccd6443680887dc", "observed_outside_sha256_excluding_new_zap_test": "0fa07fbf4060bc8f1482bacda13b465f3409110d349d3b05a9da12813b5e4bbd", "dependencies_match_previous_pinned_receipt": true, "shared_test_sha256_after_checks": "4c153d9630d2f92ef5eff423c20da28e33df61478523996317a3ba8ed481c026", "gate_attempt": "Aggregate baseline mismatch exit 1; không sửa/revert files ngoài scope"
+      },
+      "unverified": ["Chưa review SIM-005 do pre-review gate blocked", "Không chứng minh exact shared-test source tại lúc test bắt đầu do peer concurrency", "Không scanner, firewall thật, provider hoặc runtime integration validation", "Adversarial ancestor filesystem race như ceiling cũ"],
+      "blockers": ["OUTSIDE_BASELINE_MISMATCH: digest ngoài hai own files và ZAP-only paths không khớp; kể cả loại test_zap_adapter_offline.py mới vẫn mismatch. Baseline chỉ lưu aggregate digest, không có per-file map để xác định đầy đủ delta. Không được suy thay đổi đều do peer hoặc tự pin lại để che mismatch."],
+      "pending_handoff_payload": {"status": "HANDOFF_BLOCKED", "scope": "OFFLINE_DEFENSIVE_REVIEW_SIMULATION", "implemented": true, "review": "NOT_RUN", "required_action": "Đối chiếu exact delta ngoài scope trên snapshot ổn định trước review; không sửa/xóa evidence hoặc chạy live workflow", "full_task_completion": "NOT_CLAIMED", "commit": "NOT_AUTHORIZED", "task_status_mutation": false}
+    },
+    {
+      "type": "BUILD_CONTRACT",
+      "schema_version": "1.0",
+      "task_id": "TASK-015",
+      "plan_id": "PLAN-TASK015-OFFLINE-SIM-005",
+      "base_head": "d9ae6ca0d5bb03ce381d7249665237f272eeddc9",
+      "build_id": "BUILD-TASK015-OFFLINE-SIM-005-H1",
+      "status": "HANDOFF_BLOCKED",
+      "observed_paths": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py", "runtime/discovery_gate.py", "runtime/discovery_recorder.py", "configs/safety/target-allowlist.yaml", "configs/safety/action-allowlist.yaml", "cyber-range/targets/manifests/targets.json", "agent/planner/contracts/observation.schema.json", "agent/planner/contracts/evidence.schema.json", "scripts/validation/validate_scaffold.py", "tests/unit/test_tool_adapters.py", "tests/unit/test_observation_normalizer.py", "tools/adapters/zap/adapter.py", "tools/parsers/zap_parser.py", "tests/unit/test_zap_adapter_offline.py"],
+      "changed_files": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py"],
+      "check_receipts": [
+        {"command": "python -B -m unittest discover -s tests/runtime -p test_discovery_report_importer.py -v", "utc": "2026-10-11T14:21:11.853179+00:00", "exit_code": 0, "result": "45 tests OK; 8.653s"},
+        {"command": "python -B -m unittest discover -s tests/unit -p test_tool_adapters.py -v", "utc": "2026-10-11T14:21:20.999972+00:00", "exit_code": 0, "result": "27 tests OK; 0.025s"},
+        {"command": "python -B -m unittest discover -s tests/unit -p test_observation_normalizer.py -v", "utc": "2026-10-11T14:21:21.397407+00:00", "exit_code": 0, "result": "33 tests OK; 0.005s"},
+        {"command": "python -B scripts/validation/validate_scaffold.py", "utc": "2026-10-11T14:21:21.822814+00:00", "exit_code": 1, "result": "SCAFFOLD INVALID: dashboards/app/frontend/tsconfig.json: invalid JSON-compatible YAML/JSON: Expecting property name enclosed in double quotes: line 9 column 5 (char 187)"},
+        {"command": "git diff --check", "utc": "2026-10-11T14:21:31.923392+00:00", "exit_code": 0, "result": "Không lỗi whitespace; LF/CRLF warnings; không bao gồm untracked content"},
+        {"command": "python -B -c \"import ast,pathlib; files=('runtime/discovery_report_importer.py','tests/runtime/test_discovery_report_importer.py'); [ast.parse(pathlib.Path(p).read_text(encoding='utf-8'),filename=p) for p in files]; print('AST PASS: 2 files')\"", "utc": "2026-10-11T14:21:31.997740+00:00", "exit_code": 0, "result": "AST PASS: 2 files"}
+      ],
+      "self_check": {
+        "deleted_files": [], "new_source_edits_in_handoff": [], "own_edits_allowlist_only": true, "new_dependencies": false, "external_attempts": 0, "repair_budget_consumed": 0, "review_started": false, "historical_baseline_replaced": false,
+        "file_sha256": {"runtime/discovery_report_importer.py": "ad466bd05296c577e0404a2cc1ae145ee2f33d0525e98c3320a3c9c1df163c4e", "tests/runtime/test_discovery_report_importer.py": "946919c38dcf41ab01faea483b274ea27eef20d056d960f53c4f9729b2d7faa0"},
+        "pinned_source_count": 15, "pinned_source_changes_before_after": [], "dependencies_match_historical_hashes": true,
+        "shared_source_sha256": {"tests/unit/test_tool_adapters.py": "4c153d9630d2f92ef5eff423c20da28e33df61478523996317a3ba8ed481c026", "tests/unit/test_observation_normalizer.py": "93fd24208abd8bdc422abbaa6cb94674b7b3366ef546b6e8e57d161959bc617f", "tools/adapters/zap/adapter.py": "0644b630e8e5314c51513ca030eb7f1dc4692efbdb90a19029637310ce612a98", "tools/parsers/zap_parser.py": "77cf96b9b7ff4bff35bb17e7ca27f019054f1d211efac62f5f415adb4e4fd0dd", "tests/unit/test_zap_adapter_offline.py": "50b2d48f71541345967c50b3c2a378d4e190abefa55a42a6a5ccfc15e98b15fa"},
+        "own_ast_and_whitespace": "PASS",
+        "prior_current_snapshot": {"started_utc": "2026-10-11T14:20:12.123382+00:00", "ended_utc": "2026-10-11T14:20:39.636999+00:00", "files_before": 1749, "files_after": 1773, "sha256_before": "bfc6854aa0b80a2a4df0363042690d6110ab48e50eda7e97cb87531aca13cd25", "sha256_after": "49a0ab57a84f1fe4f01b8001d44994addd6259e2cb24e07ffd4eb08fbfb58aac", "drift_count": 24, "drift_prefix": "scripts/demo/demo-output/", "origin": "UNRESOLVED"}
+      },
+      "unverified": ["SIM-005 review NOT_RUN", "Historical outside-scope per-file baseline unavailable; exact delta unresolved", "Source pin chỉ kiểm trước/sau cho 15 đường dẫn, không tất cả dependency bắc cầu", "Không scanner/firewall/provider/runtime integration validation", "Adversarial ancestor filesystem race theo ceiling hiện có"],
+      "blockers": ["OUTSIDE_BASELINE_MISMATCH_UNRESOLVED: không có per-file baseline lịch sử; không thay bằng snapshot mới", "CURRENT_WORKTREE_DRIFT: 24 file mới ngoài scope trong lượt 14:20Z", "REQUIRED_CHECK_FAILURE: scaffold checker exit 1 tại dashboards/app/frontend/tsconfig.json; ngoài scope TASK-015"],
+      "pending_handoff_payload": {"status": "HANDOFF_BLOCKED", "scope": "OFFLINE_DEFENSIVE_REVIEW_SIMULATION", "implemented": true, "review": "NOT_RUN", "changed_files": ["runtime/discovery_report_importer.py", "tests/runtime/test_discovery_report_importer.py"], "deleted_files": [], "required_action": "Owner scope dashboard xử lý lỗi checker; đối chiếu baseline lịch sử và ổn định worktree trước gate mới. Không sửa file ngoài scope, không tự xóa blocker hoặc ghi APPROVE.", "full_task_completion": "NOT_CLAIMED", "commit": "NOT_AUTHORIZED", "task_status_mutation": false, "autonomous_attack_integration": "NOT_IMPLEMENTED"}
+    }
+  ]
+}

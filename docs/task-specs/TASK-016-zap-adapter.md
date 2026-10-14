@@ -2,7 +2,11 @@
 
 ## Status
 
-`SPEC_ONLY`.
+`IMPLEMENTED` trong phạm vi parser JSON và safety wrapper ZAP ngoại tuyến; chưa `VALIDATED`, acceptance/handoff còn pending.
+
+Implementation: `tools/parsers/zap_parser.py`, `tools/adapters/zap/adapter.py`. `import_report` trả candidates đã validate/minimize; `execute` luôn `DENIED`, không chạy ZAP. Check ngày 2026-10-11 khi cập nhật trạng thái: `python -B -m unittest discover -s tests/unit -p test_zap_adapter_offline.py -v`, exit 0, 16 tests PASS. Independent review chưa có approval; handoff trước đó `HANDOFF_BLOCKED` bởi repository checker ngoài scope, chưa chạy lại gate trong lần cập nhật này.
+
+Chưa xác minh report từ ZAP thật, live scanner hoặc durable evidence integration. Chi tiết, receipts lịch sử và pending handoff tại [TASKS.md](../../TASKS.md#task-016--parser-và-safety-wrapper-zap-ngoại-tuyến).
 
 ## Purpose
 

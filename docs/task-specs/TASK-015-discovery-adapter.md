@@ -2,7 +2,11 @@
 
 ## Status
 
-`SPEC_ONLY`.
+`IMPLEMENTED` trong phạm vi discovery report importer và observations ngoại tuyến; chưa `VALIDATED`, acceptance/handoff còn pending.
+
+Implementation: `runtime/discovery_report_importer.py`; tests: `tests/runtime/test_discovery_report_importer.py`. Nhập `httpx-jsonl`/`whatweb-json` với policy/approval checks, bounded input, evidence và provenance `IMPORTED_OFFLINE`; metadata chưa được xác minh, external execution `UNRESOLVED`. Review simulation có nhãn `SIMULATED_FIXTURE`, không phải agent run thật. Discovery engine/gate/recorder của SL-08 là implementation liên quan, chưa thay thế nghiệm thu TASK-015. Adapter cũ `tools/adapters/discovery/adapter.py` vẫn là mô phỏng.
+
+Check ngày 2026-10-11: `python -B -m unittest discover -s tests/runtime -p test_discovery_report_importer.py -v`, exit 0, 45 tests PASS trong fixtures/temp directories. Chưa xác minh công cụ/report thật hoặc independent approval. Chi tiết và pending handoff tại [TASKS.md](../../TASKS.md#task-015--discovery-report-import-và-observations-ngoại-tuyến).
 
 ## Purpose
 

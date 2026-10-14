@@ -68,13 +68,68 @@ Tái dùng `agent/memory/state/state_manager.py`: `apply_observation`, `decremen
 
 Policy gate trước mọi dispatch; unknown action/target, malformed input, missing approval và order/rate/budget violations bị từ chối. Tool adapters chỉ hỗ trợ capability đã được duyệt; không chọn công cụ bằng cách biết trước lỗi target. TASK-015–017 chưa có validation cho external tool runtime.
 
+### TASK-017 — Nuclei offline và bàn giao normalizer
+
+TASK-017 là `IMPLEMENTED` cho parser/safety wrapper nhập báo cáo JSON/JSONL ngoại tuyến theo yêu cầu người dùng; chưa `VALIDATED`. Exact template-ID manifest mặc định rỗng, target/origin validation, resource limits và dữ liệu tối giản; `execute` luôn `DENIED`. Receipts phiên triển khai ngày 2026-10-11: 72 tests offline PASS (28 Nuclei, 27 adapters, 17 safety), AST/diff checks PASS; repository gate exit 1 với 643 lỗi ngoài scope, 0 lỗi thuộc năm paths Task 17 ở lần chạy cuối của phiên đó. Không suy runtime approval hoặc success từ cập nhật trạng thái.
+
+Tiếp theo: bàn giao candidate contract cho TASK-018, giữ provenance/evidence trước state update và quy ước `confidence=0.0` là chưa đánh giá, không phải âm tính; xử lý checker blockers theo scope riêng, kiểm tương thích report thật và review độc lập. Scanner runtime scaffold giữ `SPEC_ONLY`, durable evidence/report provenance và external execution còn `UNRESOLVED`. Chi tiết tại [TASKS.md](TASKS.md#task-017--parser-và-safety-wrapper-nuclei-ngoại-tuyến).
+
+### TASK-015 — discovery offline và liên kết SL-08
+
+TASK-015 là `IMPLEMENTED` cho `runtime/discovery_report_importer.py`: bounded import `httpx-jsonl`/`whatweb-json`, policy/approval checks, evidence và observations có provenance `IMPORTED_OFFLINE`; review simulation ghi `SIMULATED_FIXTURE`. Check cập nhật trạng thái ngày 2026-10-11 đạt 45 tests PASS, exit 0. Metadata vẫn chưa xác minh, external-tool execution `UNRESOLVED`; adapter discovery cũ còn mô phỏng. Đối chiếu acceptance với SL-08 và bàn giao review độc lập trước validation; không làm lại chức năng đã có hoặc chuyển receipts SL-08 thành approval TASK-015.
+
+### TASK-016 — offline slice và evidence tiếp theo
+
+`PLAN-TASK016-ZAP-OFFLINE-001` / `BUILD-TASK016-ZAP-OFFLINE-001` đã triển khai bounded JSON parser và wrapper ngoại tuyến. `import_report` trả candidate data, không action observation; `execute` luôn `DENIED` với facts/results rỗng. Giữ target allowlist, all-or-nothing scope validation, confidence ordinal không severity fallback, rate/budget ceiling theo adapter và `endpoint_id=null` để minimize dữ liệu. Không external scanner/network/file ingestion hoặc fake findings.
+
+Self-check ngày 2026-10-11 có 60 tests PASS (16 ZAP, 27 adapters, 17 safety), scoped diff check PASS và bốn hashes khớp snapshot. Independent review chưa có verdict; self-review không thay approval. Checker từng PASS ở build gốc nhưng lần ghi nhận sau đó exit 1 vì lỗi trong `dashboards/app/frontend/node_modules/**` ngoài allowlist; handoff giữ `HANDOFF_BLOCKED`. Canonical TASK-016 là `IMPLEMENTED` trong phạm vi parser/wrapper offline, chưa `VALIDATED`; check cập nhật trạng thái chạy lại suite ZAP đạt 16 tests PASS, exit 0, chưa chạy lại repository gate hoặc tái xác nhận build hashes. Exact receipts và giới hạn tại [TASKS.md](TASKS.md#checks-and-observed-implementation-state).
+
+Kế hoạch được duyệt `PLAN-TASK016-ZAP-EVIDENCE-002` chọn durable evidence ngoại tuyến, chưa triển khai hoặc chạy checks:
+1. Giải quyết repository checker blocker trong scope riêng và chạy lại gate; không xóa dependencies hoặc sửa validator ngoài allowlist TASK-016.
+2. Main tự triển khai API import có evidence qua `DurableEvidenceRecorder.persist_phase_artifact`: recorder/run/source/root tường minh, intent → minimized result hoặc rejection, hash cùng bounded snapshot, persist trước return và sticky halt khi ghi lỗi. Không lưu raw report hoặc dùng `DISPATCH_CONFIRMED` cho import.
+3. Trong phạm vi recorder được duyệt, kiểm no-overwrite publication/containment và bảo toàn evidence cũ bằng temp-directory tests; chạy focused/regression checks, gate rồi bàn giao review. Windows directory-entry power-loss durability vẫn `UNRESOLVED`, không giả bảo đảm.
+
+Tương thích report ZAP thật cần fixture/provenance được kiểm chứng; live ZAP không thuộc nhánh này. Cập nhật tài liệu không cấp scan/per-run approval hoặc nâng task `VALIDATED`.
+
 - SL-08 đã `IMPLEMENTED`: `runtime/discovery_recorder.py`, `runtime/discovery_gate.py`, `runtime/discovery_engine.py`. Recorder ghi intent và result nguyên tử, fsync, SHA-256, schema validation (`evidence.schema.json`), fail-closed (7 preflight tests E01–E07 PASS). Centralized safety gate kiểm tra chặt chẽ lab mode, dynamic TOCTOU revocation, budget, sliding rate limit, và bất biến `effective_targets = canonical_allowlist & run_approved_targets` (9 safety tests D01–D09 PASS). Live Docker verification `scripts/cyber-range/verify_sl08_live.py` đạt 7/7 pha PASS, bằng chứng lưu tại `evidence/runtime/RUN-SL08-LIVE/`.
+
+### TASK-019 — SQLite knowledge-state store và bàn giao
+
+Task hiện `IMPLEMENTED` cho store ngoại tuyến tại `runtime/knowledge_state_store.py`, cập nhật trạng thái ngày 2026-10-12 theo yêu cầu người dùng. Context tách run/session/episode; observations append-only, facts có index, assets view và state snapshot ghi cùng transaction. Tái dùng StateManager làm budget owner; giữ observation/state contracts và idempotent replay/conflict semantics, không tích hợp store vào runner hoặc consumer trong phần triển khai này.
+
+Receipts triển khai ngày 2026-10-11: 21 tests SQLite + 39 tests API cũ PASS (hai suite exit 0), AST/diff/example PASS; repository checker exit 1 với 656 errors, 0 errors trong ba paths Task 19. Source hashes được đối chiếu khi cập nhật tài liệu và khớp receipts; không chạy lại suites. Historical perception validation không bao phủ SQLite extension. Exact receipts và giới hạn tại [thiết kế Task 19](docs/implementation/knowledge_state_store.md), trạng thái tại [TASKS.md](TASKS.md#task-019--knowledge-state-store-sqlite-ngoại-tuyến).
+
+Thứ tự tiếp theo: giải quyết repository gate trong scope riêng → independent review schema/identity/budget/provenance → kiểm compatibility TASK-018/consumer và evidence-before-state theo recorder được duyệt. Handoff hiện `HANDOFF_BLOCKED`; chưa chứng minh durable evidence binding, report thật, process/container restore hoặc hiệu năng. Mỗi ingest replay history; không mở checkpoint/state restoration API hoặc runtime scope bằng cập nhật tài liệu.
+
+### TASK-020 — Shared planner interface và bàn giao
+
+Task hiện `IMPLEMENTED` cho giao diện ngoại tuyến tại [runtime/planner_interface.py](runtime/planners/planner_interface.py), cập nhật ngày 2026-10-12 theo yêu cầu người dùng. Entry points plan/replan kiểm tra input/output chung; strategy implement mode/_plan và tùy chọn _replan. Snapshot/proposal immutable theo canonical schemas; identity/revision, scope/objective, stop conditions và fallback provenance được kiểm. StateManager giữ budget ownership; candidate sets không cấp quyền execution.
+
+Receipts triển khai: 28 focused tests, 21 Task 19 regression và 16 planner contract tests PASS, từng suite exit 0; AST/example/whitespace PASS. Source hashes khớp receipts khi cập nhật trạng thái, không chạy lại suites. Checker phiên triển khai exit 1 với 656 errors, 0 errors trong ba paths Task 20. [Thiết kế/receipts](docs/implementation/planner_interface.md) giữ exact commands, UTC, hashes và giới hạn; [TASKS.md](TASKS.md#task-020--planner-interface-ngoại-tuyến) là nguồn trạng thái.
+
+Handoff `HANDOFF_BLOCKED`: giải quyết repository blockers trong scope riêng → independent review shared interface/identity/provenance → approved consumer integration với coordinator/gate/recorder. Real RULE/LLM/RL/HYBRID backends, reference/evidence integrity, redaction completeness và runtime integration giữ `UNRESOLVED`; không có provider/training/dispatch trong interface. Không chuyển SL-09 receipts thành validation ABC mới hoặc nâng các task phụ thuộc; TASK-026/032 giữ `DEFERRED`.
 
 ## Rule
 
 Giữ baseline xác định để so sánh. Rule fallback là mode thực tế riêng, không được ghi thành LLM. Không dùng tiêu chí “đủ ba lỗi” hoặc default vulnerability routes để kết thúc run.
 
+### TASK-021 — Rule-based planner ngoại tuyến và bàn giao
+
+Task 21 là `IMPLEMENTED` trong phạm vi baseline xem xét bằng chứng ngoại tuyến theo yêu cầu người dùng ngày 2026-10-12; chưa `VALIDATED`. [RuleBasedPlanner](runtime/planners/rule_based_planner.py) kế thừa Task 20 và chỉ đọc snapshot Task 19. Luật immutable, điều kiện đóng, thứ tự priority/rule ID/fact ID xác định; chỉ đề xuất `ACTION-PLAN-003` (`REVISIT_EVIDENCE`) cho candidate có subject là lab target thuộc scope. Completion CONTROL và feedback liên kết context/revision/action/source observation; planner không sửa store, trừ budget, ghi evidence hoặc tự dispatch.
+
+Receipts triển khai: 28 focused tests và 65 dependency/contract tests PASS (93 tests, từng suite exit 0), AST/example/whitespace PASS. Checker phiên triển khai exit 1 với 656 lỗi ngoài scope, 0 lỗi thuộc ba paths Task 21; source hashes đã đối chiếu khi cập nhật trạng thái, không chạy lại suites. Exact commands và giới hạn tại [thiết kế và receipts Task 21](docs/implementation/rule_based_planner.md).
+
+Handoff `HANDOFF_BLOCKED`: xử lý repository blockers trong scope riêng → review độc lập strategy/completion/source integrity → approved recorder/coordinator integration. Durable evidence, xác thực completion ngoài synthetic fixtures, runtime/scanner execution và baseline nghiên cứu đầy đủ giữ `UNRESOLVED`. Không chuyển receipts SL-09 hoặc baseline ngoại tuyến thành validation scanner/LLM; cập nhật tài liệu không mở quyền thực thi hoặc thay trạng thái task phụ thuộc.
+
 ## LLM
+
+### TASK-022 — LLM planner ngoại tuyến và bàn giao
+
+Task 22 là `IMPLEMENTED` cho phần xem xét metadata bằng chứng ngoại tuyến theo yêu cầu người dùng ngày 2026-10-12; chưa `VALIDATED`. [LLMPlanner](runtime/planners/llm_planner.py) kế thừa Task 20 và đọc snapshot Task 19; context có giới hạn, coverage và system prompt, một tool có strict schema với revision binding. Chỉ đề xuất `ACTION-PLAN-003` hoặc dừng; Python gắn objective/target/source observation từ snapshot. Replan phân biệt DENIED/FAILURE/ERROR/PARTIAL/SUCCESS và không lặp phiên bản candidate chưa thay đổi sau thất bại; completion cần CONTROL liên kết feedback. Raw fact values không gửi vào context; provider injection là trusted code, không sandbox hoặc authorization.
+
+Receipts triển khai: 31 focused tests + 93 regression tests PASS (124 tests), AST/document/link/whitespace PASS. Checker triển khai exit 1 với 613 lỗi ngoài scope, 0 lỗi thuộc ba paths Task 22. Source hashes khớp receipts khi cập nhật trạng thái; không chạy lại suites trong lần cập nhật tài liệu. [Thiết kế/receipts Task 22](docs/implementation/llm_planner.md) giữ exact commands, UTC, hashes và giới hạn.
+
+Handoff `HANDOFF_BLOCKED`, blocker `REPOSITORY_CHECKER_FAILED_OUTSIDE_SCOPE`: xử lý repository blockers trong scope riêng → review độc lập context/selection/replan/provenance → approved provider/reference/evidence/coordinator integration. Provider/model/tokenizer/transport thật, durable evidence/history/reference integrity và runtime integration còn `UNRESOLVED`. Fallback chỉ khi được cho phép và provider unavailable/timeout, ghi actual mode RULE; fixture/fallback không chứng minh LLM run thật. Không mở scanner/executor/runner scope hoặc nâng task phụ thuộc; TASK-026/032 giữ `DEFERRED`.
 
 ### Mốc E — planner dựa trên quan sát và bảy giai đoạn PTES
 
@@ -82,6 +137,7 @@ LLM nhận observations đã redact, không source/ground truth/secrets/tokens. 
 
 - SL-09 đã `IMPLEMENTED`: `runtime/planner_adapter.py` và `runtime/observed_planner.py`. Tái sử dụng `StateManager`, bảo đảm tính bất biến khi nạp observation, phát hiện xung đột, thu gọn prompt không chứa bí mật/HTML thô. Đề xuất chuẩn hóa theo `plan.schema.json`, theo dõi đầy đủ `mode_provenance`, kiểm soát nghiêm ngặt chính sách fallback (`fallback_allowed=False` dừng an toàn thay vì âm thầm lùi về rule), gate evaluation không dispatch mạng. 13 unit tests (P01–P08 và tests thẩm quyền allowlist) PASS. Live Docker verification `scripts/cyber-range/verify_sl09_live.py` đạt 8/8 pha PASS, bằng chứng lưu tại `evidence/runtime/RUN-SL09-LIVE/`. Sẵn sàng cho SL-10 (PTES Coordinator).
 - Autonomous Closed-Loop Control đã `IMPLEMENTED`: `runtime/autonomous_runner.py` kết nối trực tiếp `ObservedStatePlanner`, `CentralizedSafetyGate`, `StateManager` và `DurableEvidenceRecorder` thành vòng lặp tự hành đóng kín: `OBSERVATION -> STATE -> AI PLANNER -> PROPOSAL -> SAFETY GATE -> EXECUTOR -> NEW OBSERVATION -> STATE UPDATE -> AI REPLAN -> ... -> STOP`. Bất biến then chốt: runner tuyệt đối không chứa transport trực tiếp (0 direct client libraries); fail-closed ghi intent trước dispatch và result trước request kế tiếp; xử lý từ chối an toàn qua quan sát `REFUSAL`; phát hiện lặp trạng thái không có tiến triển (`NO_PROGRESS_LOOP`). 12 acceptance tests A01–A12 tại `tests/runtime/test_autonomous_runner.py` PASS 100%. Live verification trên ShopLab cyber-range `scripts/cyber-range/verify_autonomous_live.py` (Run ID `RUN-AUTONOMOUS-LIVE-1791708234`) đạt kết quả trung thực: 4 iterations, 3 approved dispatches, 0 denied, 11 network dispatches, 0 unsafe dispatches, 20 observations, stop reason `discovery_surface_complete`, exit code 0.
+- Autonomous Pentest Loop với Safe Active Verification đã `IMPLEMENTED`: Bổ sung `runtime/capability_registry.py` cung cấp 4 bounded verifiers (`SafeInputVerificationExecutor` cho `ACTION-WEB-001`, `SafeReflectionVerificationExecutor` cho `ACTION-WEB-002`, `SafePathFixtureVerificationExecutor` cho `ACTION-WEB-003`, `PassiveSurfaceAnalyzer` cho `ACTION-SCAN-001`). Khắc phục 3 blocker findings: F-01 (Form provenance chuẩn hóa relative action URL và cô lập POST inputs khỏi synthetic GET queries), F-02 (Data-driven hypothesis routing theo ngữ nghĩa tham số và outcome-driven replan), F-03 (Phát biểu kết quả kiểm tra âm tính trung thực có giới hạn độ tin cậy <= 0.75). 18 tests V01–V18 tại `tests/runtime/test_autonomous_pentest.py` PASS 100%. Live verification trên ShopLab cyber-range `scripts/cyber-range/run_autonomous_pentest.py` (Run ID `RUN-AUTONOMOUS-PENTEST-1791723996`) đạt PASS: 7 decisions, 6 approved, 0 denied, 3 active verifications, 23 network dispatches, 0 unsafe dispatches, 3 findings phát hiện trung thực, stop reason `discovery_surface_complete`, Docker teardown an toàn.
 - SL-10 đã `IMPLEMENTED`: `runtime/ptes_coordinator.py`. Điều phối 7 giai đoạn PTES có entry/exit criteria độc lập, tái sử dụng gate/recorder SL-08 và planner SL-09. Trạng thái phản ánh trung thực: Phase 1 COMPLETED, Phase 2 COMPLETED_BOUNDED, Phase 3 COMPLETED, Phase 4 COMPLETED, Phase 5 BLOCKED, Phase 6 NOT_RUN, Phase 7 COMPLETED (tổng 0 confirmed vulnerabilities, 0 unsafe dispatches). 8 unit tests (T01–T08) PASS. Live Docker verification đạt 7/7 phase PASS. Chưa có independent review; không tự nâng `VALIDATED`. Sẵn sàng cho SL-11.
 
 | Giai đoạn | Đầu ra và tiêu chí kết thúc | Khi thiếu quyền hoặc evidence |
@@ -98,15 +154,99 @@ LLM nhận observations đã redact, không source/ground truth/secrets/tokens. 
 
 ## RL Environment
 
-Giữ finite state/action và ground-truth isolation. Triển khai sau bounded executable pipeline, không mở scope để đáp ứng goal sản phẩm. TASK-023–024 giữ trạng thái hiện hành.
+TASK-023 là `IMPLEMENTED` cho [Gymnasium replay ngoại tuyến](docs/implementation/rl_environment.md)
+theo yêu cầu ngày 2026-10-12: fixed action/observation spaces, step/reset, refusal,
+approval/order/rate/budget mô phỏng và adapter chỉ đọc snapshot Task 19/20.
+23 focused tests gồm check_env và 49 regression tests PASS. Không dispatch scanner,
+executor/provider hoặc mạng; audit bền vững, live integration và independent review
+giữ `UNRESOLVED`. Gate triển khai exit 1 với 613 lỗi ngoài scope, 0 lỗi Task 23;
+handoff `HANDOFF_BLOCKED`, chưa `VALIDATED`. Bước kế tiếp: xử lý repository blockers
+trong scope riêng, review độc lập replay/state/budget/evidence boundary, rồi mới mở
+tích hợp theo scope được duyệt. Source hashes khớp receipts khi đồng bộ tài liệu;
+72 tests là receipts triển khai, không được chạy lại trong lần cập nhật tài liệu này.
+TASK-024 hiện `IMPLEMENTED` cho [scorer riêng](docs/implementation/reward_model.md), cập nhật
+ngày 2026-10-12 theo yêu cầu người dùng; chưa `VALIDATED`. Chấm progress/completion,
+phạt lặp, rate/order/refusal và dừng sớm từ outcome đóng của simulator. Candidate và
+nhãn replan không được thưởng riêng. Receipts triển khai: 11 focused + 23 Task 23
+regression tests PASS, AST/link/whitespace PASS. Source hashes khớp khi đồng bộ,
+không chạy lại suites. Gate triển khai trước đó exit 1 với 613 lỗi ngoài scope;
+[validator repair](scripts/validation/README.md) giải quyết blocker checker, gate hiện
+exit 0, 0 lỗi. Bước kế tiếp: review độc lập weights/trusted-event boundary,
+config acceptance trong scope riêng, rồi scope tích hợp environment/evidence được duyệt;
+hiệu chỉnh trọng số và budget equivalence vẫn `UNRESOLVED`.
+Reward tích hợp trong replay vẫn chỉ minh họa; config reward còn TBD. Ground truth
+không thuộc observation/info. Runner Task 25 gọi scorer Task 24 riêng cho từng
+outcome đã commit; không thay reward của Task 23 hoặc canonical action/catalog/contracts.
 
 ## RL Planner
 
-TASK-025 giữ kế hoạch Q-learning baseline. TASK-026 DQN/PPO giữ `DEFERRED`; không tự mở training hoặc result claims.
+TASK-025 hiện `IMPLEMENTED` cho [Q-learning metadata replay ngoại tuyến](docs/implementation/q_learning.md)
+theo yêu cầu triển khai và cập nhật trạng thái ngày 2026-10-12; chưa `VALIDATED`.
+Q-table thưa khởi tạo 0, masked epsilon-greedy/Bellman, seeded training và greedy
+evaluation; state gồm metadata quan sát, ngân sách, mask và read age. Chọn lại sau
+mỗi transition; Task 24 chấm đúng một lần sau mỗi bước Task 23 đã commit. Hết ngân
+sách hữu hạn kết thúc bootstrap; mask không cấp quyền và step vẫn kiểm tra policy.
+Receipts triển khai: 19 focused + 34 dependency regression tests PASS (53 tests),
+AST/example/whitespace/repository gate PASS, exit 0, 0 lỗi. Source hashes khớp khi
+đồng bộ tài liệu; không chạy lại tests trong lần cập nhật này. Bước kế tiếp: review
+độc lập state/reward/termination/policy, scope evidence/checkpoint bền vững và
+held-out evaluation/calibration/budget equivalence trước full planner integration.
+Các phần này còn `UNRESOLVED`; fixture không chứng minh hội tụ hoặc tính tối ưu.
+TASK-026 DQN/PPO và TASK-032 giữ `DEFERRED`; không mở live training/dispatch.
+
+### TASK-026 — Chuẩn bị wrapper/protocol replay ngoại tuyến
+
+Theo yêu cầu ngày 2026-10-12, phần chuẩn bị
+[reward/mask wrapper và evaluator](docs/implementation/offline_rl_protocol.md) đã `IMPLEMENTED`,
+chưa `VALIDATED`; Task 26 toàn phần vẫn `DEFERRED` theo AGENTS.md.
+Wrapper chỉ nhận Task-023 replay, chấm Task 24 đúng một lần sau commit, chuẩn hóa
+observation có mask/read age và kết thúc bootstrap khi hết ngân sách nội tại.
+Evaluator kiểm tra fixture families/content không trùng giữa train/validation/test,
+N/budget/tick-rate/seed/masking thống nhất; giữ failures trong completion denominator.
+Protocol đề xuất N=8, split 60/20/20, năm training seeds và final test sau chọn bằng
+validation. Benchmark này chưa được tạo/chạy; candidate/checkpoint chưa tồn tại.
+
+Receipts triển khai: 99 tests PASS, AST/example/link/whitespace PASS. Bốn source
+hashes khớp khi đồng bộ tài liệu; không chạy lại suites. Gate cuối triển khai exit 1
+với 27 lỗi ngoài scope, 0 lỗi thuộc năm paths implementation; giữ receipt PASS trước
+đó như lịch sử, không mô tả gate hiện hành PASS. Handoff `HANDOFF_BLOCKED`, blocker
+`REPOSITORY_CHECKER_FAILED_OUTSIDE_SCOPE`; checks cập nhật tài liệu có receipt riêng
+tại runtime/offline_rl_protocol.md.
+
+Pending handoff: xử lý blocker trong scope riêng → independent review reward/state/
+horizon/split/failure accounting → scope SB3 dependency lock/compatibility và evidence/
+checkpoint bền vững. Các phần này và learned-policy evaluation còn `UNRESOLVED`.
+Không chuyển fixture checks thành validation DQN/PPO, không nâng Task 028/030/032,
+không mở training/live dispatch hoặc thay contracts/configuration/catalog/scenarios.
 
 ## Hybrid
 
 TASK-027 kết hợp candidates trên cùng policy/budgets sau baseline/planner interfaces được kiểm chứng. Không bypass gate hoặc conceal fallback.
+
+### TASK-027 — Router tham chiếu hybrid ngoại tuyến
+
+Task hiện `IMPLEMENTED` cho [reference routing policy và thiết kế handoff](docs/implementation/hybrid_router.md),
+cập nhật ngày 2026-10-12 theo yêu cầu người dùng; chưa `VALIDATED`. Router chỉ trả
+dữ liệu từ PlanningInput/history/feedback đã validate: RULE trước, LLM handoff khi
+no match hoặc review thất bại; metadata context giữ revision/budget/provenance,
+loại phiên bản đã thất bại/hoàn thành theo history đã kiểm. DENIED, scope thu hồi,
+quota/no progress và budget đều dừng. Chỉ `ACTION-PLAN-003`, không gọi backend,
+provider hoặc executor; StateManager tiếp tục sở hữu budget.
+
+Receipts triển khai: 20 router tests + 28 interface + 28 rule + 31 LLM tests PASS
+(107 tests, từng suite exit 0); AST, 19 local links và whitespace PASS. Hai source
+hashes khớp khi đồng bộ; không chạy lại suites trong lần cập nhật tài liệu.
+Gate triển khai exit 1: 27 repository errors, 0 lỗi thuộc ba paths implementation.
+Checks đồng bộ tài liệu có receipts riêng tại runtime/hybrid_router.md.
+
+Handoff `HANDOFF_BLOCKED`, blocker `REPOSITORY_CHECKER_FAILED_OUTSIDE_SCOPE`.
+Thứ tự tiếp: xử lý gate ngoài scope trong task riêng → review độc lập routing/
+identity/history → scope adapter LLM handoff và completion/recorder/coordinator.
+Task 22 hiện không nhận RULE feedback qua replan trực tiếp; cần adapter riêng,
+không relabel backend/plan ID. Adapter, history/concurrency, tokenizer/provider thật,
+durable evidence, gate integration và arbitration với Task 25 còn `UNRESOLVED`;
+full hybrid runtime giữ `SPEC_ONLY`. Không nâng các task phụ thuộc hoặc mở quyền
+thực thi; TASK-026/032 giữ `DEFERRED`.
 
 ## Evaluation
 

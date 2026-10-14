@@ -21,10 +21,10 @@ import time
 import unittest
 from pathlib import Path
 
-from runtime.discovery_engine import (
+from runtime.discovery.discovery_engine import (
     ObservationDrivenDiscovery,
 )
-from runtime.discovery_gate import (
+from runtime.safety.discovery_gate import (
     ApprovalToken,
     BudgetTracker,
     CentralizedSafetyGate,
@@ -32,7 +32,7 @@ from runtime.discovery_gate import (
     KillSwitch,
     TokenBucketRateLimiter,
 )
-from runtime.discovery_recorder import (
+from runtime.evidence.discovery_recorder import (
     DurableEvidenceRecorder,
 )
 
