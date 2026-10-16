@@ -304,6 +304,19 @@ describe('Phase 6: Research Experiment Dashboard & Run Replay', () => {
     });
   });
 
+  it('requests history pages from the server instead of slicing all runs locally', async () => {
+    vi.mocked(apiClient.getRunHistory).mockResolvedValue({ runs: mockRuns, total_count: 30 });
+    render(<RunHistoryPage onSelectRun={vi.fn()} onCompareRuns={vi.fn()} />);
+    await waitFor(() => expect(apiClient.getRunHistory).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 25, offset: 0, include_test_runs: false }),
+    ));
+    fireEvent.click(await screen.findByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(apiClient.getRunHistory).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: 25, offset: 25 }),
+    ));
+    expect(await screen.findByText(mockRuns[0].run_id)).toBeInTheDocument();
+  });
+
   it('keeps unknown comparison measurements distinct from a measured zero', async () => {
     vi.mocked(apiClient.compareRuns).mockResolvedValue({
       ...mockComparison,

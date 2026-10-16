@@ -46,7 +46,8 @@ Write-Host "[1/5] Checking Environment Prerequisites..." -ForegroundColor Yellow
 try {
     $pyVer = & python --version 2>&1
     Write-Host "  [+] Python: $pyVer" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Error "[-] Python not found in PATH. Python >= 3.10 is required."
     exit 1
 }
@@ -55,7 +56,8 @@ try {
 try {
     $nodeVer = & node --version 2>&1
     Write-Host "  [+] Node.js: $nodeVer" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Error "[-] Node.js not found in PATH. Node >= 18 is required."
     exit 1
 }
@@ -67,10 +69,12 @@ try {
     if ($LASTEXITCODE -eq 0) {
         $DockerAvailable = $true
         Write-Host "  [+] Docker Engine: $dockerVer" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [!] Docker CLI present but engine may be offline." -ForegroundColor DarkYellow
     }
-} catch {
+}
+catch {
     Write-Host "  [!] Docker not detected. System will operate in Historical Replay & Offline Verification mode." -ForegroundColor DarkYellow
 }
 
@@ -92,7 +96,8 @@ try {
         $BackendRunning = $true
         Write-Host "  [+] Existing Project Backend is active & healthy on port $BackendPort (reusing instance)." -ForegroundColor Green
     }
-} catch {
+}
+catch {
     # Check if port is occupied by unrelated process
     $occupied = Get-NetTCPConnection -LocalPort $BackendPort -State Listen -ErrorAction SilentlyContinue
     if ($occupied) {
@@ -109,7 +114,8 @@ try {
         $FrontendRunning = $true
         Write-Host "  [+] Existing Frontend server is active on port $FrontendPort (reusing instance)." -ForegroundColor Green
     }
-} catch {
+}
+catch {
     # Check if port is occupied by unrelated process
     $occupied = Get-NetTCPConnection -LocalPort $FrontendPort -State Listen -ErrorAction SilentlyContinue
     if ($occupied) {
@@ -130,7 +136,8 @@ $ExistingSession = @{}
 if (Test-Path $SessionFile) {
     try {
         $ExistingSession = Get-Content $SessionFile -Raw | ConvertFrom-Json -AsHashtable
-    } catch {
+    }
+    catch {
         $ExistingSession = @{}
     }
 }
@@ -144,7 +151,8 @@ if (-not $BackendRunning) {
         -PassThru -WindowStyle Hidden
     $BackendPID = $bProc.Id
     Write-Host "  [+] Backend launched with PID: $BackendPID" -ForegroundColor Green
-} else {
+}
+else {
     $BackendPID = $ExistingSession["backend_pid"]
 }
 
@@ -157,21 +165,22 @@ if (-not $FrontendRunning) {
         -PassThru -WindowStyle Hidden
     $FrontendPID = $fProc.Id
     Write-Host "  [+] Frontend launched with PID: $FrontendPID" -ForegroundColor Green
-} else {
+}
+else {
     $FrontendPID = $ExistingSession["frontend_pid"]
 }
 
 # Record session manifest for safe targeted termination
 $SessionData = @{
-    session_id      = "DEMO-SES-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-    backend_pid     = $BackendPID
-    frontend_pid    = $FrontendPID
-    backend_url     = "http://127.0.0.1:$BackendPort"
-    frontend_url    = "http://127.0.0.1:$FrontendPort"
-    gateway_url     = "http://127.0.0.1:18088"
-    started_at_utc  = [DateTime]::UtcNow.ToString("o")
-    project_root    = $ProjectRoot
-    status          = "INITIALIZING"
+    session_id     = "DEMO-SES-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    backend_pid    = $BackendPID
+    frontend_pid   = $FrontendPID
+    backend_url    = "http://127.0.0.1:$BackendPort"
+    frontend_url   = "http://127.0.0.1:$FrontendPort"
+    gateway_url    = "http://127.0.0.1:18088"
+    started_at_utc = [DateTime]::UtcNow.ToString("o")
+    project_root   = $ProjectRoot
+    status         = "INITIALIZING"
 }
 
 [System.IO.File]::WriteAllText($SessionFile, ($SessionData | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
@@ -198,7 +207,8 @@ while ($Elapsed -lt $MaxWaitSeconds) {
                 $BackendReady = $true
                 $ReadinessData = $rResp
             }
-        } catch {
+        }
+        catch {
             # Still warming up
         }
     }
@@ -210,7 +220,8 @@ while ($Elapsed -lt $MaxWaitSeconds) {
             if ($fResp.StatusCode -eq 200) {
                 $FrontendReady = $true
             }
-        } catch {
+        }
+        catch {
             # Still warming up
         }
     }
@@ -247,7 +258,8 @@ Write-Host "====================================================================
 Write-Host "   OVERALL SYSTEM STATUS: " -NoNewline
 if ($ReadinessData.overall_status -eq "READY") {
     Write-Host "READY (DEMO READY)" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "$($ReadinessData.overall_status) (DEGRADED / HISTORICAL REPLAY AVAILABLE)" -ForegroundColor Yellow
 }
 Write-Host "   Summary: $($ReadinessData.summary)" -ForegroundColor Gray

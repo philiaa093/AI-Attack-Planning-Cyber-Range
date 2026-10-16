@@ -19,6 +19,21 @@ const event = {
 } as AgentEvent;
 
 beforeEach(() => vi.useFakeTimers());
+
+it('does not fetch or poll while disabled, and starts when enabled', async () => {
+  const getStatus = vi.spyOn(apiClient, 'getSystemStatus').mockResolvedValue(snapshot);
+  const { rerender } = renderHook(({ enabled }) => useSystemStatus({ enabled }), {
+    initialProps: { enabled: false },
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+  expect(getStatus).not.toHaveBeenCalled();
+  rerender({ enabled: true });
+  await act(async () => {});
+  expect(getStatus).toHaveBeenCalledTimes(1);
+  rerender({ enabled: false });
+  await act(async () => { await vi.advanceTimersByTimeAsync(16000); });
+  expect(getStatus).toHaveBeenCalledTimes(1);
+});
 afterEach(() => {
   cleanup();
   vi.useRealTimers();

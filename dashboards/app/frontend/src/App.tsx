@@ -11,7 +11,8 @@ import { LanguageProvider } from './i18n/LanguageContext';
 import type { AgentEvent } from './api/types';
 
 export const AppContent: React.FC = () => {
-  const { status, updateFromEvent } = useSystemStatus();
+  const [activeTab, setActiveTab] = useState<'overview' | 'runs' | 'run-detail' | 'compare' | 'research'>('overview');
+  const { status, updateFromEvent } = useSystemStatus({ enabled: activeTab !== 'overview' });
 
   const handleIncomingEvent = useCallback(
     (ev: AgentEvent) => {
@@ -21,11 +22,11 @@ export const AppContent: React.FC = () => {
   );
 
   const { connectionStatus } = useEventStream({
+    enabled: activeTab !== 'overview',
     runId: status?.run.run_id ?? undefined,
     onEvent: handleIncomingEvent,
   });
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'runs' | 'run-detail' | 'compare' | 'research'>('overview');
   const [selectedRunId, setSelectedRunId] = useState<string>('');
   const [compareRunA, setCompareRunA] = useState<string>('');
   const [compareRunB, setCompareRunB] = useState<string>('');

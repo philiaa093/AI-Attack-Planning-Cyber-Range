@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
@@ -48,7 +48,8 @@ from dashboards.app.backend.model_profiles import ProfileStore, create_router
 # Singletons
 event_sink = EventSink()
 range_controller = RangeController()
-run_manager = RunManager()
+model_profiles = ProfileStore(env_path=ROOT / ".env")
+run_manager = RunManager(model_profiles=model_profiles)
 run_index = RunIndex(run_manager=run_manager)
 
 app = FastAPI(
@@ -56,7 +57,6 @@ app = FastAPI(
     version="1.0.0",
     description="Control plane adapter connecting Dashboard UI to Cyber Range runtime and safety gate",
 )
-model_profiles = ProfileStore()
 app.include_router(create_router(model_profiles))
 
 # Strict development CORS setup (supporting Vite on 5173 / 3000)
@@ -83,7 +83,7 @@ def get_research_overview() -> Dict[str, Any]:
 
 
 @app.get("/api/status", response_model=SystemStatus)
-async def get_system_status() -> SystemStatus:
+def get_system_status() -> SystemStatus:
     """Return unified operational status across Range, Run, Safety, and Evidence."""
     range_stat = range_controller.get_status()
     run_stat, agent_stat, safety_stat, evidence_stat, pipeline_stat = run_manager.get_snapshot()
@@ -101,7 +101,7 @@ async def get_system_status() -> SystemStatus:
 
 
 @app.get("/api/range/status", response_model=RangeStatus)
-async def get_range_status() -> RangeStatus:
+def get_range_status() -> RangeStatus:
     """Return real Docker container and gateway health without faking."""
     return range_controller.get_status()
 
@@ -225,12 +225,15 @@ async def emergency_stop() -> ControlResponse:
 
 
 @app.get("/api/runs/history", response_model=RunHistoryResponse)
-async def get_runs_history(
+def get_runs_history(
     planner: Optional[str] = None,
     control_mode: Optional[str] = None,
     state: Optional[str] = None,
     scenario: Optional[str] = None,
     search: Optional[str] = None,
+    limit: Optional[int] = Query(default=None, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    include_test_runs: bool = True,
 ) -> RunHistoryResponse:
     """Read-only listing of all indexed execution runs across filesystem evidence."""
     return run_index.list_runs(
@@ -239,6 +242,9 @@ async def get_runs_history(
         state=state,
         scenario=scenario,
         search=search,
+        limit=limit,
+        offset=offset,
+        include_test_runs=include_test_runs,
     )
 
 

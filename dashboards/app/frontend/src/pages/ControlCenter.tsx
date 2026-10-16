@@ -300,8 +300,9 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
   // Loading skeleton while initial fetch completes
   if (!status && isLoading) {
     return (
-      <div className="min-h-screen bg-[#0b0f17] text-slate-200 flex items-center justify-center">
-        <div className="flex flex-col items-center space-y-3 font-mono text-xs text-slate-400">
+      <div className="min-h-screen bg-[#0b0f17] text-slate-200 flex flex-col">
+        <Header system={null} sseStatus={connectionStatus} activeTab={activeTab} onNavigate={onNavigateTab} />
+        <div role="status" className="flex flex-1 flex-col items-center justify-center space-y-3 font-mono text-xs text-slate-400">
           <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
           <span>{lang === 'vi' ? 'Đang tải dữ liệu…' : 'Loading research workspace…'}</span>
         </div>

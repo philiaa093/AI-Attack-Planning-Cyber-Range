@@ -68,7 +68,7 @@ export const apiClient = {
   },
 
   async getSystemStatus(): Promise<SystemStatus> {
-    const res = await fetch(`${API_BASE_URL}/api/status`);
+    const res = await fetch(`${API_BASE_URL}/api/status`, { signal: AbortSignal.timeout(15000) });
     return handleResponse<SystemStatus>(res);
   },
 
@@ -205,6 +205,9 @@ export const apiClient = {
   },
 
   async getRunHistory(params?: {
+    limit?: number;
+    offset?: number;
+    include_test_runs?: boolean;
     planner?: string;
     control_mode?: string;
     state?: string;
@@ -212,6 +215,9 @@ export const apiClient = {
     search?: string;
   }): Promise<RunHistoryResponse> {
     const query = new URLSearchParams();
+    if (params?.limit !== undefined) query.set('limit', String(params.limit));
+    if (params?.offset !== undefined) query.set('offset', String(params.offset));
+    if (params?.include_test_runs !== undefined) query.set('include_test_runs', String(params.include_test_runs));
     if (params?.planner) query.set('planner', params.planner);
     if (params?.control_mode) query.set('control_mode', params.control_mode);
     if (params?.state) query.set('state', params.state);

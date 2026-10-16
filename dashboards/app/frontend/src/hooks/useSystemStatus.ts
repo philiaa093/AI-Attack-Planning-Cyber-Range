@@ -3,10 +3,11 @@ import { apiClient } from '../api/client';
 import type { AgentEvent, SystemStatus } from '../api/types';
 
 interface UseSystemStatusOptions {
+  enabled?: boolean;
   pollingIntervalMs?: number;
 }
 
-export function useSystemStatus({ pollingIntervalMs = 8000 }: UseSystemStatusOptions = {}) {
+export function useSystemStatus({ pollingIntervalMs = 8000, enabled = true }: UseSystemStatusOptions = {}) {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<Error | null>(null);
@@ -44,6 +45,7 @@ export function useSystemStatus({ pollingIntervalMs = 8000 }: UseSystemStatusOpt
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     mounted.current = true;
     void fetchStatus();
     return () => {
@@ -52,13 +54,13 @@ export function useSystemStatus({ pollingIntervalMs = 8000 }: UseSystemStatusOpt
       if (refreshTimer.current !== null) clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
     };
-  }, [fetchStatus]);
+  }, [fetchStatus, enabled]);
 
   useEffect(() => {
-    if (pollingIntervalMs <= 0) return;
+    if (!enabled || pollingIntervalMs <= 0) return;
     const interval = setInterval(() => { void fetchStatus(); }, pollingIntervalMs);
     return () => clearInterval(interval);
-  }, [fetchStatus, pollingIntervalMs]);
+  }, [fetchStatus, pollingIntervalMs, enabled]);
 
   const updateFromEvent = useCallback((event: AgentEvent) => {
     if (!mounted.current || !event ||

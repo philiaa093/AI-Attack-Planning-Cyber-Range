@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   History,
   Search,
@@ -31,6 +31,8 @@ export const RunHistoryPage: React.FC<RunHistoryPageProps> = ({
   const { lang, t } = useLanguage();
   const h = (value: string) => historyLabel(lang, value);
   const [runs, setRuns] = useState<RunHistoryItem[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const requestId = useRef(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,35 +48,46 @@ export const RunHistoryPage: React.FC<RunHistoryPageProps> = ({
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([]);
 
   const fetchHistory = useCallback(async () => {
+    const id = ++requestId.current;
     setIsLoading(true);
     setError(null);
     try {
       const res = await apiClient.getRunHistory({
+        limit: HISTORY_PAGE_SIZE,
+        offset: (page - 1) * HISTORY_PAGE_SIZE,
+        include_test_runs: includeTestRuns,
         planner: plannerFilter === 'ALL' ? undefined : plannerFilter,
         control_mode: modeFilter === 'ALL' ? undefined : modeFilter,
         state: stateFilter === 'ALL' ? undefined : stateFilter,
         search: search.trim() ? search.trim() : undefined,
       });
+      if (id !== requestId.current) return;
+      setTotalCount(res.total_count);
+      if (page > Math.max(1, Math.ceil(res.total_count / HISTORY_PAGE_SIZE))) {
+        setPage(Math.max(1, Math.ceil(res.total_count / HISTORY_PAGE_SIZE)));
+      }
       setRuns(res.runs.filter((run) => includeTestRuns || !/^(TEST-|RUN-TEST-|RUN-SL\d+-TEST-)/i.test(run.run_id)));
     } catch (err) {
+      if (id !== requestId.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setIsLoading(false);
+      if (id === requestId.current) setIsLoading(false);
     }
-  }, [plannerFilter, modeFilter, stateFilter, search, includeTestRuns]);
+  }, [plannerFilter, modeFilter, stateFilter, search, includeTestRuns, page]);
 
   useEffect(() => {
-    fetchHistory();
+    const timer = setTimeout(() => { void fetchHistory(); }, 200);
+    return () => { clearTimeout(timer); ++requestId.current; };
   }, [fetchHistory]);
 
   useEffect(() => {
     setPage(1);
   }, [search, plannerFilter, modeFilter, stateFilter, includeTestRuns]);
 
-  const pageCount = Math.max(1, Math.ceil(runs.length / HISTORY_PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(totalCount / HISTORY_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount);
   const pageStart = (currentPage - 1) * HISTORY_PAGE_SIZE;
-  const pageRuns = runs.slice(pageStart, pageStart + HISTORY_PAGE_SIZE);
+  const pageRuns = runs;
 
   const toggleCompareSelection = (runId: string) => {
     setSelectedForCompare((prev) => {
@@ -191,7 +204,7 @@ export const RunHistoryPage: React.FC<RunHistoryPageProps> = ({
                 ? `— ${h('Loading...')}`
                 : error !== null
                 ? `— ${h('History data unavailable.')}`
-                : `${runs.length} ${lang === 'vi' ? 'phiên đã ghi nhận' : 'Runs Indexed'}`}
+                : `${totalCount} ${lang === 'vi' ? 'phiên đã ghi nhận' : 'Runs Indexed'}`}
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
@@ -482,7 +495,7 @@ export const RunHistoryPage: React.FC<RunHistoryPageProps> = ({
         {!isLoading && error === null && runs.length > 0 && (
           <nav aria-label={h('History pagination')} className="flex flex-wrap items-center justify-between gap-4 border-t p-4 text-sm">
             <p aria-live="polite">
-              {h('Showing')} {pageStart + 1}–{pageStart + pageRuns.length} {h('of')} {runs.length} {h('sessions')}
+              {h('Showing')} {pageStart + 1}–{pageStart + pageRuns.length} {h('of')} {totalCount} {h('sessions')}
             </p>
             <div className="flex flex-wrap items-center gap-3">
               <button

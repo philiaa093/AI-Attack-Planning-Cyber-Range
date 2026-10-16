@@ -25,7 +25,7 @@ from dashboards.app.backend.models import (
     TimelineEventItem,
 )
 from dashboards.app.backend.run_manager import RunManager
-from runtime.evidence.evidence_readonly import bounded_bytes, no_link_ancestors, read_object, verify_records
+from runtime.evidence.evidence_readonly import IntegritySummary, bounded_bytes, no_link_ancestors, read_object, verify_records
 
 
 def _parse_iso_or_none(ts: Optional[str]) -> Optional[datetime]:
@@ -125,12 +125,13 @@ class RunIndex:
             return PlannerVerificationStatus.RULE_EXECUTED.value
         return PlannerVerificationStatus.UNKNOWN.value
 
-    def _extract_run_item(self, run_dir: Path) -> Optional[RunHistoryItem]:
+    def _extract_run_item(self, run_dir: Path, *, verify: bool = True) -> Optional[RunHistoryItem]:
         """Read recorded metadata; absent counters and unverified claims stay unknown."""
         run_id = run_dir.name
         try:
             self.validate_run_id(run_id)
-            integrity = verify_records(run_dir / "assessment" if (run_dir / "assessment").is_dir() else run_dir, run_id)
+            integrity = (verify_records(run_dir / "assessment" if (run_dir / "assessment").is_dir() else run_dir, run_id)
+                         if verify else IntegritySummary("NOT_VERIFIED", 0, None))
             rep_data = recorded_report(run_dir)
             provenance = rep_data.get("planner_provenance", {})
             if type(provenance) is not dict:
@@ -198,10 +199,16 @@ class RunIndex:
         state: Optional[str] = None,
         scenario: Optional[str] = None,
         search: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: int = 0,
+        include_test_runs: bool = True,
     ) -> RunHistoryResponse:
         """Scan canonical run directories and return filtered, chronologically sorted run history."""
         seen_run_ids: Set[str] = set()
         items: List[RunHistoryItem] = []
+        if (limit is not None and (type(limit) is not int or not 1 <= limit <= 100)) or type(offset) is not int or offset < 0:
+            raise ValueError("invalid history pagination")
+        directories: Dict[str, Path] = {}
 
         # 1. Include active/current run from RunManager if running
         if self.run_manager:
@@ -264,14 +271,19 @@ class RunIndex:
                 if run_id in seen_run_ids:
                     continue
                 seen_run_ids.add(run_id)
+                if not include_test_runs and re.match(r"^(TEST-|RUN-TEST-|RUN-SL\d+-TEST-)", run_id, re.I):
+                    continue
 
-                item = self._extract_run_item(entry)
+                directories[run_id] = entry
+                item = self._extract_run_item(entry, verify=limit is None)
                 if item:
                     items.append(item)
 
         # 3. Apply filters
         filtered: List[RunHistoryItem] = []
         for it in items:
+            if not include_test_runs and re.match(r"^(TEST-|RUN-TEST-|RUN-SL\d+-TEST-)", it.run_id, re.I):
+                continue
             if planner:
                 p_filter = planner.upper()
                 if (
@@ -312,7 +324,14 @@ class RunIndex:
             reverse=True,
         )
 
-        return RunHistoryResponse(runs=filtered, total_count=len(filtered))
+        total = len(filtered)
+        if limit is not None:
+            # ponytail: scan metadata for sorting; verify only the requested page.
+            # A persistent index is warranted only if metadata scanning becomes slow.
+            filtered = filtered[offset:offset + limit]
+            filtered = [self._extract_run_item(directories[item.run_id])
+                        if item.run_id in directories else item for item in filtered]
+        return RunHistoryResponse(runs=filtered, total_count=total)
 
     def get_run(self, run_id: str) -> Optional[RunHistoryItem]:
         """Fetch single run details by run_id."""

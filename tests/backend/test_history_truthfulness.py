@@ -54,12 +54,14 @@ class HistoryTruthfulnessTests(unittest.TestCase):
 
     def test_tampered_payload_fails_closed_without_repair(self):
         payload = self.record()
+        self.assertEqual(self.index.list_runs(limit=25).runs[0].evidence_integrity, "VERIFIED")
         payload.write_text("changed", encoding="utf-8")
         before = payload.read_bytes()
         item = self.index.get_run(self.run.name)
         self.assertEqual(item.evidence_integrity, "FAILED")
         self.assertIsNone(item.verified_evidence_count)
         self.assertEqual(payload.read_bytes(), before)
+        self.assertEqual(self.index.list_runs(limit=25).runs[0].evidence_integrity, "FAILED")
 
     def test_cross_run_and_missing_reference_rejected(self):
         for changes in (dict(run_id="RUN-OTHER"), dict(derived_from=["EV-MISSING"])):
