@@ -24,6 +24,8 @@ import json
 import os
 import re
 from dashboards.app.backend.event_sink import EventSink
+from dashboards.app.backend.model_profiles import ProfileStore
+from runtime.planners.observed_planner import ProviderConfig
 from dashboards.app.backend.models import (
     AgentEvent,
     AgentState,
@@ -66,8 +68,9 @@ def _utc_now_iso() -> str:
 class RunManager:
     """Thread-safe manager for the Autonomous Cyber Range execution lifecycle."""
 
-    def __init__(self, output_root: Optional[Path] = None) -> None:
+    def __init__(self, output_root: Optional[Path] = None, model_profiles: ProfileStore | None = None) -> None:
         self._lock = threading.Lock()
+        self.model_profiles = model_profiles
         self.output_root = Path(output_root or demo.OUTPUT).absolute()
 
         # Status tracking models
@@ -356,6 +359,7 @@ class RunManager:
 
         # 7. LLM Provider (OPTIONAL — Missing key does NOT block the demo)
         api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
+        api_key = bool(api_key) or (self.model_profiles is not None and self.model_profiles.snapshot() is not None)
         if api_key:
             checks.append(
                 ReadinessCheckItem(
@@ -363,7 +367,7 @@ class RunManager:
                     category="OPTIONAL",
                     passed=True,
                     status="CONFIGURED",
-                    detail="LLM credentials detected in environment",
+                    detail="LLM configuration available; provider connection not verified",
                 )
             )
         else:
@@ -416,6 +420,8 @@ class RunManager:
 
     def start_run(self, req: StartRunRequest, event_sink: EventSink) -> ControlResponse:
         """Start a new execution run in a dedicated background worker thread."""
+        provider_config = (self.model_profiles.snapshot()
+                           if self.model_profiles is not None and req.planner == "llm" else None)
         with self._lock:
             if self._run_status.state in (AgentState.RUNNING, AgentState.STARTING):
                 return ControlResponse(
@@ -484,7 +490,7 @@ class RunManager:
         # Launch worker
         thread = threading.Thread(
             target=self._worker,
-            args=(run_id, req, run_dir, event_sink),
+            args=(run_id, req, run_dir, event_sink, provider_config),
             daemon=True,
             name=f"Worker-{run_id[:8]}"
         )
@@ -927,12 +933,14 @@ class RunManager:
             timestamp_utc=_utc_now_iso(),
         )
 
-    def _worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink) -> None:
+    def _worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink,
+                provider_config: ProviderConfig | None = None) -> None:
         """Background execution worker for active run."""
         with contextlib.redirect_stdout(io.StringIO()):
-            self._execute_worker(run_id, req, run_dir, event_sink)
+            self._execute_worker(run_id, req, run_dir, event_sink, provider_config)
 
-    def _execute_worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink) -> None:
+    def _execute_worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink,
+                        provider_config: ProviderConfig | None = None) -> None:
         try:
             recorder = demo.new_recorder(run_dir / "assessment", run_id)
             gate = demo.make_gate(recorder, pages=1 if req.preview_one_page else req.max_decisions)
@@ -1040,6 +1048,7 @@ class RunManager:
                 requested_planner_mode="HYBRID" if req.planner == "hybrid" else ("RULE" if req.planner == "rule" else "LLM"),
                 planner_fallback_allowed=req.allow_fallback,
                 planner_provider_callable=(lambda _s, _u: None) if req.planner == "llm-unavailable" else None,
+                planner_provider_config=provider_config,
                 max_decisions=req.max_decisions,
                 seed_path=req.seed_path,
                 event_hook=on_runtime_event,

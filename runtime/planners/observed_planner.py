@@ -89,25 +89,39 @@ class PlannerResult:
     is_valid: bool = True
 
 
+@dataclass(frozen=True)
+class ProviderConfig:
+    endpoint: str
+    model: str
+    protocol: str
+    api_key: str = field(repr=False)
+
+
 def _call_real_provider(
     system_prompt: str,
     user_prompt: str,
-    timeout: float = 10.0,
+    timeout: float = 60.0,
     max_response_bytes: int = 8192,
+    config: ProviderConfig | None = None,
 ) -> tuple[str | None, str | None, dict[str, Any]]:
-    """Invoke real provider if API key and configuration exist in environment."""
-    _load_env_if_present()
-    api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
-    if not api_key:
-        return None, "MISSING_API_KEY", {}
-
-    api_base = os.environ.get("LLM_API_BASE", "https://api.openai.com/v1")
-    model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    """Use a private profile snapshot, or the legacy environment configuration."""
+    if config is None:
+        _load_env_if_present()
+        api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY")
+        if not api_key:
+            return None, "MISSING_API_KEY", {}
+        api_base = os.environ.get("LLM_API_BASE", "https://api.openai.com/v1")
+        model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+        protocol = "openai-compatible"
+    else:
+        api_key, api_base, model, protocol = config.api_key, config.endpoint, config.model, config.protocol
+    if protocol not in ("openai-compatible", "anthropic"):
+        return None, "UNSUPPORTED_PROVIDER_PROTOCOL", {}
 
     parsed = urllib.parse.urlsplit(api_base)
     host = parsed.hostname or "api.openai.com"
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    path = parsed.path.rstrip("/") + "/chat/completions"
+    path = parsed.path.rstrip("/") + ("/messages" if protocol == "anthropic" else "/chat/completions")
 
     payload_data = {
         "model": model,
@@ -118,36 +132,59 @@ def _call_real_provider(
         "max_tokens": 256,
         "temperature": 0.1,
     }
+    if protocol == "anthropic":
+        payload_data["system"] = system_prompt
+        payload_data["messages"] = [{"role": "user", "content": user_prompt}]
     encoded = json.dumps(payload_data).encode("utf-8")
 
     t0 = time.monotonic()
+    conn = None
     try:
         conn = http.client.HTTPSConnection(host, port, timeout=timeout) if parsed.scheme == "https" else http.client.HTTPConnection(host, port, timeout=timeout)
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
             "Content-Length": str(len(encoded)),
         }
+        if protocol == "anthropic":
+            headers["anthropic-version"] = "2023-06-01"
+            if api_key:
+                headers["x-api-key"] = api_key
+        elif api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         conn.request("POST", path, body=encoded, headers=headers)
         res = conn.getresponse()
         elapsed_ms = (time.monotonic() - t0) * 1000
 
-        raw = res.read(max_response_bytes)
-        conn.close()
+        raw = res.read(max_response_bytes + 1)
+        if len(raw) > max_response_bytes:
+            return None, "PROVIDER_RESPONSE_TOO_LARGE", {}
 
         if res.status != 200:
             return None, f"HTTP_{res.status}", {"status": res.status, "latency_ms": elapsed_ms}
 
         data = json.loads(raw.decode("utf-8"))
-        content = data["choices"][0]["message"]["content"]
+        content = ("".join(block["text"] for block in data["content"] if block["type"] == "text")
+                   if protocol == "anthropic" else data["choices"][0]["message"]["content"])
+        if not isinstance(content, str) or (api_key and api_key in content):
+            return None, "INVALID_PROVIDER_CONTENT", {}
+        returned_model = data.get("model", model)
+        if (not isinstance(returned_model, str) or len(returned_model) > 160
+                or (api_key and api_key in returned_model)):
+            returned_model = model
+        usage = data.get("usage", {})
         metadata = {
-            "model_returned": data.get("model", model),
-            "usage": data.get("usage", {}),
+            "model_returned": returned_model,
+            "usage": {k: v for k, v in usage.items()
+                      if k in ("prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens")
+                      and type(v) is int and v >= 0} if isinstance(usage, dict) else {},
             "latency_ms": round(elapsed_ms, 1),
         }
         return content, None, metadata
     except Exception as exc:
         return None, f"PROVIDER_ERROR_{type(exc).__name__}", {}
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 class ObservedStatePlanner:
@@ -164,6 +201,7 @@ class ObservedStatePlanner:
         configured_provider: str = "openai-compatible",
         configured_model: str = "gpt-4o-mini",
         event_hook: Callable[[dict[str, Any]], None] | None = None,
+        provider_config: ProviderConfig | None = None,
     ) -> None:
         self.target_id = target_id
         self.objective_id = objective_id
@@ -177,6 +215,10 @@ class ObservedStatePlanner:
         self.provider_callable = provider_callable
         self.configured_provider = configured_provider
         self.configured_model = configured_model
+        self.provider_config = provider_config
+        if provider_config is not None:
+            self.configured_provider = provider_config.protocol
+            self.configured_model = provider_config.model
         self.event_hook = event_hook
 
         # Load plan schema
@@ -301,7 +343,7 @@ class ObservedStatePlanner:
         else:
             # Real provider if credentials present
             provider_text, provider_err, provider_meta = _call_real_provider(
-                SYSTEM_PROMPT, user_prompt
+                SYSTEM_PROMPT, user_prompt, config=self.provider_config
             )
 
         # Attempt to parse and validate provider output

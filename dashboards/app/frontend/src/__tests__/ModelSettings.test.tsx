@@ -9,7 +9,7 @@ vi.mock('../api/client', () => ({ apiClient: {
 } }));
 
 const saved: ModelProfile = { id: 'profile-1', name: 'Research', protocol: 'openai-compatible',
-  model: 'custom-model', endpoint: 'https://provider.example/v1', has_api_key: true, connection_status: 'NOT_TESTED' };
+  model: 'custom-model', endpoint: 'https://provider.example/v1', has_api_key: true, connection_status: 'NOT_TESTED', is_active: true };
 
 beforeEach(() => { vi.resetAllMocks(); vi.mocked(apiClient.getModelProfiles).mockResolvedValue({ profiles: [] }); });
 
@@ -26,11 +26,13 @@ describe('Model configuration', () => {
     const key = screen.getByLabelText('API key');
     expect(key).toHaveAttribute('type', 'password');
     fireEvent.change(key, { target: { value: 'test-only-key' } });
+    fireEvent.click(screen.getByLabelText('Save API and model to .env (keep after restart)'));
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
-    await screen.findByText('Settings saved for the current backend session.');
-    expect(apiClient.saveModelProfile).toHaveBeenCalledWith(expect.objectContaining({ model: 'custom-model', endpoint: 'https://provider.example/v1', api_key: 'test-only-key' }), undefined);
+    await screen.findByText('Saved. The next LLM run will use this profile.');
+    expect(apiClient.saveModelProfile).toHaveBeenCalledWith(expect.objectContaining({ model: 'custom-model', endpoint: 'https://provider.example/v1', api_key: 'test-only-key', persist: true }), undefined);
     expect(key).toHaveValue('');
     expect(screen.getByText('API key saved')).toBeInTheDocument();
+    expect(screen.getByText('Selected for the next LLM run')).toBeInTheDocument();
   });
 
   it('edits without retrieving existing secret and supports removing the profile', async () => {
@@ -48,6 +50,22 @@ describe('Model configuration', () => {
     expect(apiClient.saveModelProfile).toHaveBeenCalledWith(expect.objectContaining({ clear_key: true, api_key: '' }), 'profile-1');
     fireEvent.click(screen.getByRole('button', { name: 'Remove Research' }));
     await screen.findByText('No models yet. Use the form to add one.');
+  });
+
+  it('saves to .env and restores the persistence selection when editing', async () => {
+    vi.mocked(apiClient.getModelProfiles).mockResolvedValue({ profiles: [{ ...saved, persisted: true }] });
+    vi.mocked(apiClient.saveModelProfile).mockResolvedValue({ ...saved, persisted: false });
+    render(<ModelSettingsButton />);
+    fireEvent.click(screen.getByRole('button', { name: 'Model & API' }));
+    expect(await screen.findByText('Saved in .env')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Research' }));
+    const checkbox = screen.getByLabelText('Save API and model to .env (keep after restart)');
+    expect(checkbox).toBeChecked();
+    expect(screen.getByLabelText('API key')).toHaveValue('');
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(apiClient.saveModelProfile).toHaveBeenCalledWith(expect.objectContaining({ persist: false, api_key: '' }), saved.id));
+    await waitFor(() => expect(screen.queryByText('Saved in .env')).not.toBeInTheDocument());
   });
 
   it('close discards entered key and errors do not render backend secret text', async () => {

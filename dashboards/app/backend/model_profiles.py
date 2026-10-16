@@ -1,15 +1,19 @@
-"""Local, session-only model configuration. No provider or agent execution."""
+"""Local model configuration with optional persistence and private run snapshots."""
 from __future__ import annotations
 
 import ipaddress
 import json
+import os
+from pathlib import Path
 import re
+import tempfile
 import threading
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError, field_validator
+from runtime.planners.observed_planner import ProviderConfig
 
 
 LOCAL_ORIGINS = frozenset(
@@ -27,6 +31,7 @@ class ProfileInput(BaseModel):
     endpoint: str = Field(min_length=1, max_length=512)
     api_key: SecretStr = Field(default_factory=lambda: SecretStr(""), max_length=4096)
     clear_key: bool = False
+    persist: bool = False
 
     @field_validator("name", "model")
     @classmethod
@@ -74,22 +79,87 @@ class ProfileInput(BaseModel):
 
 
 class ProfileStore:
-    """Secrets stay in private process memory; only sanitized metadata leaves."""
+    """Only sanitized metadata leaves; one profile can persist in a local .env."""
 
-    def __init__(self) -> None:
+    def __init__(self, env_path: Path | None = None) -> None:
         self._lock = threading.Lock()
         self._profiles: dict[str, ProfileInput] = {}
+        self._active_id: str | None = None
+        self._env_path = env_path
+        self._persisted_id: str | None = None
+        if env_path is not None:
+            try:
+                _, lines = self._read_env()
+                entries = [line for line in lines if self._is_profile_line(line)]
+                if len(entries) > 1:
+                    raise ValueError("Duplicate profile")
+                if entries:
+                    raw = entries[0].split("=", 1)[1].strip()
+                    value = ProfileInput.model_validate(json.loads(raw[1:-1] if raw.startswith("'") and raw.endswith("'") else raw))
+                    value = value.model_copy(update={"persist": True, "clear_key": False})
+                    self._active_id = self._persisted_id = uuid.uuid4().hex
+                    self._profiles[self._active_id] = value
+            except (OSError, ValueError):
+                raise RuntimeError("Cannot load saved model settings from .env") from None
+
+    @staticmethod
+    def _is_profile_line(line: str) -> bool:
+        return bool(re.match(r"^\s*(?:export\s+)?DASHBOARD_MODEL_PROFILE\s*=", line))
+
+    def _read_env(self) -> tuple[bytes, list[str]]:
+        assert self._env_path is not None
+        if self._env_path.is_symlink():
+            raise ValueError("Linked environment file")
+        raw = self._env_path.read_bytes() if self._env_path.exists() else b""
+        return raw, raw.decode("utf-8").splitlines(keepends=True)
+
+    def _write_profile(self, value: ProfileInput | None) -> None:
+        if self._env_path is None:
+            raise HTTPException(503, "Persistent model settings are unavailable")
+        temporary = None
+        try:
+            original, lines = self._read_env()
+            text = "".join(line for line in lines if not self._is_profile_line(line))
+            if value is not None:
+                data = value.model_dump(exclude={"api_key", "clear_key"})
+                data["api_key"] = value.api_key.get_secret_value()
+                # One quoted JSON value preserves punctuation without dotenv expansion.
+                encoded = json.dumps(data, ensure_ascii=True).replace("'", "\\u0027")
+                text += ("\n" if text and not text.endswith("\n") else "") + "DASHBOARD_MODEL_PROFILE='" + encoded + "'\n"
+            fd, temporary = tempfile.mkstemp(prefix=".env-", suffix=".tmp", dir=self._env_path.parent)
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(text.encode("utf-8"))
+                stream.flush()
+                os.fsync(stream.fileno())
+            if self._read_env()[0] != original:
+                raise ValueError("Environment file changed")
+            os.replace(temporary, self._env_path)
+        except (OSError, ValueError):
+            raise HTTPException(503, "Could not save .env; model settings were not changed") from None
+        finally:
+            if temporary is not None and os.path.exists(temporary):
+                os.unlink(temporary)
 
     @staticmethod
     def public(profile_id: str, value: ProfileInput) -> dict:
         return {"id": profile_id, "name": value.name, "protocol": value.protocol,
                 "model": value.model, "endpoint": value.endpoint,
                 "has_api_key": bool(value.api_key.get_secret_value()),
+                "persisted": value.persist,
                 "connection_status": "NOT_TESTED"}
 
     def list_profiles(self) -> list[dict]:
         with self._lock:
-            return [self.public(k, v) for k, v in self._profiles.items()]
+            return [{**self.public(k, v), "is_active": k == self._active_id}
+                    for k, v in self._profiles.items()]
+
+    def snapshot(self) -> ProviderConfig | None:
+        with self._lock:
+            value = self._profiles.get(self._active_id)
+            if value is None:
+                return None
+            return ProviderConfig(value.endpoint, value.model, value.protocol,
+                                  value.api_key.get_secret_value())
 
     def save(self, value: ProfileInput, profile_id: str | None = None) -> dict:
         with self._lock:
@@ -104,14 +174,29 @@ class ProfileStore:
             if value.clear_key:
                 value = value.model_copy(update={"api_key": SecretStr("")})
             profile_id = profile_id or uuid.uuid4().hex
+            if value.persist:
+                self._write_profile(value)
+                if self._persisted_id in self._profiles:
+                    previous = self._profiles[self._persisted_id]
+                    self._profiles[self._persisted_id] = previous.model_copy(update={"persist": False})
+                self._persisted_id = profile_id
+            elif profile_id == self._persisted_id:
+                self._write_profile(None)
+                self._persisted_id = None
             self._profiles[profile_id] = value
-            return self.public(profile_id, value)
+            self._active_id = profile_id
+            return {**self.public(profile_id, value), "is_active": True}
 
     def remove(self, profile_id: str) -> None:
         with self._lock:
             if profile_id not in self._profiles:
                 raise HTTPException(404, "Model profile not found")
+            if profile_id == self._persisted_id:
+                self._write_profile(None)
+                self._persisted_id = None
             del self._profiles[profile_id]
+            if self._active_id == profile_id:
+                self._active_id = None
 
 
 def _local_request(request: Request, *, mutation: bool) -> None:
@@ -150,8 +235,8 @@ def create_router(store: ProfileStore) -> APIRouter:
     async def listing(request: Request, response: Response) -> dict:
         _local_request(request, mutation=False)
         response.headers["Cache-Control"] = "no-store"
-        return {"profiles": store.list_profiles(), "storage": "SERVER_SESSION",
-                "execution_integration": "NOT_CONNECTED"}
+        return {"profiles": store.list_profiles(), "storage": "SERVER_SESSION_WITH_OPTIONAL_ENV",
+                "execution_integration": "CONNECTED"}
 
     @router.post("")
     async def create(request: Request, response: Response) -> dict:

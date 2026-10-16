@@ -1,5 +1,8 @@
 """Configuration-only API checks; no provider, target, evidence or Docker I/O."""
 import unittest
+from pathlib import Path
+import tempfile
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -31,7 +34,7 @@ class ModelProfileTests(unittest.TestCase):
         self.assertNotIn("fixture-secret-only", response.text + listing.text)
         self.assertNotIn('"api_key"', response.text + listing.text)
         self.assertEqual(listing.headers["cache-control"], "no-store")
-        self.assertEqual(listing.json()["execution_integration"], "NOT_CONNECTED")
+        self.assertEqual(listing.json()["execution_integration"], "CONNECTED")
         removed = self.client.post(f'/api/model-profiles/{data["id"]}/remove', headers=self.headers)
         self.assertEqual(removed.status_code, 200)
         self.assertEqual(self.store.list_profiles(), [])
@@ -108,6 +111,70 @@ class ModelProfileTests(unittest.TestCase):
         self.store.save(ProfileInput.model_validate(self.value))
         self.assertEqual(ProfileStore().list_profiles(), [])
         self.assertEqual(dict(os.environ), previous)
+
+
+class PersistentModelProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / ".env"
+        self.original = b"# preserve comments\r\nOTHER_SETTING=keep-me\r\n"
+        self.path.write_bytes(self.original)
+        self.store = ProfileStore(self.path)
+        self.value = ProfileInput(name="Local model", protocol="anthropic", model="custom/model",
+                                  endpoint="https://provider.example/v1", persist=True,
+                                  api_key="fixture'\"\\$#=secret")
+
+    def test_restart_roundtrip_redaction_and_unrelated_settings(self):
+        saved = self.store.save(self.value)
+        self.assertTrue(saved["persisted"])
+        self.assertTrue(self.path.read_bytes().startswith(self.original))
+        restarted = ProfileStore(self.path)
+        self.assertEqual(restarted.snapshot(), self.store.snapshot())
+        self.assertTrue(restarted.list_profiles()[0]["is_active"])
+        self.assertNotIn(self.value.api_key.get_secret_value(), repr(restarted.list_profiles()))
+        self.assertNotIn("api_key", restarted.list_profiles()[0])
+
+    def test_blank_key_preserves_clear_key_removes_and_delete_persists(self):
+        saved = self.store.save(self.value)
+        blank = self.value.model_copy(update={"api_key": ProfileInput.model_fields["api_key"].default_factory()})
+        self.store.save(blank, saved["id"])
+        self.assertEqual(ProfileStore(self.path).snapshot().api_key, self.value.api_key.get_secret_value())
+        self.store.save(blank.model_copy(update={"clear_key": True}), saved["id"])
+        self.assertEqual(ProfileStore(self.path).snapshot().api_key, "")
+        self.store.remove(saved["id"])
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertEqual(ProfileStore(self.path).list_profiles(), [])
+
+    def test_replacement_and_unchecking_persistence(self):
+        first = self.store.save(self.value)
+        second = self.store.save(self.value.model_copy(update={"model": "replacement"}))
+        self.assertFalse(self.store.list_profiles()[0]["persisted"])
+        self.assertEqual(ProfileStore(self.path).snapshot().model, "replacement")
+        self.store.remove(first["id"])
+        self.assertEqual(ProfileStore(self.path).snapshot().model, "replacement")
+        self.store.save(self.value.model_copy(update={"persist": False}), second["id"])
+        self.assertEqual(self.path.read_bytes(), self.original)
+        self.assertIsNotNone(self.store.snapshot())
+
+    def test_failed_write_preserves_file_and_memory(self):
+        from fastapi import HTTPException
+        self.store.save(self.value)
+        original = self.path.read_bytes()
+        snapshot = self.store.snapshot()
+        with patch("dashboards.app.backend.model_profiles.os.replace", side_effect=OSError("fixture failure")):
+            with self.assertRaises(HTTPException) as caught:
+                self.store.save(self.value.model_copy(update={"model": "new"}))
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(self.store.snapshot(), snapshot)
+        self.assertEqual(list(self.path.parent.glob("*.tmp")), [])
+
+    def test_invalid_saved_profile_fails_without_disclosing_content(self):
+        self.path.write_text("DASHBOARD_MODEL_PROFILE='fixture-secret-invalid'\n", encoding="utf-8")
+        with self.assertRaises(RuntimeError) as caught:
+            ProfileStore(self.path)
+        self.assertNotIn("fixture-secret-invalid", str(caught.exception))
 
 
 if __name__ == "__main__":

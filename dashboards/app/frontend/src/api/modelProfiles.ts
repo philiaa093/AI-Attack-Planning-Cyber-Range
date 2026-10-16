@@ -6,6 +6,8 @@ export interface ModelProfile {
   endpoint: string;
   has_api_key: boolean;
   connection_status: 'NOT_TESTED';
+  is_active?: boolean;
+  persisted?: boolean;
 }
 
 export interface ModelProfileInput {
@@ -15,4 +17,5 @@ export interface ModelProfileInput {
   endpoint: string;
   api_key: string;
   clear_key: boolean;
+  persist?: boolean;
 }

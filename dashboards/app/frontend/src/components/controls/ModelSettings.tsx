@@ -5,7 +5,7 @@ import type { ModelProfile, ModelProfileInput } from '../../api/modelProfiles';
 import { useLanguage } from '../../i18n/LanguageContext';
 
 const emptyForm = (): ModelProfileInput => ({
-  name: '', protocol: 'openai-compatible', model: '', endpoint: '', api_key: '', clear_key: false,
+  name: '', protocol: 'openai-compatible', model: '', endpoint: '', api_key: '', clear_key: false, persist: false,
 });
 const inputClass = 'w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 focus:border-blue-500 focus:outline-none';
 
@@ -41,9 +41,9 @@ export const ModelSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
     setBusy(true); setError(''); setNotice('');
     try {
       const saved = await apiClient.saveModelProfile({ ...form, name: form.name.trim(), model: form.model.trim(), endpoint: form.endpoint.trim() }, editing);
-      setProfiles(current => editing ? current.map(p => p.id === editing ? saved : p) : [...current, saved]);
+      setProfiles(current => [...current.filter(p => p.id !== saved.id).map(p => ({ ...p, is_active: false, persisted: saved.persisted ? false : p.persisted })), saved]);
       setForm(emptyForm()); setEditing(undefined);
-      setNotice(vi ? 'Đã lưu cấu hình cho phiên máy chủ hiện tại.' : 'Settings saved for the current backend session.');
+      setNotice(vi ? 'Đã lưu. Lần chạy LLM tiếp theo sẽ dùng cấu hình này.' : 'Saved. The next LLM run will use this profile.');
     } catch {
       setForm(current => ({ ...current, api_key: '' }));
       setError(vi ? 'Không lưu được cấu hình. Hãy kiểm tra địa chỉ API dùng HTTPS (HTTP chỉ dành cho localhost), mô hình và khóa API.' : 'Could not save. Check the HTTPS endpoint (HTTP only for localhost), model and API key.');
@@ -68,7 +68,7 @@ export const ModelSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
         </div>
         <div className="overflow-y-auto p-5 space-y-5">
           <p className="rounded-lg border border-blue-900 bg-blue-950/30 p-3 text-xs leading-relaxed text-blue-200">
-            {vi ? 'Nhập mô hình và địa chỉ API. Cấu hình và khóa API chỉ được giữ trong bộ nhớ máy chủ và sẽ mất khi máy chủ khởi động lại. Kết nối chưa được kiểm tra; cấu hình này chưa được kết nối với bộ lập kế hoạch của tác nhân.' : 'Enter your own model and endpoint. Settings and API keys stay in backend memory and are lost on restart. Connection is untested; these profiles are not yet connected to the agent planner.'}
+            {vi ? 'Lần chạy LLM tiếp theo dùng cấu hình lưu gần nhất. Sửa và lưu để chọn lại một mô hình. Chọn lưu vào .env để giữ một cấu hình sau khi khởi động lại; cấu hình lưu sau sẽ thay cấu hình đã lưu trước. Khóa được lưu dạng văn bản trên máy chủ. Lưu không kiểm tra kết nối hoặc thay đổi run đang chạy.' : 'The next LLM run uses the most recently saved profile. Edit and save to select a model again. Save to .env to keep one profile after restart; saving another replaces it. The key is stored as plain text on the server. Saving does not test connectivity or change an active run.'}
           </p>
           {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
           {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
@@ -79,11 +79,13 @@ export const ModelSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
               {profiles.map(profile => (
                 <article key={profile.id} className={`rounded-lg border p-3 ${editing === profile.id ? 'border-blue-500 bg-blue-950/20' : 'border-slate-800 bg-slate-900/50'}`}>
                   <div className="flex items-start justify-between gap-2"><strong className="break-all text-sm">{profile.name}</strong><div className="flex gap-2">
-                    <button type="button" disabled={busy} aria-label={`${vi ? 'Sửa' : 'Edit'} ${profile.name}`} onClick={() => { setEditing(profile.id); setForm({ name: profile.name, protocol: profile.protocol, model: profile.model, endpoint: profile.endpoint, api_key: '', clear_key: false }); setError(''); setNotice(''); }} className="text-slate-400 hover:text-blue-300"><Pencil size={14} /></button>
+                    <button type="button" disabled={busy} aria-label={`${vi ? 'Sửa' : 'Edit'} ${profile.name}`} onClick={() => { setEditing(profile.id); setForm({ name: profile.name, protocol: profile.protocol, model: profile.model, endpoint: profile.endpoint, api_key: '', clear_key: false, persist: profile.persisted ?? false }); setError(''); setNotice(''); }} className="text-slate-400 hover:text-blue-300"><Pencil size={14} /></button>
                     <button type="button" disabled={busy} aria-label={`${vi ? 'Xóa' : 'Remove'} ${profile.name}`} onClick={() => void remove(profile.id)} className="text-slate-400 hover:text-rose-300"><Trash2 size={14} /></button>
                   </div></div>
                   <p className="mt-1 break-all font-mono text-xs text-slate-300">{profile.model}</p>
+                  {profile.is_active && <p className="mt-1 text-xs text-emerald-300">{vi ? 'Dùng cho lần chạy LLM tiếp theo' : 'Selected for the next LLM run'}</p>}
                   <p className="mt-1 break-all text-xs text-slate-500">{profile.endpoint}</p>
+                  {profile.persisted && <p className="mt-1 text-xs text-slate-400">{vi ? 'Đã lưu trong .env' : 'Saved in .env'}</p>}
                   <p className="mt-2 flex items-center gap-1 text-xs text-slate-400"><KeyRound size={12} />{profile.has_api_key ? (vi ? 'Đã lưu khóa API' : 'API key saved') : (vi ? 'Chưa có khóa API' : 'No API key')}</p>
                 </article>
               ))}
@@ -96,6 +98,7 @@ export const ModelSettingsModal: React.FC<{ onClose: () => void }> = ({ onClose 
               <label className="block text-xs text-slate-400">{vi ? 'Địa chỉ API' : 'Endpoint'}<input required type="url" maxLength={512} value={form.endpoint} onChange={e => change('endpoint', e.target.value)} className={`${inputClass} mt-1`} placeholder="https://provider.example/v1" /></label>
               <label className="block text-xs text-slate-400">{vi ? 'Khóa API' : 'API key'}<input type="password" autoComplete="new-password" spellCheck={false} maxLength={4096} disabled={form.clear_key} value={form.api_key} onChange={e => change('api_key', e.target.value)} className={`${inputClass} mt-1`} placeholder={editing ? (vi ? 'Để trống để giữ khóa hiện tại' : 'Leave blank to keep existing key') : (vi ? 'Không bắt buộc với mô hình cục bộ' : 'Optional for local models')} /></label>
               {editing && <label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={form.clear_key} onChange={e => setForm(current => ({ ...current, clear_key: e.target.checked, api_key: '' }))} />{vi ? 'Xóa khóa API hiện tại' : 'Remove existing API key'}</label>}
+              <label className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={form.persist ?? false} onChange={e => change('persist', e.target.checked)} />{vi ? 'Lưu API và mô hình vào .env (giữ sau khi khởi động lại)' : 'Save API and model to .env (keep after restart)'}</label>
               <button type="submit" disabled={busy || loading} className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">{busy ? (vi ? 'Đang lưu…' : 'Saving…') : (vi ? 'Lưu cấu hình' : 'Save settings')}</button>
             </form>
           </div>

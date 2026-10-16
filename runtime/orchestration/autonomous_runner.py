@@ -64,6 +64,7 @@ from runtime.planners.observed_planner import (
     ACTION_CATALOG,
     ObservedStatePlanner,
     PlannerResult,
+    ProviderConfig,
 )
 from runtime.planners.planner_adapter import (
     PlannerStateAdapter,
@@ -142,6 +143,7 @@ class AutonomousRunner:
         seed_path: str = "/",
         event_hook: Callable[[dict[str, Any]], None] | None = None,
         control_mode: str = "AUTONOMOUS",
+        planner_provider_config: ProviderConfig | None = None,
     ) -> None:
         self.target_id = target_id
         self.gate = gate
@@ -198,6 +200,7 @@ class AutonomousRunner:
             fallback_allowed=self.planner_fallback_allowed,
             effective_targets=self.gate.effective_targets,
             provider_callable=self.planner_provider_callable,
+            provider_config=planner_provider_config,
             event_hook=self._on_planner_event,
         )
 
