@@ -127,10 +127,13 @@ class HTMLMetadataParser(html.parser.HTMLParser):
             value = attr_dict.get("value")
             # ponytail: explicit values only, 16 per select; label-derived and multi-select values need separate support.
             if ("disabled" not in attr_dict and not self._disabled_optgroup and value is not None
-                    and len(options) < 16 and len(value) <= 128
+                    and len(value) <= 128
                     and not any(ord(c) < 32 or ord(c) == 127 for c in value)
                     and redact_secrets(value) == value):
-                options.append({"value": value, "selected": "selected" in attr_dict})
+                if len(options) < 16:
+                    options.append({"value": value, "selected": "selected" in attr_dict})
+                else:
+                    self._current_select["options_truncated"] = True
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() in ("select", "form"):
