@@ -26,6 +26,7 @@ from __future__ import annotations
 import html.parser
 import re
 import urllib.parse
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -37,6 +38,8 @@ from runtime.safety.discovery_gate import (
     CentralizedSafetyGate,
     DiscoveryRequest,
     DispatchResponse,
+    _SENSITIVE_QUERY_PARAMS,
+    redact_secrets,
 )
 
 
@@ -44,7 +47,7 @@ from runtime.safety.discovery_gate import (
 class FormMetadata:
     action: str
     method: str
-    inputs: list[dict[str, str]]
+    inputs: list[dict[str, Any]]
 
 
 @dataclass
@@ -77,6 +80,8 @@ class HTMLMetadataParser(html.parser.HTMLParser):
         self.links: list[str] = []
         self.forms: list[FormMetadata] = []
         self._current_form: FormMetadata | None = None
+        self._current_select: dict[str, Any] | None = None
+        self._disabled_optgroup = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag_lower = tag.lower()
@@ -88,6 +93,7 @@ class HTMLMetadataParser(html.parser.HTMLParser):
                 self.links.append(href)
 
         elif tag_lower == "form":
+            self._current_select = None
             action = attr_dict.get("action", "").strip()
             method = attr_dict.get("method", "GET").upper().strip()
             self._current_form = FormMetadata(
@@ -97,6 +103,9 @@ class HTMLMetadataParser(html.parser.HTMLParser):
             )
 
         elif tag_lower in ("input", "textarea", "select", "button") and self._current_form is not None:
+            if tag_lower == "select":
+                self._current_select = None
+                self._disabled_optgroup = False
             name = attr_dict.get("name", "").strip()
             input_type = attr_dict.get("type", "text" if tag_lower == "input" else tag_lower).strip()
             if name:
@@ -104,8 +113,30 @@ class HTMLMetadataParser(html.parser.HTMLParser):
                     "name": name,
                     "type": input_type,
                 })
+                if tag_lower == "select":
+                    sensitive = name.lower() in _SENSITIVE_QUERY_PARAMS or any(
+                        part in name.lower() for part in ("token", "session", "password", "secret", "csrf"))
+                    if self._current_form.method == "GET" and not sensitive and not {"disabled", "multiple"} & attr_dict.keys():
+                        self._current_select = self._current_form.inputs[-1]
+                        self._current_select["options"] = []
+
+        elif tag_lower == "optgroup":
+            self._disabled_optgroup = "disabled" in attr_dict
+        elif tag_lower == "option" and self._current_select is not None:
+            options = self._current_select["options"]
+            value = attr_dict.get("value")
+            # ponytail: explicit values only, 16 per select; label-derived and multi-select values need separate support.
+            if ("disabled" not in attr_dict and not self._disabled_optgroup and value is not None
+                    and len(options) < 16 and len(value) <= 128
+                    and not any(ord(c) < 32 or ord(c) == 127 for c in value)
+                    and redact_secrets(value) == value):
+                options.append({"value": value, "selected": "selected" in attr_dict})
 
     def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in ("select", "form"):
+            self._current_select = None
+        if tag.lower() == "optgroup":
+            self._disabled_optgroup = False
         if tag.lower() == "form" and self._current_form is not None:
             self.forms.append(self._current_form)
             self._current_form = None
@@ -262,7 +293,7 @@ class ObservationDrivenDiscovery:
             )
 
             resp = self.gate.dispatch(req)
-            obs_id = f"OBS-DISC-{len(self.observations)+1:04d}-{self.run_id}"
+            obs_id = f"OBS-DISC-{uuid.uuid4().hex}"
 
             if not resp.durable_confirmed and resp.refusal_reason in ("INTENT_EVIDENCE_WRITE_FAILED", "RESULT_EVIDENCE_WRITE_FAILED"):
                 durable_confirmed = False

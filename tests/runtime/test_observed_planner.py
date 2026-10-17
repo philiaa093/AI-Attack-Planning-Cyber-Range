@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from agent.memory.state.state_manager import StateManager
@@ -34,6 +35,8 @@ from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
 from runtime.planners.observed_planner import (
     ObservedStatePlanner,
     PlannerResult,
+    ProviderConfig,
+    _call_real_provider,
 )
 from runtime.planners.planner_adapter import (
     PlannerStateAdapter,
@@ -523,6 +526,30 @@ class ReplanPreflightTests(unittest.TestCase):
         res_target = self.planner.propose(state_with_target)
         # Next action shifts to ACTION-RECON-002 based strictly on the new observed fact
         self.assertEqual(res_target.proposal["action_id"], "ACTION-RECON-002")
+
+
+class LiveProviderRequestTests(unittest.TestCase):
+    def test_non_streaming_request_for_json_provider_response(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'{"choices":[{"message":{"content":"{}"}}]}'
+            content, error, _ = _call_real_provider("system", "user", config=config)
+            payload = json.loads(connection.return_value.request.call_args.kwargs["body"])
+            self.assertIs(payload["stream"], False)
+            self.assertEqual(content, "{}")
+            self.assertIsNone(error)
+            connection.return_value.close.assert_called_once()
+
+    def test_prompt_lists_only_run_approved_actions(self):
+        allowed = {"ACTION-RECON-002", "ACTION-END-001", "ACTION-END-003"}
+        planner = ObservedStatePlanner("lab-ecommerce", effective_actions=allowed | {"INVALID-ACTION"})
+        prompt = planner._build_minimized_prompt({}, [], [], [])
+        for action in allowed:
+            self.assertIn(action, prompt)
+        for action in ("INVALID-ACTION", "ACTION-WEB-001", "ACTION-RECON-001", "ACTION-SCAN-001"):
+            self.assertNotIn(action, prompt)
 
 
 if __name__ == "__main__":

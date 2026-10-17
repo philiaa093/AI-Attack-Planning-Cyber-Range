@@ -21,6 +21,17 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+# Names describe the actual internal implementation, not external scanners.
+ACTION_EXECUTION_DETAILS = {
+    "ACTION-RECON-001": {"tool": "AutonomousRunner HTTP health probe", "family": "DISCOVERY"},
+    "ACTION-RECON-002": {"tool": "ObservationDrivenDiscovery", "family": "DISCOVERY"},
+    "ACTION-SCAN-001": {"tool": "PassiveSurfaceAnalyzer", "family": "PASSIVE_ANALYSIS"},
+    "ACTION-SCAN-002": {"tool": "Isolated ZAP / Nuclei", "family": "BOUNDED_WEB_SCAN"},
+    "ACTION-WEB-001": {"tool": "SafeInputVerificationExecutor", "family": "SQL_INJECTION"},
+    "ACTION-WEB-002": {"tool": "SafeReflectionVerificationExecutor", "family": "SCRIPT_INJECTION"},
+    "ACTION-WEB-003": {"tool": "SafePathFixtureVerificationExecutor", "family": "PATH_TRAVERSAL"},
+}
+
 from runtime.discovery.discovery_engine import InventoryItem, InventoryStore
 from runtime.safety.discovery_gate import (
     ApprovalToken,
@@ -551,6 +562,26 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
     ) -> CapabilityExecutionResult:
         resource = proposal.get("resource_ref", "/")
         param = proposal.get("parameter_name", "file")
+        file_like_names = ("file", "path", "template", "document", "download", "folder", "dir", "include")
+        if not any(name in str(param).lower() for name in file_like_names):
+            reason = "Observed input is not file/path-like; bounded path traversal verification was not dispatched"
+            finding = VerificationFinding(
+                finding_id=f"FIND-PATH-{uuid.uuid4().hex[:8]}", family="PATH_TRAVERSAL",
+                classification="INCONCLUSIVE", resource_ref=resource, input_ref=param,
+                source_observation_refs=proposal.get("evidence_refs", []),
+                verification_action="ACTION-WEB-003", result_evidence_refs=[], confidence=0.3,
+                limitations=["Requires an observed file/path-like input before dispatch"], reason=reason,
+            )
+            artifact = recorder.persist_phase_artifact("action_web_003_verification", {
+                "run_id": run_id, "target_id": target_id, "action_id": "ACTION-WEB-003",
+                "resource": resource, "parameter": param, "classification": "INCONCLUSIVE",
+                "reason": reason, "finding": asdict(finding), "dispatches_made": 0,
+            })
+            return CapabilityExecutionResult(
+                action_id="ACTION-WEB-003", target_id=target_id, outcome="NOT_APPLICABLE",
+                classification="INCONCLUSIVE", findings=[finding], network_dispatch_count=0,
+                result_evidence_id=artifact["evidence_id"], details={"reason": reason},
+            )
 
         # Construct bounded traversal probe using SAFE sentinel ONLY
         traversal_probe = f"../../../{self.SAFE_SENTINEL}"
@@ -589,9 +620,16 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
 
         body = resp.body or ""
 
-        if self.SAFE_SENTINEL in body:
+        # A search page may echo the submitted traversal string. Treat that as
+        # a signal only; confirmation requires the sentinel independently of
+        # the supplied probe text.
+        reflected_probe = traversal_probe in body or urllib.parse.quote(traversal_probe) in body
+        if self.SAFE_SENTINEL in body and not reflected_probe:
             classification = "VERIFIED_IN_LAB"
             reason = "Approved lab traversal sentinel was successfully retrieved via traversal sequence"
+        elif reflected_probe:
+            classification = "SIGNAL"
+            reason = "Traversal probe was reflected by the response; sentinel file retrieval was not demonstrated"
         elif resp.status_code in (400, 403, 404):
             # Target cleanly rejected the path traversal sequence (e.g. ShopLab INV-* regex rejection)
             classification = "NEGATIVE"

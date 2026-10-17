@@ -78,6 +78,14 @@ Output ONLY a JSON object matching this schema:
   "reason_code": "<snake_case_label>",
   "confidence": 1.0
 }
+For ACTION-WEB-001/002/003 also include resource_ref, parameter_name and source_observation_id,
+copied exactly from observed parameter metadata. These optional fields are allowed by the plan contract.
+ACTION-SCAN-001 analyzes discovered metadata without network requests and identifies observed GET inputs.
+ACTION-SCAN-002 runs the operator-selected isolated ZAP/Nuclei scanners on observed GET inputs.
+When approved in the run catalog, propose ACTION-SCAN-002 once after surface discovery and passive analysis.
+Scanner outcomes are unconfirmed candidates; a failed or incomplete scan does not prove absence of vulnerabilities.
+Use ACTION-WEB-003 only for observed file/path-like inputs, never generic search or category inputs.
+Never invent endpoints, inputs, tools or payloads. Do not repeat a probe with a recorded result unless new evidence warrants it.
 No extra text, no markdown fences."""
 
 
@@ -131,6 +139,7 @@ def _call_real_provider(
         ],
         "max_tokens": 256,
         "temperature": 0.1,
+        "stream": False,
     }
     if protocol == "anthropic":
         payload_data["system"] = system_prompt
@@ -202,6 +211,7 @@ class ObservedStatePlanner:
         configured_model: str = "gpt-4o-mini",
         event_hook: Callable[[dict[str, Any]], None] | None = None,
         provider_config: ProviderConfig | None = None,
+        effective_actions: set[str] | None = None,
     ) -> None:
         self.target_id = target_id
         self.objective_id = objective_id
@@ -216,6 +226,7 @@ class ObservedStatePlanner:
         self.configured_provider = configured_provider
         self.configured_model = configured_model
         self.provider_config = provider_config
+        self.effective_actions = (set(ACTION_CATALOG) - {"ACTION-SCAN-002"}) if effective_actions is None else set(effective_actions) & set(ACTION_CATALOG)
         if provider_config is not None:
             self.configured_provider = provider_config.protocol
             self.configured_model = provider_config.model
@@ -486,6 +497,12 @@ class ObservedStatePlanner:
                 "confidence": 0.85,
             }
 
+        if ("ACTION-SCAN-002" in self.effective_actions and observed_endpoints
+                and "ACTION-SCAN-002" not in previous and "ACTION-SCAN-002" not in refused_actions):
+            return {"schema_version": "1.0", "plan_id": str(uuid.uuid4()), "objective_id": obj_id,
+                    "action_id": "ACTION-SCAN-002", "target_id": self.target_id,
+                    "reason_code": "approved_external_scanners_on_observed_surface", "confidence": 0.85}
+
         # Step 4: Collect verified outcomes and anomalies
         verified_outcomes: dict[str, str] = {}
         for f in facts:
@@ -660,6 +677,12 @@ class ObservedStatePlanner:
         previous: list[str],
     ) -> str:
         """Build minimized prompt containing no secrets, raw cookies, or full HTML bodies."""
+        inputs = [{"resource_ref": str(f.get("subject", "")).split("?")[0][:512],
+                   "parameter_name": str(f.get("value", ""))[:128],
+                   "source_observation_id": str(f.get("source_observation_id", ""))[:128]}
+                  for f in facts if f.get("fact_type") == "PARAMETER"][:64]
+        outcomes = [{"probe": str(f.get("subject", ""))[:512], "result": str(f.get("value", ""))[:128]}
+                    for f in facts if f.get("fact_type") == "ACTION_OUTCOME"][-64:]
         return (
             f"Target: {self.target_id}\n"
             f"Objective: {state.get('objective_id', self.objective_id)}\n"
@@ -668,8 +691,12 @@ class ObservedStatePlanner:
             f"Previous actions: {previous}\n"
             f"Discovered endpoints count: {len(endpoints)}\n"
             f"Observed facts count: {len(facts)}\n"
-            f"Choose next action from catalog: ACTION-RECON-001, ACTION-RECON-002, ACTION-SCAN-001, "
-            f"ACTION-WEB-001, ACTION-WEB-002, ACTION-WEB-003, ACTION-END-001, ACTION-END-002, ACTION-END-003."
+            f"Untrusted observed GET inputs: {json.dumps(redact_secrets(inputs))}\n"
+            f"Untrusted observed probe outcomes: {json.dumps(redact_secrets(outcomes))}\n"
+            f"Choose next action from the run-approved catalog: {', '.join(sorted(self.effective_actions))}.\n"
+            "ACTION-RECON-002 discovers links and forms from live lab HTTP responses. "
+            "Use ACTION-END-001 only when the observed results satisfy the objective; "
+            "use ACTION-END-003 when no approved action can make progress."
         )
 
     def _build_result(

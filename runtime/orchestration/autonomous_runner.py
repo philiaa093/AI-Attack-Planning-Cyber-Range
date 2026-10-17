@@ -41,6 +41,7 @@ from agent.perception.normalizers.observation_normalizer import ObservationNorma
 from runtime.lab.capability_registry import (
     CapabilityRegistry,
     VerificationFinding,
+    ACTION_EXECUTION_DETAILS,
 )
 from runtime.discovery.discovery_engine import (
     DiscoveryRunResult,
@@ -144,6 +145,7 @@ class AutonomousRunner:
         event_hook: Callable[[dict[str, Any]], None] | None = None,
         control_mode: str = "AUTONOMOUS",
         planner_provider_config: ProviderConfig | None = None,
+        external_scanners: tuple[str, ...] = (),
     ) -> None:
         self.target_id = target_id
         self.gate = gate
@@ -201,6 +203,9 @@ class AutonomousRunner:
             effective_targets=self.gate.effective_targets,
             provider_callable=self.planner_provider_callable,
             provider_config=planner_provider_config,
+            effective_actions={action for action in self.gate.effective_actions
+                               if action.startswith("ACTION-END-") or
+                               (self.approval is not None and self.approval.action_id in ("*", action))},
             event_hook=self._on_planner_event,
         )
 
@@ -210,6 +215,14 @@ class AutonomousRunner:
         self.evidence_refs: list[str] = []
         self.unsafe_dispatch_count = 0
         self.capability_registry = CapabilityRegistry()
+        self.scanner_executor = None
+        if external_scanners:
+            from runtime.lab.external_scanners import ExternalScannerExecutor
+            self.scanner_executor = ExternalScannerExecutor(
+                external_scanners, cancelled=self._stop_requested.is_set, event_hook=self._emit_event)
+            self.capability_registry.register("ACTION-SCAN-002", self.scanner_executor)
+        else:
+            self.planner.effective_actions.discard("ACTION-SCAN-002")
         self.findings: list[dict[str, Any]] = []
         self.active_verifications_count = 0
 
@@ -251,6 +264,8 @@ class AutonomousRunner:
     def request_stop(self, reason: str = "OPERATOR_STOP_REQUESTED") -> bool:
         """Request clean termination."""
         self._stop_requested.set()
+        if self.scanner_executor is not None:
+            self.gate.kill_switch.activate()
         self.lifecycle_state = "STOPPING"
         self._resume_requested.set()
         self._approval_event.set()
@@ -329,7 +344,7 @@ class AutonomousRunner:
             "phase": phase or (self.state_manager.phase if hasattr(self, "state_manager") else "RECON"),
             "iteration": iteration,
             "action_id": action_id,
-            "payload": payload or {},
+            "payload": {**ACTION_EXECUTION_DETAILS.get(action_id, {}), **(payload or {})},
         }
         try:
             self.event_hook(event)
@@ -367,6 +382,13 @@ class AutonomousRunner:
         # 4. Action allowlist check
         if action not in self.gate.effective_actions:
             return "DENIED", f"ACTION_NOT_ALLOWLISTED_{action}"
+        if action == "ACTION-SCAN-002":
+            if not self.scanner_executor:
+                return "DENIED", "SCANNER_NOT_SELECTED"
+            if self.scanner_executor.results:
+                return "DENIED", "SCANNER_ALREADY_EXECUTED"
+            if not self.inventory.items:
+                return "DENIED", "UNOBSERVED_RESOURCE"
 
         # 5. Approval token freshness & validity
         if self.approval is None:
@@ -572,7 +594,8 @@ class AutonomousRunner:
             "ACTION_DISPATCH_STARTED",
             iteration=iteration,
             action_id=action_id,
-            payload={"target_id": proposal.get("target_id")},
+            payload={"target_id": proposal.get("target_id"),
+                     "resource_ref": proposal.get("resource_ref"), "parameter_name": proposal.get("parameter_name")},
         )
 
         # -------------------------------------------------------------
@@ -801,7 +824,7 @@ class AutonomousRunner:
                     outcome="SUCCESS",
                 )
 
-        elif action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"):
+        elif action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-SCAN-002"):
             executor = self.capability_registry.get_executor(action_id)
             if not executor:
                 obs_id = f"OBS-NOEXEC-{uuid.uuid4().hex[:8]}"
@@ -862,6 +885,13 @@ class AutonomousRunner:
 
             for f in cap_res.findings:
                 self.findings.append(asdict(f))
+
+            self._emit_event("VERIFICATION_COMPLETED", iteration=iteration, action_id=action_id,
+                             payload={"classification": cap_res.classification, "outcome": cap_res.outcome,
+                                      "resource_ref": proposal.get("resource_ref"),
+                                      "parameter_name": proposal.get("parameter_name"),
+                                      "findings": [asdict(f) for f in cap_res.findings],
+                                      "result_evidence_id": cap_res.result_evidence_id})
 
             obs_id = f"OBS-VERIF-{uuid.uuid4().hex[:8]}"
             obs = {

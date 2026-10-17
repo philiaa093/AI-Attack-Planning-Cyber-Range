@@ -113,6 +113,7 @@ class AutonomousRunnerTests(unittest.TestCase):
         max_decisions: int = 10,
         rate_rps: float = 100.0,
         kill_switch: KillSwitch | None = None,
+        approval_action: str = "*",
     ) -> tuple[AutonomousRunner, CentralizedSafetyGate, DurableEvidenceRecorder, ApprovalToken]:
         recorder = DurableEvidenceRecorder(run_id=self.run_id, base_dir=self.evidence_dir)
 
@@ -120,7 +121,7 @@ class AutonomousRunnerTests(unittest.TestCase):
             approval_id=f"APP-{self.run_id}",
             run_id=self.run_id,
             target_id=self.target_id,
-            action_id="*",
+            action_id=approval_action,
             not_before=time.time() - 30 if approval_valid else time.time() + 1000,
             expires_at=time.time() + 600 if approval_valid else time.time() - 10,
         )
@@ -189,6 +190,28 @@ class AutonomousRunnerTests(unittest.TestCase):
         p1 = runner.planner.propose(s1)
         self.assertEqual(p1.proposal["action_id"], "ACTION-RECON-002")
         self.assertNotEqual(p0.proposal["action_id"], p1.proposal["action_id"])
+
+    def test_planner_catalog_intersects_gate_and_action_approval(self) -> None:
+        runner, gate, _, _ = self._setup_runner(approval_action="ACTION-RECON-002")
+        self.assertEqual(runner.planner.effective_actions, {"ACTION-RECON-002", "ACTION-END-001"})
+        decision, reason = runner._evaluate_safety({"target_id": self.target_id, "action_id": "ACTION-RECON-001"})
+        self.assertEqual(decision, "DENIED")
+        self.assertIn("APPROVAL_ACTION_MISMATCH", reason)
+        self.assertEqual(gate.network_dispatch_count, 0)
+
+    def test_repeated_discovery_has_distinct_observation_ids(self) -> None:
+        from runtime.discovery.discovery_engine import ObservationDrivenDiscovery
+        runner, gate, _, approval = self._setup_runner()
+        previous_ids = set()
+        for _ in range(2):
+            discovery = ObservationDrivenDiscovery(gate, runner.run_id, runner.target_id, approval)
+            result = discovery.run("/")
+            ids = {obs["observation_id"] for obs in result.normalized_observations}
+            self.assertTrue(ids)
+            self.assertTrue(previous_ids.isdisjoint(ids))
+            for observation in result.normalized_observations:
+                self.assertTrue(runner.state_adapter.ingest_observation(observation))
+            previous_ids.update(ids)
 
     # =========================================================================
     # A02: Refusal causes replan

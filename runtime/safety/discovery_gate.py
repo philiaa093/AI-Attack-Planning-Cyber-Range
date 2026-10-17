@@ -427,6 +427,7 @@ class CentralizedSafetyGate:
         dispatchable_actions = (
             "ACTION-RECON-001",
             "ACTION-RECON-002",
+            "ACTION-SCAN-002",
             "ACTION-WEB-001",
             "ACTION-WEB-002",
             "ACTION-WEB-003",
