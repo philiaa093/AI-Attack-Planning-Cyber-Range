@@ -77,7 +77,8 @@ def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
             base_origin=demo.ORIGIN, target_registry=demo.load_canonical_target_registry(),
             target_allowlist={demo.TARGET},
             action_allowlist=gate.effective_actions | {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
-                | ({"ACTION-SCAN-002"} if req.external_scanners else set()),
+                | ({"ACTION-SCAN-002"} if req.external_scanners else set())
+                | ({"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"} if req.approve_authenticated_workflow else set()),
             recorder=recorder, budget_tracker=gate.budget_tracker,
             rate_limiter=gate.rate_limiter, lab_mode=True,
         )
@@ -449,7 +450,9 @@ class RunManager:
         provider_config = (self.model_profiles.snapshot()
                            if self.model_profiles is not None and req.planner == "llm" else None)
         with self._lock:
-            if self._run_status.state in (AgentState.RUNNING, AgentState.STARTING):
+            if (self._active_thread is not None and self._active_thread.is_alive()) or self._run_status.state in (
+                    AgentState.RUNNING, AgentState.STARTING, AgentState.PAUSED, AgentState.STOPPING,
+                    AgentState.PAUSING, AgentState.RESUMING, AgentState.WAITING_FOR_APPROVAL):
                 return ControlResponse(
                     success=False,
                     message="Another run is currently active",
@@ -647,6 +650,9 @@ class RunManager:
             elif ev_type == "ACTION_DISPATCH_STARTED":
                 self._pipeline_status.steps["EXECUTE"] = StepState.RUNNING
                 self._agent_status.current_execution = {**payload, "action_id": ev.get("action_id"), "status": "RUNNING"}
+
+            elif ev_type in ("WORKFLOW_STARTED", "WORKFLOW_COMPLETED"):
+                self._agent_status.current_execution = {**payload, "tool": "Authenticated lab workflow"}
 
             elif ev_type in ("SCANNER_STARTED", "SCANNER_COMPLETED"):
                 tool = payload.get("tool", "scanner")
@@ -1009,6 +1015,7 @@ class RunManager:
                 "approved_action_ids": sorted(gate.effective_actions) if approval else [],
                 "active_verification_approved": req.approve_active_verification and not req.preview_one_page,
                 "external_scanners": req.external_scanners,
+                "authenticated_workflow_approved": req.approve_authenticated_workflow,
                 "budget": {"decisions": req.max_decisions, "requests": gate.budget_tracker.max_requests,
                            "pages": gate.budget_tracker.max_pages},
             })
@@ -1085,7 +1092,12 @@ class RunManager:
                 return
 
             # Autonomous / Presentation closed-loop execution
+            deferred_completion = []
+            workflow_restored = not req.approve_authenticated_workflow
             def on_runtime_event(ev: dict[str, Any]) -> None:
+                if ev.get("type") == "RUN_COMPLETED" and not workflow_restored:
+                    deferred_completion.append(ev)
+                    return
                 self._on_runtime_event(ev, event_sink)
 
             runner = AutonomousRunner(
@@ -1109,7 +1121,21 @@ class RunManager:
                 self._active_runner = runner
 
             # Execute closed loop
-            report: AutonomousRunReport = runner.run()
+            workflow_result = None
+            if req.approve_authenticated_workflow:
+                from runtime.lab.workflow_lab import WorkflowLab
+                from runtime.lab.authenticated_workflow import AuthenticatedWorkflow
+                on_runtime_event({"type": "WORKFLOW_STARTED", "payload": {"status": "RUNNING", "executor": "FIXED_WORKFLOW_NOT_LLM"}})
+                with WorkflowLab(run_id, recorder) as lab:
+                    workflow_result = AuthenticatedWorkflow(gate, recorder, approval, lab).execute()
+                    report = runner.run()
+                workflow_restored = True
+                workflow_result["original_volume_restored"] = True
+                on_runtime_event({"type": "WORKFLOW_COMPLETED", "payload": workflow_result})
+                for ev in deferred_completion:
+                    self._on_runtime_event(ev, event_sink)
+            else:
+                report = runner.run()
             scanner_results = list(runner.scanner_executor.results) if runner.scanner_executor else []
             for tool in req.external_scanners:
                 if not any(result["tool"] == tool for result in scanner_results):
@@ -1121,6 +1147,7 @@ class RunManager:
             # Persist report.json
             try:
                 (run_dir / "report.json").write_text(json.dumps({
+                    "workflow_result": workflow_result,
                     "run_id": report.run_id,
                     "target_id": report.target_id,
                     "requested_planner_mode": report.requested_planner_mode,

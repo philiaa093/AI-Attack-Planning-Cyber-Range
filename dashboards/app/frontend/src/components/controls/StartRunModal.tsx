@@ -29,6 +29,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   const [approveActiveVerification, setApproveActiveVerification] = useState(false);
   const [zapMode, setZapMode] = useState<'' | 'zap-passive' | 'zap-active'>('');
   const [useNuclei, setUseNuclei] = useState(false);
+  const [approveWorkflow, setApproveWorkflow] = useState(false);
   const [previewOnePage, setPreviewOnePage] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -49,6 +50,8 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
         scenario: 'SCN-001',
         approve_read_only: true,
         approve_active_verification: approveActiveVerification && !previewOnePage,
+        approve_authenticated_workflow: approveWorkflow && approveActiveVerification && !previewOnePage
+          && mode === 'autonomous' && controlMode === 'AUTONOMOUS',
         external_scanners: approveActiveVerification && !previewOnePage && mode !== 'deny-demo'
           ? [...(zapMode ? [zapMode] : []), ...(useNuclei ? ['nuclei' as const] : [])] : [],
         preview_one_page: previewOnePage,
@@ -277,6 +280,12 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   ? 'Chỉ GET/HEAD đã khám phá, dùng chung ngân sách HTTP. Không kiểm tra đăng nhập, POST hoặc logic nghiệp vụ. Kết quả cần xác minh thêm.'
                   : 'Observed GET/HEAD only, sharing the HTTP budget. No login, POST or business-logic testing. Findings require verification.'}</p>
               </fieldset>
+              <label className="col-span-2 flex items-start gap-2 rounded border border-amber-700 p-3 text-xs text-amber-200">
+                <input type="checkbox" checked={approveWorkflow && approveActiveVerification && !previewOnePage && mode === 'autonomous' && controlMode === 'AUTONOMOUS'}
+                  disabled={!approveActiveVerification || previewOnePage || mode !== 'autonomous' || controlMode !== 'AUTONOMOUS'}
+                  onChange={e => { setApproveWorkflow(e.target.checked); if (e.target.checked) setMaxRequests(Math.max(200, maxRequests)); }} />
+                {lang === 'vi' ? 'Cho phép workflow đăng nhập và POST trên bản sao lab: tạo tài khoản, giỏ hàng, đơn mô phỏng; kiểm tra quyền sở hữu và vai trò. Lab tạm gián đoạn khi chuyển bản sao. Khôi phục volume gốc sau run; giữ bản sao để kiểm tra. Workflow cố định, không do LLM lập kế hoạch.' : 'Approve login and POST on a lab copy: disposable accounts, cart, simulated checkout and ownership/role checks. Lab briefly unavailable during switching. Restore original volume after the run; retain copy for inspection. Fixed workflow, not LLM-planned.'}
+              </label>
               <div className="space-y-2 pt-1">
                 <div className="flex items-center space-x-2">
                   <input

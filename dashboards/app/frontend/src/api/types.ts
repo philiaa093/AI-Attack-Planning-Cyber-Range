@@ -217,6 +217,7 @@ export interface StartRunRequest {
   scenario?: string;
   approve_read_only?: boolean;
   approve_active_verification?: boolean;
+  approve_authenticated_workflow?: boolean;
   external_scanners?: ('zap-passive' | 'zap-active' | 'nuclei')[];
   preview_one_page?: boolean;
 }
