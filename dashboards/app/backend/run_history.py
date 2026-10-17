@@ -23,6 +23,7 @@ from dashboards.app.backend.models import (
     RunHistoryResponse,
     RunTimelineResponse,
     TimelineEventItem,
+    SECURITY_FINDING_CLASSES,
 )
 from dashboards.app.backend.run_manager import RunManager
 from runtime.evidence.evidence_readonly import IntegritySummary, bounded_bytes, no_link_ancestors, read_object, verify_records
@@ -184,7 +185,9 @@ class RunIndex:
                 observations=count("observations_added_count", "observations"),
                 evidence_count=integrity.record_count, verified_evidence_count=integrity.verified_count,
                 evidence_integrity=integrity.state,
-                findings_count=len(findings) if type(findings) is list else None,
+                findings_count=sum(type(f) is dict and type(f.get("classification")) is str
+                                   and f["classification"] in SECURITY_FINDING_CLASSES
+                                   for f in findings) if type(findings) is list else None,
                 pause_count=count("pause_count"), operator_approvals=count("operator_approvals_count"),
                 operator_rejections=count("operator_rejections_count"),
             )

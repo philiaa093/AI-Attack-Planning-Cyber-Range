@@ -16,6 +16,7 @@ import type {
 } from '../api/types';
 import { useLanguage } from '../i18n/LanguageContext';
 import { historyLabel } from '../i18n/historyLabels';
+import { displayTool, displayValue } from '../i18n/displayValue';
 
 interface RunDetailPageProps {
   runId: string;
@@ -35,6 +36,16 @@ const PIPELINE_STEPS = [
   'VERIFY',
   'COMPLETE',
 ];
+
+const displayedVerification = (event: TimelineEventItem) => {
+  const classification = String(event.payload.classification ?? 'INCONCLUSIVE');
+  const input = String(event.payload.parameter_name ?? '').toLowerCase();
+  const fileLike = ['file', 'path', 'template', 'document', 'download', 'folder', 'dir', 'include']
+    .some(name => input.includes(name));
+  return classification === 'VERIFIED_IN_LAB' && event.payload.family === 'PATH_TRAVERSAL' && !fileLike
+    ? 'INCONCLUSIVE'
+    : classification;
+};
 
 export const RunDetailPage: React.FC<RunDetailPageProps> = ({
   runId,
@@ -228,6 +239,20 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
       </div>
 
       {/* Interactive Replay Player Bar */}
+      {timeline.some(event => event.type === 'SCANNER_COMPLETED') && (
+        <section className="rounded-lg border border-slate-700 bg-[#111724] p-4 space-y-2" aria-label="Scanner results">
+          <h3 className="text-sm font-semibold text-slate-200">{lang === 'vi' ? 'Kết quả scanner' : 'Scanner results'}</h3>
+          {timeline.filter(event => event.type === 'SCANNER_COMPLETED').map((event, index) => (
+            <p key={index} className="break-all text-xs text-slate-300">
+              {String(event.payload.tool)}: {displayValue(String(event.payload.status), lang)}
+              {' · '}{String(event.payload.coverage ?? '')}
+              {event.payload.candidate_count !== undefined ? ` · ${String(event.payload.candidate_count)} candidates` : ''}
+              {event.payload.reason ? ` · ${String(event.payload.reason)}` : ''}
+            </p>
+          ))}
+          <p className="text-xs text-amber-200">{lang === 'vi' ? 'Candidate chưa phải lỗ hổng đã xác minh. Không có kết quả không chứng minh website an toàn.' : 'Candidates are unconfirmed. No findings do not establish that the website is safe.'}</p>
+        </section>
+      )}
       <div className="bg-[#111724] border border-slate-800 rounded-lg p-4 space-y-4 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           {/* Controls: Play/Pause, Step Prev/Next, Reset */}
@@ -331,6 +356,20 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
       </div>
 
       {/* Dynamic Pipeline Visualization */}
+      <section className="rounded-lg border border-slate-800 bg-[#111724] p-4 space-y-3">
+        <h3 className="font-semibold text-slate-200">{lang === 'vi' ? 'Công cụ và kết quả kiểm tra lỗ hổng' : 'Tools and vulnerability verification results'}</h3>
+        {timeline.filter(ev => ev.type === 'VERIFICATION_COMPLETED').length === 0 && <p className="text-slate-400">{lang === 'vi' ? 'Chưa ghi nhận kết quả kiểm tra chủ động. Discovery không xác nhận lỗ hổng.' : 'No active verification result recorded. Discovery does not confirm a vulnerability.'}</p>}
+        {timeline.filter(ev => ev.type === 'VERIFICATION_COMPLETED').map(ev => (
+          <div key={ev.event_id} className="rounded border border-slate-800 p-3 space-y-1">
+            <p className="break-all text-slate-200">{displayTool(String(ev.payload.tool ?? ''), lang)} · {displayValue(String(ev.payload.family ?? 'UNKNOWN'), lang)}</p>
+            <p className="break-all text-slate-400">{String(ev.payload.resource_ref ?? '')} · {String(ev.payload.parameter_name ?? '')}</p>
+            <p className="text-amber-200">{displayValue(displayedVerification(ev), lang)}</p>
+            {displayedVerification(ev) !== ev.payload.classification && <p className="text-xs text-amber-400">{lang === 'vi' ? 'Đã hạ mức: tham số không phải đầu vào kiểu tệp hoặc đường dẫn nên chưa chứng minh lỗ hổng vượt đường dẫn.' : 'Downgraded: the parameter is not a file/path input, so path traversal is not established.'}</p>}
+            <p className="break-all font-mono text-xs text-slate-500">{String(ev.payload.result_evidence_id ?? '')}</p>
+          </div>
+        ))}
+      </section>
+
       <div className="bg-[#111724] border border-slate-800 rounded-lg p-4 space-y-2">
         <h3 className="text-sm font-bold text-slate-400 font-mono">
           {h('Pipeline State at Scrubber Position')}
@@ -380,6 +419,7 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
             </p>
 
             {/* Structured Event Payload Dump */}
+            {Boolean(currentEvent.payload.tool) && <p className="break-all text-slate-200">{lang === 'vi' ? 'Công cụ ghi nhận' : 'Recorded tool'}: {displayTool(String(currentEvent.payload.tool), lang)} · {displayValue(String(currentEvent.payload.family ?? 'UNKNOWN'), lang)}</p>}
             <div className="space-y-1">
               <span className="text-sm font-mono text-slate-400 uppercase font-semibold">
                 {h('Recorded Step Data:')}

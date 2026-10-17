@@ -18,12 +18,17 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   isSubmitting,
 }) => {
   const { lang, t } = useLanguage();
-  const [mode, setMode] = useState<string>('deny-demo');
-  const [planner, setPlanner] = useState<string>('rule');
+  const [mode, setMode] = useState<string>('autonomous');
+  const [planner, setPlanner] = useState<string>('llm');
   const [controlMode, setControlMode] = useState<ControlMode>('AUTONOMOUS');
-  const [allowFallback, setAllowFallback] = useState<boolean>(true);
+  const [allowFallback, setAllowFallback] = useState<boolean>(false);
   const [target, setTarget] = useState<string>('lab-ecommerce');
-  const [maxDecisions, setMaxDecisions] = useState<number>(10);
+  const [maxDecisions, setMaxDecisions] = useState<number>(30);
+  const [maxRequests, setMaxRequests] = useState(120);
+  const [maxPages, setMaxPages] = useState(30);
+  const [approveActiveVerification, setApproveActiveVerification] = useState(false);
+  const [zapMode, setZapMode] = useState<'' | 'zap-passive' | 'zap-active'>('');
+  const [useNuclei, setUseNuclei] = useState(false);
   const [previewOnePage, setPreviewOnePage] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -39,8 +44,13 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
         control_mode: controlMode,
         target,
         max_decisions: maxDecisions,
+        max_requests: maxRequests,
+        max_pages: maxPages,
         scenario: 'SCN-001',
         approve_read_only: true,
+        approve_active_verification: approveActiveVerification && !previewOnePage,
+        external_scanners: approveActiveVerification && !previewOnePage && mode !== 'deny-demo'
+          ? [...(zapMode ? [zapMode] : []), ...(useNuclei ? ['nuclei' as const] : [])] : [],
         preview_one_page: previewOnePage,
         allow_fallback: allowFallback,
       });
@@ -226,17 +236,47 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">{t.maxDecisionsLimit}</label>
+                <label htmlFor="max-decisions" className="text-[11px] font-medium text-slate-400 block mb-1">{t.maxDecisionsLimit}</label>
                 <input
                   type="number"
+                  id="max-decisions"
                   min={1}
-                  max={50}
+                  max={100}
+                  required
                   value={maxDecisions}
                   onChange={(e) => setMaxDecisions(Number(e.target.value))}
                   className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-hidden focus:border-blue-500"
                 />
               </div>
 
+              <label className="text-[11px] text-slate-400">{lang === 'vi' ? 'Giới hạn yêu cầu HTTP' : 'HTTP request budget'}
+                <input type="number" min={1} max={500} required value={maxRequests} onChange={e => setMaxRequests(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
+              </label>
+              <label className="text-[11px] text-slate-400">{lang === 'vi' ? 'Giới hạn trang khám phá' : 'Discovery page budget'}
+                <input type="number" min={1} max={100} required value={maxPages} onChange={e => setMaxPages(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
+              </label>
+              <label className="col-span-2 flex items-start gap-2 rounded border border-amber-900 bg-amber-950/20 p-2 text-xs text-amber-200">
+                <input type="checkbox" checked={approveActiveVerification && !previewOnePage} disabled={previewOnePage} onChange={e => setApproveActiveVerification(e.target.checked)} />
+                {lang === 'vi' ? 'Phê duyệt kiểm tra chủ động có giới hạn trong lab: SQLi, XSS, path traversal bằng bộ kiểm tra nội bộ và scanner được chọn bên dưới. Không gửi POST hoặc chạy lệnh tùy ý.' : 'Approve bounded active lab checks: SQLi, XSS and path traversal using internal verifiers and scanners selected below. No POST forms or arbitrary commands.'}
+              </label>
+
+              <fieldset disabled={!approveActiveVerification || previewOnePage || mode === 'deny-demo'} className="col-span-2 space-y-2 rounded border border-slate-700 p-3 disabled:opacity-50">
+                <legend className="px-1 text-xs text-slate-200">{lang === 'vi' ? 'Scanner trong lab' : 'Lab scanners'}</legend>
+                <label className="block text-xs text-slate-300">OWASP ZAP
+                  <select aria-label="OWASP ZAP" value={zapMode} onChange={e => setZapMode(e.target.value as typeof zapMode)} className="ml-2 rounded bg-slate-900 p-1">
+                    <option value="">{lang === 'vi' ? 'Không chạy' : 'Not selected'}</option>
+                    <option value="zap-passive">Passive</option>
+                    <option value="zap-active">Active: SQLi / XSS</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 text-xs text-slate-300">
+                  <input type="checkbox" checked={useNuclei} onChange={e => setUseNuclei(e.target.checked)} />
+                  Nuclei: SQL error / lab sentinel
+                </label>
+                <p className="text-[11px] text-slate-400">{lang === 'vi'
+                  ? 'Chỉ GET/HEAD đã khám phá, dùng chung ngân sách HTTP. Không kiểm tra đăng nhập, POST hoặc logic nghiệp vụ. Kết quả cần xác minh thêm.'
+                  : 'Observed GET/HEAD only, sharing the HTTP budget. No login, POST or business-logic testing. Findings require verification.'}</p>
+              </fieldset>
               <div className="space-y-2 pt-1">
                 <div className="flex items-center space-x-2">
                   <input

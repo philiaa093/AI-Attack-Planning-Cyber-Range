@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Literal, Optional
+from pydantic import BaseModel, Field, model_validator
 
 
 class RangeState(str, Enum):
@@ -76,6 +76,9 @@ class AgentStatus(BaseModel):
     operator_rejections: int = 0
     pending_proposal: Optional[Dict[str, Any]] = None
     last_decision: Optional[Dict[str, Any]] = None
+    current_execution: Optional[Dict[str, Any]] = None
+    last_verification: Optional[Dict[str, Any]] = None
+    scanner_status: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class SafetyStatus(BaseModel):
@@ -168,11 +171,24 @@ class StartRunRequest(BaseModel):
     control_mode: str = "AUTONOMOUS"  # AUTONOMOUS, ASSISTED, MANUAL
     allow_fallback: bool = True
     target: str = "lab-ecommerce"
-    max_decisions: int = 10
+    max_decisions: int = Field(default=30, ge=1, le=100, strict=True)
+    max_requests: int = Field(default=120, ge=1, le=500, strict=True)
+    max_pages: int = Field(default=30, ge=1, le=100, strict=True)
     seed_path: str = "/"
     scenario: str = "SCN-001"
     approve_read_only: bool = True
+    approve_active_verification: bool = Field(default=False, strict=True)
     preview_one_page: bool = False
+    external_scanners: List[Literal["zap-passive", "zap-active", "nuclei"]] = Field(default_factory=list, max_length=2)
+
+    @model_validator(mode="after")
+    def validate_scanner_scope(self):
+        selected = set(self.external_scanners)
+        if len(selected) != len(self.external_scanners) or {"zap-passive", "zap-active"} <= selected:
+            raise ValueError("Choose one ZAP mode and/or Nuclei")
+        if selected and (not self.approve_active_verification or self.preview_one_page or self.mode == "deny-demo"):
+            raise ValueError("External scanners require explicit lab approval and a non-preview run")
+        return self
 
 
 class ProposalActionRequest(BaseModel):
@@ -244,6 +260,15 @@ class FindingItem(BaseModel):
     evidence_refs: List[str] = Field(default_factory=list)
     confidence: float = 1.0
     timestamp_utc: str = ""
+    classification: str = "OBSERVATION"
+    verification_action: str = ""
+    tool: str = ""
+    resource_ref: str = ""
+    input_ref: str = ""
+    limitations: List[str] = Field(default_factory=list)
+
+
+SECURITY_FINDING_CLASSES = frozenset({"CANDIDATE", "SIGNAL", "VERIFIED_IN_LAB"})
 
 
 class FindingsListResponse(BaseModel):

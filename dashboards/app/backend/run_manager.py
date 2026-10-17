@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 import sys
 import threading
+import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
@@ -26,6 +27,7 @@ import re
 from dashboards.app.backend.event_sink import EventSink
 from dashboards.app.backend.model_profiles import ProfileStore
 from runtime.planners.observed_planner import ProviderConfig
+from runtime.lab.capability_registry import ACTION_EXECUTION_DETAILS
 from dashboards.app.backend.models import (
     AgentEvent,
     AgentState,
@@ -38,6 +40,7 @@ from dashboards.app.backend.models import (
     EvidenceStatus,
     FindingItem,
     FindingsListResponse,
+    SECURITY_FINDING_CLASSES,
     PipelineStatus,
     PreflightCheckItem,
     PreflightResponse,
@@ -63,6 +66,22 @@ if hasattr(sys.stdout, "reconfigure"):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
+    gate = demo.make_gate(recorder, pages=1 if req.preview_one_page else req.max_pages)
+    gate.budget_tracker.max_requests = 1 if req.preview_one_page else req.max_requests
+    if req.approve_active_verification and not req.preview_one_page:
+        # Still intersected with canonical policy by the gate constructor.
+        gate = CentralizedSafetyGate(
+            base_origin=demo.ORIGIN, target_registry=demo.load_canonical_target_registry(),
+            target_allowlist={demo.TARGET},
+            action_allowlist=gate.effective_actions | {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
+                | ({"ACTION-SCAN-002"} if req.external_scanners else set()),
+            recorder=recorder, budget_tracker=gate.budget_tracker,
+            rate_limiter=gate.rate_limiter, lab_mode=True,
+        )
+    return gate
 
 
 class RunManager:
@@ -420,6 +439,13 @@ class RunManager:
 
     def start_run(self, req: StartRunRequest, event_sink: EventSink) -> ControlResponse:
         """Start a new execution run in a dedicated background worker thread."""
+        if req.external_scanners:
+            from runtime.lab.external_scanners import preflight
+            try:
+                preflight(req.external_scanners)
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                return ControlResponse(success=False, message=f"Scanner preflight failed: {exc}",
+                                       timestamp_utc=_utc_now_iso())
         provider_config = (self.model_profiles.snapshot()
                            if self.model_profiles is not None and req.planner == "llm" else None)
         with self._lock:
@@ -463,10 +489,12 @@ class RunManager:
                 planner=req.planner,
                 control_mode=req.control_mode,
                 requested_mode=planner_mode_str,
+                scanner_status={tool: {"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED"}
+                                for tool in req.external_scanners},
             )
             self._safety_status = SafetyStatus(
                 target_allowlist=[req.target],
-                action_allowlist=list(demo.make_gate(recorder=None).effective_actions),
+                action_allowlist=sorted(_run_gate(req).effective_actions),
                 lab_mode=True,
                 kill_switch_active=False,
             )
@@ -591,6 +619,7 @@ class RunManager:
                 self._pipeline_status.steps["PLAN"] = StepState.PASS
                 self._agent_status.last_decision = payload
                 self._agent_status.current_action = payload.get("action_id") or ev.get("action_id")
+                self._agent_status.current_execution = {**payload, "status": "PROPOSED"}
                 if payload.get("actual_mode"):
                     self._agent_status.actual_mode = payload.get("actual_mode")
                 if payload.get("decision_origin"):
@@ -613,9 +642,20 @@ class RunManager:
                 self._pipeline_status.steps["SAFETY"] = StepState.DENIED
                 self._pipeline_status.steps["EXECUTE"] = StepState.BLOCKED
                 self._safety_status.denials_count += 1
+                self._agent_status.current_execution = {**(self._agent_status.current_execution or {}), "status": "DENIED"}
 
             elif ev_type == "ACTION_DISPATCH_STARTED":
                 self._pipeline_status.steps["EXECUTE"] = StepState.RUNNING
+                self._agent_status.current_execution = {**payload, "action_id": ev.get("action_id"), "status": "RUNNING"}
+
+            elif ev_type in ("SCANNER_STARTED", "SCANNER_COMPLETED"):
+                tool = payload.get("tool", "scanner")
+                self._agent_status.scanner_status[tool] = payload
+                self._agent_status.current_execution = {**payload, "action_id": "ACTION-SCAN-002"}
+
+            elif ev_type == "VERIFICATION_COMPLETED":
+                self._agent_status.last_verification = payload
+                self._agent_status.current_execution = {**payload, "action_id": ev.get("action_id"), "status": "COMPLETED"}
 
             elif ev_type == "ACTION_DISPATCHED":
                 self._safety_status.network_dispatches += 1
@@ -625,9 +665,11 @@ class RunManager:
                 self._pipeline_status.steps["EXECUTE"] = StepState.PASS
                 self._run_status.decisions_count += 1
                 self._agent_status.decisions_count = self._run_status.decisions_count
+                self._agent_status.current_execution = {**(self._agent_status.current_execution or {}), "status": "COMPLETED"}
 
             elif ev_type == "ACTION_FAILED":
                 self._pipeline_status.steps["EXECUTE"] = StepState.FAILED
+                self._agent_status.current_execution = {**(self._agent_status.current_execution or {}), "status": "FAILED"}
 
             elif ev_type == "OBSERVATION_RECEIVED":
                 self._pipeline_status.steps["OBSERVE"] = StepState.PASS
@@ -943,8 +985,10 @@ class RunManager:
                         provider_config: ProviderConfig | None = None) -> None:
         try:
             recorder = demo.new_recorder(run_dir / "assessment", run_id)
-            gate = demo.make_gate(recorder, pages=1 if req.preview_one_page else req.max_decisions)
-            approval = demo.approval_for(run_id) if req.approve_read_only else None
+            gate = _run_gate(req, recorder)
+            approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, demo.TARGET, "*",
+                                      time.time(), time.time() + 900)
+                        if req.approve_read_only or req.approve_active_verification else None)
 
             with self._lock:
                 if self._safety_status.kill_switch_active or self._run_status.state == AgentState.BLOCKED:
@@ -962,6 +1006,11 @@ class RunManager:
                 "mode": req.mode,
                 "planner": req.planner,
                 "approval_granted": bool(approval),
+                "approved_action_ids": sorted(gate.effective_actions) if approval else [],
+                "active_verification_approved": req.approve_active_verification and not req.preview_one_page,
+                "external_scanners": req.external_scanners,
+                "budget": {"decisions": req.max_decisions, "requests": gate.budget_tracker.max_requests,
+                           "pages": gate.budget_tracker.max_pages},
             })
 
             with self._lock:
@@ -1053,6 +1102,7 @@ class RunManager:
                 seed_path=req.seed_path,
                 event_hook=on_runtime_event,
                 control_mode=req.control_mode,
+                external_scanners=tuple(req.external_scanners),
             )
 
             with self._lock:
@@ -1060,6 +1110,13 @@ class RunManager:
 
             # Execute closed loop
             report: AutonomousRunReport = runner.run()
+            scanner_results = list(runner.scanner_executor.results) if runner.scanner_executor else []
+            for tool in req.external_scanners:
+                if not any(result["tool"] == tool for result in scanner_results):
+                    missing = {"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED",
+                               "reason": report.stop_reason}
+                    scanner_results.append(missing)
+                    on_runtime_event({"type": "SCANNER_COMPLETED", "payload": missing})
 
             # Persist report.json
             try:
@@ -1082,6 +1139,8 @@ class RunManager:
                     "operator_rejections_count": report.operator_rejections_count,
                     "stop_reason": report.stop_reason,
                     "findings": report.findings,
+                    "active_verifications_count": report.active_verifications_count,
+                    "scanner_results": scanner_results,
                     "evidence_refs": report.evidence_refs,
                     "final_state": report.final_state,
                 }, indent=2), encoding="utf-8")
@@ -1228,19 +1287,36 @@ class RunManager:
                 raw_findings = rep_data.get("findings", [])
                 if type(raw_findings) is not list:
                     raw_findings = []
+                _, integrity, records = self._verified_evidence(run_id)
+                verified_refs = {record["evidence_id"] for _, record in records} if integrity.state == "VERIFIED" else set()
                 for raw_f in raw_findings[:1024]:
                     if type(raw_f) is not dict:
                         continue
+                    action = raw_f.get("verification_action", "")
+                    classification = raw_f.get("classification", "OBSERVATION")
+                    refs = raw_f.get("result_evidence_refs", raw_f.get("evidence_refs", []))
+                    refs = [ref for ref in refs if isinstance(ref, str)] if isinstance(refs, list) else []
+                    if classification == "VERIFIED_IN_LAB" and (not refs or not set(refs) <= verified_refs):
+                        classification = "INCONCLUSIVE"
+                    if (classification == "VERIFIED_IN_LAB" and action == "ACTION-WEB-003" and
+                            not any(name in str(raw_f.get("input_ref", "")).lower()
+                                    for name in ("file", "path", "template", "document", "download", "folder", "dir", "include"))):
+                        classification = "INCONCLUSIVE"
+                    family = raw_f.get("family", raw_f.get("category", "SECURITY_VERIFICATION"))
                     findings.append(FindingItem(
                         finding_id=raw_f.get("finding_id", f"FND-{uuid.uuid4().hex[:8]}"),
                         run_id=run_id,
-                        category=raw_f.get("category", "SECURITY_VERIFICATION"),
-                        severity=raw_f.get("severity", "MEDIUM"),
-                        title=raw_f.get("title", "Observed Security Verification"),
-                        detail=raw_f.get("detail", ""),
-                        evidence_refs=raw_f.get("evidence_refs", []),
+                        category=family,
+                        severity="MEDIUM" if classification == "VERIFIED_IN_LAB" else "INFO",
+                        title=raw_f.get("title", f"{family}: {classification}"),
+                        detail=raw_f.get("reason", raw_f.get("detail", "")),
+                        evidence_refs=[ref for ref in refs if ref in verified_refs],
                         confidence=raw_f.get("confidence", 1.0),
                         timestamp_utc=raw_f.get("timestamp_utc", ""),
+                        classification=classification, verification_action=action,
+                        tool=ACTION_EXECUTION_DETAILS.get(action, {}).get("tool", ""),
+                        resource_ref=raw_f.get("resource_ref", ""), input_ref=raw_f.get("input_ref", ""),
+                        limitations=raw_f.get("limitations", []),
                     ))
             except Exception:
                 pass
@@ -1278,7 +1354,7 @@ class RunManager:
                         category="SURFACE_DISCOVERY",
                         severity="INFO",
                         title=f"Discovered Web Endpoint: {url}",
-                        detail=f"Action {action_id} performed {method} request -> HTTP {code} OK ({b_bytes} bytes). Surface mapped.",
+                        detail=f"Action {action_id} performed {method} request: HTTP {code} ({b_bytes} bytes).",
                         evidence_refs=[rec_ev_id] if rec_ev_id else [],
                         confidence=1.0,
                         timestamp_utc=res_data.get("timestamp_utc", ""),
@@ -1313,7 +1389,7 @@ class RunManager:
 
         return FindingsListResponse(
             run_id=run_id,
-            findings_count=len(findings),
+            findings_count=sum(f.classification in SECURITY_FINDING_CLASSES for f in findings),
             items=findings,
         )
 

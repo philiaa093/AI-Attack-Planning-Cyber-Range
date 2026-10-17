@@ -2,6 +2,10 @@ import type { Language } from './translations';
 
 // Presentation only: never use translated values in requests or audit records.
 const viValues: Record<string, string> = {
+  SQL_INJECTION: 'Chèn lệnh SQL', SCRIPT_INJECTION: 'Chèn mã XSS / phản chiếu nội dung', PATH_TRAVERSAL: 'Vượt đường dẫn',
+  PASSIVE_ANALYSIS: 'Phân tích thụ động', PROPOSED: 'Mới đề xuất, chưa thực thi',
+  SIGNAL: 'Có dấu hiệu, chưa xác nhận', NEGATIVE: 'Chưa thấy dấu hiệu trong phép thử',
+  INCONCLUSIVE: 'Chưa đủ bằng chứng', VERIFIED_IN_LAB: 'Đã xác nhận trong phạm vi phép thử lab', REFUSED: 'Bị từ chối',
   UNKNOWN: 'Chưa xác định', TBD: 'Chờ xác định', NONE: 'Không có', IDLE: 'Chưa bắt đầu',
   HEALTHY: 'Hoạt động ổn định', UNHEALTHY: 'Hoạt động bất thường',
   RUNNING: 'Đang chạy', STARTING: 'Đang khởi động', STOPPING: 'Đang dừng',
@@ -29,6 +33,12 @@ const viValues: Record<string, string> = {
   ALL: 'Tất cả', PLANNER: 'Lập kế hoạch', DISPATCH: 'Gửi yêu cầu',
   MISSING_API_KEY: 'Chưa cấu hình khóa API', BUDGET_EXHAUSTED: 'Đã hết hạn mức của phiên',
   NO_PROGRESS_LOOP: 'Dừng vì không có tiến triển', MAX_DECISIONS_REACHED: 'Đã đạt giới hạn quyết định',
+  OBJECTIVE_SATISFIED: 'Đã đạt mục tiêu kiểm tra', PROVIDER_UNAVAILABLE_HALT: 'Dừng vì dịch vụ mô hình không khả dụng',
+  FALLBACK_NOT_ALLOWED: 'Không cho phép dùng phương án dự phòng', PROVIDER_ERROR_JSONDECODEERROR: 'Phản hồi của dịch vụ mô hình không phải JSON hợp lệ',
+  INITIAL_RECONNAISSANCE: 'Thu thập thông tin ban đầu', IDENTIFY_GET_INPUTS: 'Xác định các đầu vào GET',
+  PROBE_INPUT: 'Kiểm tra đầu vào đã quan sát', PROBE_UNTESTED_PARAMETER: 'Kiểm tra tham số chưa được thử',
+  PROBE_WEB_INPUT: 'Kiểm tra đầu vào web đã quan sát', PROBE_UNTESTED_INPUT: 'Kiểm tra đầu vào chưa được thử',
+  PROBE_INPUT_ACTION_WEB_003: 'Đánh giá đầu vào cho phép kiểm tra vượt đường dẫn',
   OPERATOR_STOP: 'Người vận hành đã dừng', KILL_SWITCH_ACTIVE: 'Đã bật dừng khẩn cấp',
   IMPLEMENTED: 'Đã triển khai', VALIDATED: 'Đã kiểm chứng theo phạm vi ghi nhận',
   SPEC_ONLY: 'Mới có đặc tả', DEFERRED: 'Tạm hoãn', UNRESOLVED: 'Chưa kiểm chứng',
@@ -37,15 +47,20 @@ const viValues: Record<string, string> = {
   LLM_PROVIDER_EXECUTED: 'Đã ghi nhận chế độ mô hình', HYBRID_NOT_IMPLEMENTED: 'Chế độ kết hợp chưa được nối',
   SIMULATED_FIXTURE: 'Dữ liệu mô phỏng', IMPORTED_OFFLINE: 'Báo cáo nhập ngoại tuyến',
   RUN_STARTED: 'Phiên chạy bắt đầu', RUN_COMPLETED: 'Phiên chạy kết thúc', RUN_FAILED: 'Phiên chạy gặp lỗi',
+  RUN_STOP_REQUESTED: 'Đã yêu cầu dừng phiên', RUN_STOPPING: 'Phiên chạy đang dừng', RUN_STOPPED: 'Phiên chạy đã dừng',
   AGENT_ITERATION_STARTED: 'Bắt đầu vòng xử lý', PLANNER_STARTED: 'Bắt đầu lập kế hoạch',
-  PLANNER_REQUEST_STARTED: 'Đã yêu cầu lập kế hoạch', PLANNER_FAILED: 'Lập kế hoạch gặp lỗi',
+  PLANNER_REQUEST_STARTED: 'Đã gửi yêu cầu đến mô hình lập kế hoạch',
+  PLANNER_RESPONSE_RECEIVED: 'Đã nhận phản hồi từ mô hình lập kế hoạch', PLANNER_FAILED: 'Lập kế hoạch gặp lỗi',
   PLANNER_FALLBACK: 'Chuyển sang phương án dự phòng', PLANNER_PROPOSED: 'Đã nhận đề xuất',
   SAFETY_EVALUATION_STARTED: 'Bắt đầu kiểm tra an toàn', SAFETY_DENIED: 'Đã từ chối đề xuất',
   SAFETY_PERMITTED: 'Đã cho phép đề xuất', EVIDENCE_RECORDED: 'Đã ghi bằng chứng',
   EVIDENCE_VERIFIED: 'Đã xác minh bằng chứng', OBSERVATION_RECEIVED: 'Đã nhận quan sát',
   STATE_UPDATED: 'Đã cập nhật trạng thái', AGENT_REPLANNING: 'Đang lập lại kế hoạch',
   STOP_CONDITION_REACHED: 'Đã đạt điều kiện dừng', ACTION_COMPLETED: 'Hành động kết thúc',
-  ACTION_FAILED: 'Hành động gặp lỗi', ACTION_DISPATCHED: 'Đã gửi yêu cầu',
+  ACTION_DISPATCH_STARTED: 'Bắt đầu gửi yêu cầu hành động', ACTION_FAILED: 'Hành động gặp lỗi',
+  ACTION_DISPATCHED: 'Đã gửi yêu cầu hành động', VERIFICATION_COMPLETED: 'Đã hoàn tất kiểm tra lỗ hổng',
+  SCANNER_STARTED: 'Bắt đầu phân tích bề mặt', SCANNER_COMPLETED: 'Đã hoàn tất phân tích bề mặt',
+  BUDGET_UPDATED: 'Đã cập nhật hạn mức', FINDING_CREATED: 'Đã ghi nhận một phát hiện',
   KILL_SWITCH_ACTIVATED: 'Đã bật dừng khẩn cấp', EMERGENCY_STOP_ACTIVATED: 'Đã dừng khẩn cấp',
   'NOT CALLED': 'Chưa được gọi', PERMIT: 'Cho phép', EVALUATING: 'Đang đánh giá',
   TARGET_NOT_ALLOWLISTED: 'Mục tiêu ngoài danh sách cho phép',
@@ -76,6 +91,11 @@ const viValues: Record<string, string> = {
   'Emergency kill switch activated. Dispatches halted.': 'Đã bật dừng khẩn cấp và chặn gửi yêu cầu',
   'All lab services stopped': 'Các dịch vụ thực nghiệm đã dừng',
   'No owned services to stop': 'Không có dịch vụ thuộc phiên này để dừng',
+  'Bounded differential probing with harmless syntax vectors only; zero arbitrary SQL execution': 'Chỉ dò khác biệt bằng chuỗi cú pháp vô hại trong phạm vi giới hạn; không thực thi câu lệnh SQL tùy ý',
+  'Inert marker fixtures only; zero executable JS, zero token extraction, zero browser takeover': 'Chỉ dùng dấu kiểm tra vô hại; không chạy JavaScript, không lấy mã xác thực và không chiếm quyền trình duyệt',
+  'Harmless LAB_TRAVERSAL_SENTINEL probe only; zero host file access (/etc/passwd, win.ini forbidden)': 'Chỉ dùng tệp kiểm tra LAB_TRAVERSAL_SENTINEL vô hại; không truy cập tệp hệ thống máy chủ',
+  'Requires an observed file/path-like input before dispatch': 'Chỉ thực hiện khi đã quan sát thấy đầu vào kiểu tệp hoặc đường dẫn',
+  'Bounded test only': 'Chỉ là phép thử trong phạm vi giới hạn',
 };
 
 export function displayValue(value: string | null | undefined, lang: Language): string {
@@ -84,6 +104,11 @@ export function displayValue(value: string | null | undefined, lang: Language): 
   const key = Object.prototype.hasOwnProperty.call(viValues, value) ? value : value.toUpperCase();
   const translated = Object.prototype.hasOwnProperty.call(viValues, key) ? viValues[key] : undefined;
   if (translated) return translated;
+  if (value.includes(':')) {
+    const parts = value.split(':');
+    const localized = parts.map(part => displayValue(part.trim(), lang));
+    if (localized.some((part, index) => part !== parts[index].trim())) return localized.join(': ');
+  }
   if (value.startsWith('APPROVAL_ACTION_MISMATCH_')) return `Phê duyệt không khớp hành động (${value.slice(25)})`;
   for (const [prefix, label] of Object.entries({
     'POLICY_ERROR:': 'Lỗi chính sách', 'SERVICES_UNAVAILABLE:': 'Dịch vụ chưa khả dụng',
@@ -91,7 +116,33 @@ export function displayValue(value: string | null | undefined, lang: Language): 
   })) {
     if (value.startsWith(prefix)) return `${label}: ${displayValue(value.slice(prefix.length).trim(), lang)}`;
   }
+  const messages: [RegExp, string][] = [
+    [/^No SQL syntax anomaly observed/, 'Không phát hiện bất thường cú pháp SQL trong phép thử giới hạn'],
+    [/^Inert sentinel is properly HTML-escaped/, 'Dấu kiểm tra vô hại đã được mã hóa HTML an toàn'],
+    [/^Inert probe marker was not reflected/, 'Dấu kiểm tra vô hại không bị phản chiếu trong nội dung trả về'],
+    [/^Traversal probe was reflected by the response/, 'Chuỗi kiểm tra vượt đường dẫn chỉ bị phản chiếu; chưa chứng minh đọc được tệp'],
+    [/^Observed input is not file\/path-like/, 'Đầu vào đã quan sát không phải kiểu tệp hoặc đường dẫn; không thực hiện phép kiểm tra vượt đường dẫn'],
+    [/^Path traversal probe rejected with HTTP (\d+)/, 'Phép kiểm tra vượt đường dẫn bị từ chối với mã HTTP $1'],
+    [/^No sentinel disclosure observed/, 'Không quan sát thấy nội dung tệp kiểm tra bị lộ'],
+  ];
+  for (const [pattern, replacement] of messages) {
+    if (pattern.test(value)) return value.replace(pattern, replacement);
+  }
   return value;
+}
+
+const viTools: Record<string, string> = {
+  'AutonomousRunner HTTP health probe': 'Bộ kiểm tra tình trạng HTTP',
+  ObservationDrivenDiscovery: 'Bộ khám phá dựa trên quan sát',
+  PassiveSurfaceAnalyzer: 'Bộ phân tích bề mặt thụ động',
+  SafeInputVerificationExecutor: 'Bộ kiểm tra đầu vào SQL an toàn',
+  SafeReflectionVerificationExecutor: 'Bộ kiểm tra phản chiếu XSS an toàn',
+  SafePathFixtureVerificationExecutor: 'Bộ kiểm tra vượt đường dẫn an toàn',
+};
+
+export function displayTool(value: string | null | undefined, lang: Language): string {
+  if (!value) return '—';
+  return lang === 'vi' ? (viTools[value] ?? value) : value;
 }
 
 export function displayNotification(value: string, lang: Language): string {

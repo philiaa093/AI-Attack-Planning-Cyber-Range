@@ -3,6 +3,7 @@ import { displayValue } from '../../i18n/displayValue';
 import { ArrowRight, FileText, Radio } from 'lucide-react';
 import type { AgentEvent, SseConnectionStatus, SystemStatus } from '../../api/types';
 import { useLanguage } from '../../i18n/LanguageContext';
+import type { Language } from '../../i18n/translations';
 
 const eventTitles: Record<string, [string, string]> = {
   RUN_STARTED: ['Phiên chạy bắt đầu', 'Run started'],
@@ -25,8 +26,8 @@ const eventTitles: Record<string, [string, string]> = {
   STOP_CONDITION_REACHED: ['Đã đạt điều kiện dừng', 'Stop condition reached'],
 };
 
-export const presentationEventTitle = (type: string, lang: string): string =>
-  eventTitles[type]?.[lang === 'vi' ? 0 : 1] || type;
+export const presentationEventTitle = (type: string, lang: Language): string =>
+  eventTitles[type]?.[lang === 'vi' ? 0 : 1] || displayValue(type, lang);
 
 interface TimelineProps {
   events: AgentEvent[];
@@ -38,7 +39,9 @@ interface TimelineProps {
 export const PresentationTimeline: React.FC<TimelineProps> = ({ events, runId, connectionStatus, onReconnect }) => {
   const { lang } = useLanguage();
   const vi = lang === 'vi';
-  const milestones = runId ? events.filter(e => e.run_id === runId && Object.prototype.hasOwnProperty.call(eventTitles, e.type)) : [];
+  const milestones = runId ? events.filter(e => e.run_id === runId && (
+    Object.prototype.hasOwnProperty.call(eventTitles, e.type) || presentationEventTitle(e.type, lang) !== e.type
+  )) : [];
   const recent = milestones.slice(-6);
   return (
     <section className="cc-timeline-section" aria-label={vi ? 'Diễn biến của phiên' : 'Run timeline'}>

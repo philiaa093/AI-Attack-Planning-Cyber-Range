@@ -21,7 +21,7 @@ import type {
 } from '../../api/types';
 import { StatusBadge } from '../StatusBadge';
 import { useLanguage } from '../../i18n/LanguageContext';
-import { displayValue } from '../../i18n/displayValue';
+import { displayTool, displayValue } from '../../i18n/displayValue';
 
 interface EvidenceInspectorModalProps {
   runId: string | null;
@@ -265,6 +265,10 @@ export const EvidenceInspectorModal: React.FC<EvidenceInspectorModalProps> = ({
                         <span className="text-[10px] font-mono text-slate-500">{displayValue(f.category, lang)}</span>
                       </div>
                       <p className="text-xs text-slate-400 mb-2">{displayValue(f.detail, lang)}</p>
+                      {f.classification && <p className="mb-1 text-xs text-amber-200">{lang === 'vi' ? 'Kết quả' : 'Result'}: {displayValue(f.classification, lang)}</p>}
+                      {f.tool && <p className="mb-1 break-all text-xs text-slate-300">{lang === 'vi' ? 'Công cụ' : 'Tool'}: {displayTool(f.tool, lang)} · {f.verification_action}</p>}
+                      {f.resource_ref && <p className="mb-1 break-all text-xs text-slate-300">{f.resource_ref} · {f.input_ref}</p>}
+                      {f.limitations?.map((limit, i) => <p key={i} className="mb-1 text-xs text-slate-500">{displayValue(limit, lang)}</p>)}
                       {f.evidence_refs && f.evidence_refs.length > 0 && (
                         <div className="flex items-center space-x-2 text-[10px] font-mono">
                           <span className="text-slate-500">{lang === 'vi' ? "Tham chiếu:" : "Trace:"}</span>

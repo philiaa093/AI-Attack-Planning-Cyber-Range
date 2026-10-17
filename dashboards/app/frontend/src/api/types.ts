@@ -80,6 +80,9 @@ export interface AgentStatus {
   operator_rejections?: number;
   pending_proposal?: PendingProposal | null;
   last_decision: Record<string, unknown> | null;
+  current_execution?: Record<string, unknown> | null;
+  last_verification?: Record<string, unknown> | null;
+  scanner_status?: Record<string, Record<string, unknown>>;
 }
 
 export interface SafetyStatus {
@@ -208,9 +211,13 @@ export interface StartRunRequest {
   allow_fallback?: boolean;
   target?: string;
   max_decisions?: number;
+  max_requests?: number;
+  max_pages?: number;
   seed_path?: string;
   scenario?: string;
   approve_read_only?: boolean;
+  approve_active_verification?: boolean;
+  external_scanners?: ('zap-passive' | 'zap-active' | 'nuclei')[];
   preview_one_page?: boolean;
 }
 
@@ -275,6 +282,12 @@ export interface FindingItem {
   evidence_refs: string[];
   confidence: number;
   timestamp_utc: string;
+  classification?: string;
+  verification_action?: string;
+  tool?: string;
+  resource_ref?: string;
+  input_ref?: string;
+  limitations?: string[];
 }
 
 export interface FindingsListResponse {

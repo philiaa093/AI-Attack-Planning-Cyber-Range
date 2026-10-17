@@ -28,7 +28,7 @@ export const ProposalReviewCard: React.FC<ProposalReviewCardProps> = ({
   const { lang, t } = useLanguage();
   const [isApproving, setIsApproving] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
-  const [rejectReason, setRejectReason] = useState('Operator rejected proposal');
+  const [rejectReason, setRejectReason] = useState('Người vận hành từ chối đề xuất');
   const [showRejectInput, setShowRejectInput] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 

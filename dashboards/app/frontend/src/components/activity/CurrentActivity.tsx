@@ -3,7 +3,7 @@ import { Bot, Target, Shield, Clock, Gauge, Zap } from 'lucide-react';
 import type { AgentEvent, SystemStatus } from '../../api/types';
 import { StatusBadge } from '../StatusBadge';
 import { useLanguage } from '../../i18n/LanguageContext';
-import { displayValue } from '../../i18n/displayValue';
+import { displayTool, displayValue } from '../../i18n/displayValue';
 
 interface CurrentActivityProps {
   system: SystemStatus;
@@ -18,6 +18,8 @@ export const CurrentActivity: React.FC<CurrentActivityProps> = ({
   const { agent, run, safety } = system;
   const lastDecision = agent.last_decision;
   const budget = agent.budget_remaining || {};
+  const execution = agent.current_execution;
+  const verification = agent.last_verification;
   const isDenied = safety.denials_count > 0;
 
   return (
@@ -74,6 +76,14 @@ export const CurrentActivity: React.FC<CurrentActivityProps> = ({
 
       {/* Detailed Current Focus */}
       <div className="space-y-2 text-xs flex-1 overflow-y-auto pr-1">
+        {Object.entries(agent.scanner_status ?? {}).map(([tool, result]) => (
+          <div key={tool} className="rounded border border-slate-700 bg-slate-900 p-2" role="status">
+            <p className="text-slate-200">{tool}: {displayValue(String(result.status ?? 'NOT_RUN'), lang)}</p>
+            <p className="text-amber-200">{lang === 'vi' ? 'Phạm vi' : 'Coverage'}: {String(result.coverage ?? 'IN_PROGRESS')}</p>
+            {result.candidate_count !== undefined && <p>{String(result.candidate_count)} {lang === 'vi' ? 'candidate cần xác minh' : 'unconfirmed candidates'}</p>}
+            {Boolean(result.reason) && <p className="break-all text-rose-300">{String(result.reason)}</p>}
+          </div>
+        ))}
         {/* Target */}
         <div className="p-2.5 rounded bg-slate-900/70 border border-slate-800 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-slate-400">
@@ -97,6 +107,15 @@ export const CurrentActivity: React.FC<CurrentActivityProps> = ({
         </div>
 
         {/* Safety Gate Outcome */}
+        <div className="rounded border border-slate-800 bg-slate-900/70 p-2.5 space-y-1" aria-label={lang === 'vi' ? 'Công cụ và kiểm tra hiện tại' : 'Current tool and check'}>
+          <p className="text-slate-400">{lang === 'vi' ? 'Công cụ / chức năng' : 'Tool / capability'}: <span className="break-all text-slate-200">{displayTool(String(execution?.tool ?? ''), lang)}</span></p>
+          <p className="text-slate-400">{lang === 'vi' ? 'Loại kiểm tra' : 'Check family'}: <span className="text-slate-200">{displayValue(String(execution?.family ?? 'NOT_RUN'), lang)}</span></p>
+          <p className="text-slate-400">{lang === 'vi' ? 'Trạng thái thực thi' : 'Execution status'}: <span className="text-slate-200">{displayValue(String(execution?.status ?? 'NOT_RUN'), lang)}</span></p>
+          {Boolean(execution?.resource_ref) && <p className="break-all text-slate-300">{String(execution?.resource_ref)} · {String(execution?.parameter_name ?? '')}</p>}
+          <p className="text-slate-400">{lang === 'vi' ? 'Kết quả kiểm tra gần nhất' : 'Latest verification result'}: <span className="text-amber-200">{displayValue(String(verification?.classification ?? 'NOT_RUN'), lang)}</span></p>
+          <p className="text-[10px] text-slate-500">{lang === 'vi' ? 'Khám phá hoặc có tín hiệu chưa chứng minh đã khai thác được lỗ hổng.' : 'Discovery or a signal does not establish successful exploitation.'}</p>
+        </div>
+
         <div className="p-2.5 rounded bg-slate-900/70 border border-slate-800 flex items-center justify-between">
           <div className="flex items-center space-x-2 text-slate-400">
             <Shield className="w-3.5 h-3.5 text-emerald-400" />
