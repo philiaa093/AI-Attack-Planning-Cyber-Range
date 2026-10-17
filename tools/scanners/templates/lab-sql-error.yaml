@@ -1,0 +1,30 @@
+{
+  "id": "lab-sql-error",
+  "info": {
+    "name": "SQL error exposed on an observed lab URL",
+    "author": "lab",
+    "severity": "info",
+    "tags": "sqli"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": [
+        "{{BaseURL}}"
+      ],
+      "redirects": false,
+      "matchers": [
+        {
+          "type": "word",
+          "part": "body",
+          "words": [
+            "SQL syntax",
+            "sqlite3.OperationalError",
+            "unterminated quoted string",
+            "You have an error in your SQL syntax"
+          ]
+        }
+      ]
+    }
+  ]
+}

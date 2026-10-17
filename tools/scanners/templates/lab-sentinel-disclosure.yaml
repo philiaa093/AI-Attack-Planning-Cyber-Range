@@ -1,0 +1,27 @@
+{
+  "id": "lab-sentinel-disclosure",
+  "info": {
+    "name": "Lab sentinel exposed on an observed URL",
+    "author": "lab",
+    "severity": "info",
+    "tags": "path-traversal"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": [
+        "{{BaseURL}}"
+      ],
+      "redirects": false,
+      "matchers": [
+        {
+          "type": "word",
+          "part": "body",
+          "words": [
+            "LAB_TRAVERSAL_SENTINEL"
+          ]
+        }
+      ]
+    }
+  ]
+}

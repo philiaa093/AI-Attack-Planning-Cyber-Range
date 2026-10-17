@@ -1,0 +1,7 @@
+{
+  "bridge_image": "4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111",
+  "zap_image": "7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab",
+  "nuclei_image": "aeb5ea2db32a252b8135707d2ad0e89b90e19a18ea7816d38759bc51efb46b97",
+  "timeout_seconds": 180,
+  "max_report_bytes": 1048576
+}
