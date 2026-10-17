@@ -252,6 +252,7 @@ class DiscoveryRequest:
     approval: ApprovalToken | None = None
     depth: int = 0
     redirect_hops: int = 0
+    form: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -351,6 +352,7 @@ class CentralizedSafetyGate:
         self.action_allowlist = self.effective_actions
 
         self.recorder = recorder
+        self.workflow_policy = None
         self.rate_limiter = rate_limiter or TokenBucketRateLimiter()
         self.budget_tracker = budget_tracker or BudgetTracker()
         self.kill_switch = kill_switch or KillSwitch()
@@ -431,6 +433,7 @@ class CentralizedSafetyGate:
             "ACTION-WEB-001",
             "ACTION-WEB-002",
             "ACTION-WEB-003",
+            "ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002",
         )
         if req.action_id not in self.action_allowlist or req.action_id not in dispatchable_actions:
             return DispatchResponse(
@@ -445,9 +448,12 @@ class CentralizedSafetyGate:
                 refusal_reason="ACTION_NOT_ALLOWLISTED_FOR_DISCOVERY",
             )
 
-        # 4. Method check — strictly read-only GET/HEAD. Zero mutations.
+        from runtime.lab.workflow_policy import WORKFLOW_ACTIONS
+        authenticated = req.action_id in WORKFLOW_ACTIONS
+        workflow_allowed = authenticated and self.workflow_policy is not None and self.workflow_policy.permits(req)
+        # Only the isolated, explicitly approved workflow can send bounded form POSTs.
         norm_method = req.method.upper().strip()
-        if norm_method not in ("GET", "HEAD"):
+        if (authenticated and not workflow_allowed) or (not authenticated and (norm_method not in ("GET", "HEAD") or req.form)):
             return DispatchResponse(
                 status_code=0,
                 headers={},
@@ -605,7 +611,8 @@ class CentralizedSafetyGate:
             "action_id": req.action_id,
             "url": canon_res.canonical_url,
             "method": norm_method,
-            "headers": redact_secrets(req.headers),
+            "headers": {} if authenticated else redact_secrets(req.headers),
+            "form_fields": sorted(req.form) if authenticated else [],
             "approval_id": req.approval.approval_id,
             "depth": req.depth,
             "redirect_hops": req.redirect_hops,
@@ -643,6 +650,10 @@ class CentralizedSafetyGate:
         conn = http.client.HTTPConnection(host, port, timeout=self.budget_tracker.timeout)
         req_headers = dict(req.headers)
         req_headers.setdefault("User-Agent", "ShopLab-SL08-SafeDiscovery/1.0")
+        encoded_form = None
+        if authenticated and norm_method == "POST":
+            encoded_form = urllib.parse.urlencode(req.form).encode("utf-8")
+            req_headers["Content-Type"] = "application/x-www-form-urlencoded"
 
         dispatch_status = 0
         resp_headers: dict[str, str] = {}
@@ -652,13 +663,21 @@ class CentralizedSafetyGate:
         outcome = "ERROR"
 
         try:
-            conn.request(norm_method, path, headers=req_headers)
+            if encoded_form is None:
+                conn.request(norm_method, path, headers=req_headers)
+            else:
+                conn.request(norm_method, path, body=encoded_form, headers=req_headers)
             self.network_dispatch_count += 1
             self.budget_tracker.requests_dispatched += 1
 
             res = conn.getresponse()
             dispatch_status = res.status
-            resp_headers = dict(res.getheaders())
+            response_headers = res.getheaders()
+            resp_headers = dict(response_headers)
+            if authenticated:
+                for key, value in response_headers:
+                    if key.lower() == "set-cookie" and value.lower().startswith("session="):
+                        resp_headers["Set-Cookie"] = value
 
             raw_bytes = res.read(self.budget_tracker.max_body_bytes)
             raw_len = len(raw_bytes)
@@ -688,8 +707,8 @@ class CentralizedSafetyGate:
             "url": canon_res.canonical_url,
             "method": norm_method,
             "status_code": dispatch_status,
-            "headers": redact_secrets(resp_headers),
-            "body_snippet": body_text[:2000],
+            "headers": {} if authenticated else redact_secrets(resp_headers),
+            "body_snippet": "[AUTHENTICATED_BODY_OMITTED]" if authenticated else body_text[:2000],
             "body_bytes": raw_len,
             "truncated": truncated,
             "outcome": outcome,

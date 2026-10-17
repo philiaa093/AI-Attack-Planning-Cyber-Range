@@ -215,6 +215,8 @@ class AutonomousRunner:
         self.evidence_refs: list[str] = []
         self.unsafe_dispatch_count = 0
         self.capability_registry = CapabilityRegistry()
+        # Authenticated mutations are a separately approved fixed workflow, not planner proposals.
+        self.planner.effective_actions.difference_update({"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"})
         self.scanner_executor = None
         if external_scanners:
             from runtime.lab.external_scanners import ExternalScannerExecutor
