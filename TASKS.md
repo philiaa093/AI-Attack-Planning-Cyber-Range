@@ -71,7 +71,42 @@ Hướng hiện hành: **thẩm định/pin/configuration upstream → fit-gap/a
 
 Các specs [TASK-011](docs/task-specs/TASK-011-cyber-range-network.md), [TASK-012](docs/task-specs/TASK-012-web-target-a.md), [TASK-013](docs/task-specs/TASK-013-web-target-b.md), [TASK-014](docs/task-specs/TASK-014-clean-control-target.md), [TASK-018](docs/task-specs/TASK-018-observation-normalizer.md) và [TASK-019](docs/task-specs/TASK-019-knowledge-state-store.md) phân loại phần giữ nguyên, impact assessment và receipts mới khi web snapshot đổi. Bảng trạng thái/dependencies và evidence lịch sử ở trên không đổi; validation cũ không áp dụng tự động cho snapshot mới. TARGETS-012/013/014 là evidence target riêng theo phạm vi lịch sử; linkage RUNTIME-004 cần đối chiếu riêng trước tái sử dụng. Instance scenario/ground-truth/experiment version theo snapshot tại TASK-008–010; ground truth chỉ evaluation.
 
+### Enterprise Red Team Planning backlog
+
+Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` chuyển đổi trọng tâm sang **AI Attack Planning for Red Team under Partial Observability (Belief-State Planning)**. Kế thừa toàn bộ contracts, action catalog, safety gate và evidence framework hiện có; không thay đổi canonical task IDs `TASK-001..035` hoặc các validation lịch sử `SL-01..12`.
+
+| Work package | Liên kết task nền | Trạng thái ban đầu | Phụ thuộc | Đầu ra và điều kiện chấp nhận |
+|---|---|---|---|---|
+| RT-00 | TASK-002, TASK-003 | `IMPLEMENTED` | Không | Enterprise Red Team Planning Rebaseline: Tranche tài liệu và quản trị. Ban hành ADR-014 (Belief State Architecture), cập nhật AGENTS.md sang allowlist theo task, rebaseline PROJECT_CONTEXT.md, PROJECT_PLAN.md, TASKS.md. Bảo toàn toàn bộ lịch sử foundation và evidence. Báo cáo checks, blockers và allowlist RT-01. |
+| RT-01 | TASK-003, TASK-008, TASK-009 | `SPEC_ONLY` | RT-00 | Zero-Knowledge Boundary: Di chuyển ground-truth schema từ `agent/planner/contracts/ground-truth.schema.json` sang vị trí canonical dưới `evaluation/**`. Thiết lập rào chắn Zero-Knowledge: Planner không nhận ground truth, global network topology, full target allowlist, hidden credentials hoặc defender state. Tests kiểm tra rào chắn fail-closed. |
+| RT-02 | TASK-005, TASK-006, TASK-019 | `SPEC_ONLY` | RT-01 | Belief State: Thiết kế schema và hiện thực hóa `BeliefState` kế thừa từ `StateManager`. Xây dựng cơ chế cập nhật niềm tin từ quan sát cục bộ (observed facts, reachable assets, open services, credential cache, privilege level, confidence decay). Tuyệt đối không chứa oracle state. |
+| RT-03 | TASK-004, TASK-012, TASK-013 | `SPEC_ONLY` | RT-01, RT-02 | Enterprise Action Model: Chuẩn hóa catalog hành động doanh nghiệp có giới hạn (Enterprise Bounded Actions: recon, discovery, credential access probe, lateral movement hypothesis). Tuân thủ nguyên tắc bounded action; cấm arbitrary shell và free-form payloads. |
+| RT-04 | TASK-007, TASK-010, TASK-023 | `SPEC_ONLY` | RT-02, RT-03 | Simulation Backend: Xây dựng simulator POMDP enterprise. Lưu giữ True State độc quyền trong engine, trả về partial observations và accounting chi phí/ngân sách cho planner. Chạy deterministic offline tests; hoàn thành và kiểm chứng độc lập TRƯỚC KHI kết nối live range. |
+| RT-05 | TASK-020, TASK-021, TASK-022, TASK-027 | `SPEC_ONLY` | RT-04 | Planner Integration: Tích hợp các planner (RULE baseline, LLM planner, RL policy, HYBRID router) với `BeliefState` và Simulation Backend. Tuân thủ proposal schema, kiểm định provenance, strict error fallback, zero-dispatch gate evaluation. |
+| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `SPEC_ONLY` | RT-04, RT-05 | Mini Enterprise Live Range: Cyber-range multi-host doanh nghiệp thu nhỏ cô lập (Docker internal networks, segmented VLANs, simulated services, loopback ingress). Dùng chung executor và observation contract với simulator (RT-04). Tích hợp CentralizedSafetyGate kiểm soát phân quyền. |
+| RT-07 | TASK-028, TASK-029, TASK-030, TASK-031 | `SPEC_ONLY` | RT-05, RT-06 | Experimental Evaluation: Bộ kịch bản đánh giá so sánh (benchmark suite) trên simulator và live range. Chấm điểm planner dựa trên Ground Truth (cô lập trong evaluation). Đo lường metrics: success rate, steps to goal, budget efficiency, belief accuracy vs true state. |
+
 ## Checks and observed implementation state
+
+### RT-00 — Enterprise Red Team Planning Rebaseline
+
+`IMPLEMENTED` cho tranche tài liệu và quản trị theo yêu cầu tái chuẩn hóa kiến trúc Red Team sang **AI Attack Planning under Partial Observability (Belief-State Planning)**; chưa `VALIDATED`.
+- Cập nhật `AGENTS.md`: Chuyển từ cơ chế fixed global code allowlist cũ sang cơ chế khai báo explicit allowed paths riêng theo từng task/tranche; cấm sửa ngoài scope được giao.
+- Cập nhật `PROJECT_CONTEXT.md`: Tái định vị bài toán nghiên cứu cốt lõi sang AI Attack Planning under Partial Observability / Belief-State Planning. Xác lập ranh giới Zero-Knowledge Boundary (Planner không nhận ground truth, global topology, full target allowlist, source code, hidden credentials, defender state). Khẳng định Safety Gate giữ thẩm quyền tối cao.
+- Cập nhật `PROJECT_PLAN.md`: Bổ sung lộ trình `RT-01` .. `RT-07` kế thừa toàn bộ nền tảng hiện có; nhấn mạnh quy tắc bắt buộc: Simulation Backend (`RT-04`) phải đi trước và được kiểm chứng độc lập trước khi mở rộng sang Mini Enterprise Live Range (`RT-06`).
+- Tạo mới `ADR-014`: `docs/adr/ADR-014-enterprise-red-team-belief-state.md` quyết định kiến trúc phân tách ranh giới True State (chỉ thuộc simulator/evaluator), Belief State (chỉ từ observations), Ground Truth (chỉ thuộc evaluation), Safety Scope != Planner-Visible Scope (Planner không nhận full target allowlist), mô hình điều khiển tam giác (Planner proposal -> Safety Gate authorization -> Bounded Executor execution), và thống nhất contract giữa simulator và live range.
+- Cập nhật `TASKS.md`: Khởi tạo backlog nhóm `Enterprise Red Team Planning` (`RT-00` .. `RT-07`) với đầy đủ dependencies, initial statuses, và acceptance criteria; bảo toàn toàn bộ mã định danh, trạng thái và bằng chứng lịch sử (`TASK-001..035`, `SL-01..12`).
+
+### RT-00A — Governance Validator Alignment
+
+`IMPLEMENTED` cho tranche đồng bộ validator governance; chưa `VALIDATED`.
+- Refactor ADR validation trong `scripts/validation/validate_scaffold.py`: thay thế hardcoded set `ADRS` (trước đây giới hạn ở 13 ADRs) bằng kiểm tra invariant tổng quát:
+  1. Tên tệp ADR phải tuân thủ định dạng `ADR-NNN-<slug>.md` (`ADR_FILENAME_PATTERN`).
+  2. Mã số ADR phải là duy nhất (phát hiện và chặn duplicate ADR IDs).
+  3. Dãy số ADR phải liên tục (contiguous) bắt đầu từ `ADR-001` tới ID lớn nhất hiện có mà không hard-code giới hạn trên.
+  4. Bắt buộc phát hiện malformed filenames, missing IDs trong chuỗi, và duy trì các kiểm tra cấu trúc H1/H2 template (`ADR_HEADINGS`).
+- Cập nhật bộ unit test `tests/scaffold/test_validator.py`: thay thế `test_exact_adr_manifest` bằng 5 unit tests toàn diện (`test_adr_filename_pattern`, `test_adr_invariants_contiguous_and_unique`, `test_adr_invariants_detect_duplicates`, `test_adr_invariants_detect_missing_sequence`, `test_adr_invariants_detect_malformed_filename`) đạt 5/5 PASS.
+- Xác thực: `ADR-014` không còn bị báo `extraneous`; không tạo regression cho `ADR-001..013`. Toàn bộ 52/53 unit tests của scaffold suite PASS (1 fail duy nhất do pre-existing blockers của workspace).
 
 ### TASK-027 — Router tham chiếu hybrid ngoại tuyến
 

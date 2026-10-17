@@ -2,26 +2,35 @@
 
 ## Purpose
 
-Tái sử dụng ứng dụng thương mại điện tử open-source phù hợp làm target trong Web Cyber Range cô lập; dành công sức cho discovery, safety, observations, planner và evidence. Candidate hiện hành là Django Oscar sandbox 4.2.1 với lớp cấu hình lab mỏng, không viết lại auth/cart/order. Giữ ShopLab và kết quả SL-01–03 nguyên trạng; không chuyển validation cũ sang target mới. Không coi việc dựng ba lỗi rồi gọi ba công cụ tương ứng là hoàn thành mục tiêu.
+Dự án tái định hướng trọng tâm nghiên cứu sang **AI Attack Planning for Red Team under Partial Observability (Belief-State Planning)** trong môi trường mạng doanh nghiệp mô phỏng và cyber range cô lập. Toàn bộ nền tảng, cơ chế quản trị an toàn (Safety Gate), contracts, và bằng chứng lịch sử của Web Pentest Cyber Range MVP (ShopLab và chuỗi SL-01–SL-11) được bảo toàn nguyên trạng làm baseline kiểm chứng. Không chuyển validation cũ sang kiến trúc mới hoặc coi các bài toán đồ thị biết trước đường đi là hoàn thành mục tiêu.
 
-Phạm vi family nghiên cứu MVP theo ADR-003 vẫn là SQL injection, cross-site scripting và path traversal. Giới hạn này không có nghĩa ứng dụng chỉ có ba endpoint hoặc planner được biết trước vị trí lỗi. Planner modes: `RULE`, `LLM`, `RL`, `HYBRID`; chưa mở rộng family hoặc quyền thực thi bằng tài liệu này.
+Trọng tâm nghiên cứu cốt lõi:
+- Bài toán hoạch định tấn công của tác tử Red Team dưới điều kiện quan sát một phần (POMDP / belief-state planning). Tác tử không có oracle view, không được biết trước sơ đồ mạng tổng thể (global topology), không có danh sách mục tiêu đầy đủ, mã nguồn, hay vị trí lỗ hổng.
+- Planner chỉ được tiếp cận các quan sát thực tế (observations) và trạng thái niềm tin (Belief State) được xây dựng từ quan sát.
+- Các chế độ planner tiếp tục bao gồm `RULE`, `LLM`, `RL`, `HYBRID`; hoạch định trên không gian trạng thái niềm tin với danh mục hành động hữu hạn có giới hạn (Enterprise Bounded Actions).
+- Cơ chế kiểm soát an toàn (Centralized Safety Gate) giữ thẩm quyền tuyệt đối trước mọi dispatch. Tuyệt đối không mở public targets, không arbitrary shell, và không free-form payload execution.
 
 ## Architecture
 
-Luồng sản phẩm cần kiểm chứng trên upstream: catalog/search → đăng ký/đăng nhập → giỏ hàng → checkout mô phỏng → đơn hàng → đánh giá; dashboard quản trị theo quyền phía server. Hóa đơn là fit-gap, không giả định Oscar core cung cấp tính năng này và không tự thêm extension. Thanh toán/email không kết nối dịch vụ thật; assets/search phải local. Database, session, media và search cần persistence/restore checks riêng; không ép Oscar dùng schema/routes SQLite của ShopLab.
-
-Luồng assessment: scope và seed được duyệt → discovery observations → state → proposal schema-bound → safety policy và approval → bounded executor → observation → evidence bất biến → replan → report. Mọi request, redirect và request phụ đều cần target/action/rate/order/budget checks. Safety refusal xảy ra trước dispatch.
-
-Planner chỉ nhận observations đã redact; không nhận source code target, vị trí lỗi, ground truth, session token hoặc bí mật. Ground truth chỉ thuộc evaluation. HTTP 200, reflection, error hoặc sự tồn tại của form không tự chứng minh vulnerability hay impact.
+Kiến trúc phân tách ranh giới niềm tin và ranh giới an toàn (Trust & Belief Boundary Separation):
+- **Belief State & Planner Context**: Planner CHỈ được nhận các quan sát (observations) đã redact và cập nhật trạng thái niềm tin (Belief State). Ground truth, global network topology, full target allowlist, target source code, hidden credentials, và defender-private state (nhật ký SIEM, bẫy honeypot, trạng thái ẩn nội bộ phía phòng thủ) TUYỆT ĐỐI KHÔNG xuất hiện trong planner context.
+- **True State**: True State toàn cục chỉ thuộc quyền sở hữu của Simulator và Evaluator nhằm duy trì tính chân thực của bài toán quan sát một phần.
+- **Ground Truth**: Ground truth chỉ thuộc phân hệ evaluation (vị trí canonical dưới `evaluation/**`). Ground truth dùng để chấm điểm và kiểm chứng độ chính xác của Belief State sau run, không tham gia vào quá trình planning.
+- **Safety Scope != Planner-Visible Scope**: Ranh giới an toàn (Safety Scope) do Safety Gate nắm giữ để thực thi chính sách bảo vệ lab (canonical target allowlist, action catalog, rate limits, budgets). Planner tuyệt đối không được nhận full target allowlist nhằm triệt tiêu rò rỉ tri thức oracle. Planner chỉ thấy các thực thể đã quan sát qua discovery từ seed được duyệt.
+- **Luồng điều phối tam giác (Planner – Gate – Executor)**:
+  `SEED/APPROVAL -> DISCOVERY/ACTION OBSERVATION -> BELIEF STATE -> SCHEMA-BOUND PROPOSAL -> CENTRALIZED SAFETY GATE (AUTHORIZATION) -> BOUNDED EXECUTOR -> OBSERVATION -> IMMUTABLE EVIDENCE -> BELIEF UPDATE -> REPLAN -> REPORT`.
+- Mọi request, redirect, auxiliary request đều qua Safety Gate trước khi dispatch. Safety refusal xảy ra trước network/simulator side-effect.
+- HTTP 200, reflection, error hoặc banner không tự chứng minh vulnerability hay access level nếu thiếu observed evidence xác thực.
+- Simulator (mô phỏng POMDP) và Mini Enterprise Live Range dùng chung executor interface và result/observation contract; simulator hoàn thành và kiểm chứng trước khi kết nối live range.
 
 ## Planner model
 
-- `RULE`: baseline xác định, phải được báo cáo đúng mode.
-- `LLM`: đề xuất schema-bound từ observations, không tự cấp quyền hoặc tạo action/command/payload mới.
-- `RL`: học trong state/action space hữu hạn; không ưu tiên triển khai trước sản phẩm và safety pipeline.
-- `HYBRID`: kết hợp candidates nhưng không bypass policy.
+- `RULE`: baseline xác định hoạch định trên Belief State, phải được báo cáo đúng mode.
+- `LLM`: đề xuất schema-bound từ Belief State và observations, không tự cấp quyền hoặc tạo action/command/payload mới.
+- `RL`: học chính sách (policy) trong POMDP / belief MDP với action space hữu hạn; không triển khai trước simulation backend và safety pipeline.
+- `HYBRID`: kết hợp candidates trên Belief State nhưng không bypass policy gate.
 
-Lỗi provider, malformed output và fallback phải được ghi rõ. Một run chỉ dùng rule không được mô tả là LLM run thành công. Tái dùng StateManager cho state, request/time budget và replay; không thay đổi action ID hoặc contract semantics âm thầm.
+Lỗi provider, malformed output và fallback phải được ghi rõ. Một run chỉ dùng rule không được mô tả là LLM run thành công. Tái dùng StateManager / mở rộng BeliefStateManager cho state, belief decay/updates, request/time budget và replay; không thay đổi action ID hoặc contract semantics âm thầm.
 
 ## Current state
 
@@ -107,22 +116,22 @@ Nguồn trạng thái task là [TASKS.md](TASKS.md), không phải số lượng
 - TASK-032 giữ `DEFERRED`. Metrics, training và kết quả nghiên cứu không được suy ra từ prototype.
 - TASK-019 hiện `IMPLEMENTED` cho SQLite knowledge-state store ngoại tuyến, tái dùng StateManager và giữ contract hiện có. Receipts triển khai ngày 2026-10-11: 21 tests mới + 39 tests API cũ PASS; checker exit 1 với 656 lỗi ngoài scope, 0 lỗi thuộc ba paths Task 19. Cập nhật trạng thái ngày 2026-10-12 đối chiếu source hashes khớp receipts, không chạy lại suites hoặc chuyển validation lịch sử sang extension. Handoff `HANDOFF_BLOCKED`; review độc lập, consumer/evidence integration, process/container restore và performance còn `UNRESOLVED`. Chi tiết tại [TASKS.md](TASKS.md#task-019--knowledge-state-store-sqlite-ngoại-tuyến).
 
-Hướng tiếp tục: theo quyết định người dùng, ShopLab là website thương mại điện tử độc lập tiếp tục được sử dụng và hoàn thiện. Chuỗi SL-01–11 đã hoàn thành triển khai với toàn bộ ecommerce tests, gateway E2E tests, discovery safety tests, planner tests, PTES coordinator tests, evidence packaging/replay tests và live Docker runtime receipts (SL-07, SL-08, SL-09, SL-10, SL-11) PASS. Sẵn sàng cho giai đoạn SL-12 (Independent verification handoff). Tài liệu thẩm định upstream Oscar giữ làm khảo sát nguồn mở, không thay thế hoặc migrate ShopLab.
+Hiện trạng và chuyển tiếp: Tranche tái chuẩn hóa hiện hành là `RT-00 — Enterprise Red Team Planning Rebaseline` (`IMPLEMENTED`), mở ra lộ trình nghiên cứu AI Attack Planning under Partial Observability gồm các mốc: RT-01 (Zero-Knowledge Boundary), RT-02 (Belief State), RT-03 (Enterprise Action Model), RT-04 (Simulation Backend), RT-05 (Planner Integration), RT-06 (Mini Enterprise Live Range), RT-07 (Experimental Evaluation). Simulator bắt buộc hoàn thành và kiểm chứng trước live range. Toàn bộ chuỗi sản phẩm và PTES lịch sử SL-01–SL-11 trên ShopLab (với toàn bộ ecommerce tests, gateway E2E tests, discovery safety tests, planner tests, PTES coordinator tests, evidence packaging/replay tests và live Docker runtime receipts PASS) được bảo toàn nguyên trạng làm nền tảng kiểm chứng. SL-12 (Independent verification handoff) giữ `HANDOFF_BLOCKED` chờ giải quyết repository blockers ngoài scope.
 
-Thứ tự và acceptance: [PROJECT_PLAN.md](PROJECT_PLAN.md). Giữ IDs/dependencies `SL-*`; việc thay implementation không bỏ các yêu cầu ownership, CSRF, money, stock, idempotency, restore hoặc evidence. Chênh lệch upstream phải ghi rõ, không tự hạ acceptance.
+Thứ tự và acceptance: [PROJECT_PLAN.md](PROJECT_PLAN.md). Giữ IDs/dependencies `TASK-001..035`, `SL-*` và các validation lịch sử. Không tự hạ acceptance hoặc nâng validation khi chưa có checks và review độc lập.
 
 ## Boundaries
 
-Chỉ local isolated lab với dữ liệu giả. Không public target, Internet scanning, arbitrary shell, dynamic actions, payload mới, credentials cố định, dữ liệu production hoặc deployment claim. Giữ lab mode, target/action allowlists, approval, rate/order/budget checks, kill switch, audit và restore.
+Chỉ local isolated lab hoặc simulation backend cô lập với dữ liệu giả. Không public target, Internet scanning, arbitrary shell, dynamic actions, free-form payload mới, credentials cố định, dữ liệu production hoặc deployment claim. Giữ lab mode, target/action allowlists, approval, rate/order/budget checks, kill switch, audit và restore.
 
-`lab-ecommerce` đã được đăng ký chính thức vào canonical target allowlist `configs/safety/target-allowlist.yaml` và manifest; CentralizedSafetyGate áp dụng bất biến tập giao `canonical allowlist ∩ run-approved targets`, runtime caller không được nới rộng chính sách.
+CentralizedSafetyGate áp dụng bất biến tập giao `canonical allowlist ∩ run-approved targets`; runtime caller không được nới rộng chính sách. Planner tuyệt đối không nhận full target allowlist, global topology, credentials, source code hay defender-private state; ranh giới an toàn không đồng nhất với phạm vi quan sát của tác tử.
 
-Phê duyệt kế hoạch và sửa tài liệu không phải per-run/per-action approval. Giai đoạn PTES ngoài quyền hiện hành phải ghi `BLOCKED` hoặc `NOT_RUN`, thiếu evidence ghi `UNRESOLVED`; không giả completion. Không persistence trên target, credential theft, đọc host files hoặc lateral movement trong post-exploitation.
+Phê duyệt kế hoạch và sửa tài liệu không phải per-run/per-action approval. Giai đoạn thực thi ngoài quyền hiện hành phải ghi `BLOCKED` hoặc `NOT_RUN`, thiếu evidence ghi `UNRESOLVED`; không giả completion. Không persistence ngoài scope trên target, credential theft, đọc host files hoặc lateral movement ngoài bounded actions đã duyệt.
 
 Evidence mới cần UTC, run ID, source, hash, redaction và expected/observed tách biệt; không overwrite record cũ. Evidence-write failure hoặc xung đột nguồn phải dừng. Phiên bản, image provenance/digest, model identity và measured metrics chỉ được ghi khi có bằng chứng.
 
 ## Source hierarchy
 
-User source và approved contracts outrank derivative documents. AGENTS.md quy định governance; PROJECT_PLAN.md quy định roadmap; TASKS.md quy định backlog/status; ADR quy định quyết định kiến trúc; evidence quy định observed claims.
+User source và approved contracts outrank derivative documents. AGENTS.md quy định governance; PROJECT_PLAN.md quy định roadmap; TASKS.md quy định backlog/status; ADR quy định quyết định kiến trúc (bao gồm ADR-014 cho kiến trúc Enterprise Red Team Belief State); evidence quy định observed claims.
 
-Nguồn roadmap: `PLAN-SHOPLAB-PTES-001` / `SHOPLAB-PTES-001`; tranche hiện hành `PLAN-OSCAR-ADOPTION-001` / `OSCAR-ADOPTION-001` theo lựa chọn tái sử dụng upstream được duyệt. Approval này cho thẩm định/configuration/tests offline và tám tài liệu được liệt kê, không runtime hoặc dependency execution khi gate chưa đạt. Không tự approve, finalize, append history hoặc commit. ADR-013 giữ nguyên như quyết định lịch sử ShopLab; user source/approved plan mới chi phối thay đổi hướng, không giả ADR đã được sửa/re-approved. Khi evidence và prose xung đột, báo blocker thay vì chọn claim có lợi hơn.
+Nguồn roadmap: `PLAN-ENTERPRISE-REDTEAM-001`, bắt đầu bằng tranche `RT-00 — Enterprise Red Team Planning Rebaseline`. Lịch sử roadmap nền `PLAN-SHOPLAB-PTES-001` / `SHOPLAB-PTES-001` và `PLAN-OSCAR-ADOPTION-001` được lưu giữ nguyên vẹn. Approval hiện tại chỉ áp dụng cho tài liệu và governance của RT-00, không cấp quyền runtime, dependency execution hoặc sửa mã nguồn ngoài scope. Không tự approve, finalize, append history hoặc commit. ADR-014 xác lập quyết định kiến trúc phân tách ranh giới True State, Belief State, Ground Truth, Safety Gate và Executor. Khi evidence và prose xung đột, báo blocker thay vì chọn claim có lợi hơn.

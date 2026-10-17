@@ -6,7 +6,30 @@ Roadmap nền: `PLAN-SHOPLAB-PTES-001`, work item `SHOPLAB-PTES-001`. Hướng h
 
 Giữ contracts, action catalog, safety, validator và evidence hiện hữu. Bảo toàn working tree chưa commit; chỉ sửa trong allowlist được giao. Sửa tài liệu/task không mở quyền runtime. Không append history, self-approve hoặc commit.
 
-Giữ 35 task IDs hiện hành; nhóm `SL-*` bổ sung luồng triển khai sản phẩm và PTES. Contract/catalog/config changes không thuộc cập nhật tài liệu này. Nếu cần thay action semantics, phải dừng để duyệt scope riêng.
+Giữ 35 task IDs hiện hành; nhóm `SL-*` bổ sung luồng triển khai sản phẩm và PTES; nhóm `RT-*` mở rộng nghiên cứu AI Attack Planning dưới quan sát một phần. Contract/catalog/config changes không thuộc cập nhật tài liệu này. Nếu cần thay action semantics, phải dừng để duyệt scope riêng.
+
+### Enterprise Red Team Planning Roadmap (RT-00 .. RT-07)
+
+Lộ trình tái định hướng nghiên cứu sang **AI Attack Planning for Red Team under Partial Observability (Belief-State Planning)**. Lộ trình mới kế thừa toàn bộ nền tảng an toàn, contracts, action catalog, và evidence framework hiện có mà không xóa bỏ hoặc làm mất hiệu lực các kết quả lịch sử (TASK-001..035, SL-01..12).
+
+Nguyên tắc triển khai bắt buộc: **Simulator phải đi trước và được kiểm chứng độc lập trước khi mở rộng sang Mini Enterprise Live Range** (RT-04 trước RT-06).
+
+- **RT-00 — Enterprise Red Team Planning Rebaseline** (`IMPLEMENTED`):
+  Tranche tài liệu và quản trị (DOCUMENTATION/GOVERNANCE). Tái định vị bài toán nghiên cứu cốt lõi sang AI Attack Planning for Red Team under Partial Observability (Belief-State Planning). Ban hành ADR-014; sửa AGENTS.md sang cơ chế allowlist theo task; cập nhật PROJECT_CONTEXT.md, PROJECT_PLAN.md, TASKS.md. Bảo toàn toàn bộ lịch sử và evidence cũ.
+- **RT-01 — Zero-Knowledge Boundary** (`SPEC_ONLY`):
+  Thiết lập rào chắn Zero-Knowledge tuyệt đối cho Planner: tách Ground Truth khỏi planner contracts, di chuyển schema và manifests về canonical path `evaluation/**`. Planner tuyệt đối không nhận ground truth, global network topology, full target allowlist, hidden credentials, hoặc defender-private state. Xây dựng bộ test suite kiểm tra boundary và fail-closed assertions.
+- **RT-02 — Belief State** (`SPEC_ONLY`):
+  Thiết kế schema và hiện thực hóa `BeliefState` kế thừa từ `StateManager`. Xây dựng mô hình biểu diễn trạng thái niềm tin (Belief State) cập nhật liên tục từ các quan sát (observations) thực tế thu thập được: host reachability, port/service discovery, credential cache, privilege levels, và confidence score có tính đến độ suy giảm (belief decay). Loại bỏ hoàn toàn oracle knowledge khỏi state representation.
+- **RT-03 — Enterprise Action Model** (`SPEC_ONLY`):
+  Định nghĩa và chuẩn hóa danh mục hành động tấn công doanh nghiệp có giới hạn (Enterprise Bounded Actions): reconnaissance, network discovery, credential probing, service exploration, và lateral movement hypotheses. Giữ vững nguyên tắc an toàn: tuyệt đối không arbitrary shell, không dynamic actions, không free-form payload execution; mọi action đều tuân thủ schema định kiểu chặt chẽ.
+- **RT-04 — Simulation Backend** (`SPEC_ONLY`):
+  Xây dựng môi trường mô phỏng (Simulation Backend) dựa trên khung lý thuyết POMDP (Partially Observable Markov Decision Process). Simulator lưu giữ True State độc quyền, tiếp nhận action đã được Safety Gate duyệt, và sinh ra partial observations kèm theo chi phí/ngân sách (cost/budget accounting). **Hoàn thành và kiểm chứng offline/deterministic trước khi triển khai bất kỳ live range nào**.
+- **RT-05 — Planner Integration** (`SPEC_ONLY`):
+  Tích hợp các chế độ planner (`RULE`, `LLM`, `RL`, `HYBRID`) trên nền tảng Belief State và Simulation Backend. Đảm bảo tính minh bạch về nguồn gốc quyết định (mode provenance), tuân thủ proposal schema (`plan.schema.json`), kiểm soát lỗi provider, và thực thi chính sách fallback an toàn.
+- **RT-06 — Mini Enterprise Live Range** (`SPEC_ONLY`):
+  Triển khai môi trường mạng doanh nghiệp thu nhỏ cô lập (Multi-host Docker lab, segmented subnets, Active Directory / LDAP mô phỏng, simulated corporate services, loopback ingress). Live range sử dụng chung executor interface và observation contract với simulation backend (RT-04). Tích hợp CentralizedSafetyGate kiểm soát phân quyền và ngăn chặn egress ra ngoài.
+- **RT-07 — Experimental Evaluation** (`SPEC_ONLY`):
+  Thiết lập bộ kịch bản đánh giá thực nghiệm (benchmark suite) so sánh hiệu năng của các planner (`RULE`, `LLM`, `RL`, `HYBRID`) dưới điều kiện quan sát một phần trên cả Simulation Backend và Mini Enterprise Live Range. Đánh giá tính chính xác của Belief State so với Ground Truth (độc quyền trong evaluation), tỉ lệ thành công, hiệu quả sử dụng ngân sách (budget efficiency), và thời gian phát hiện.
 
 ## Literature/Threat
 
@@ -287,4 +310,4 @@ Repository checker: `scripts/validation/validate_scaffold.py`; xác minh CLI tr�
 
 Tài liệu có thể `IMPLEMENTED` khi được cập nhật, không `VALIDATED` nếu chưa checks/review. Code từng phần không hoàn thành task có acceptance criteria lớn hơn. Historical task statuses không tự chuyển sang evidence cho code mới.
 
-ShopLab hoàn chỉnh cần product tests, runtime evidence và review. PTES hoàn chỉnh cần phase-specific exit evidence và quyền phù hợp; blocked/skipped/not-run không phải completed. Documentation không cấp runtime approval, tự finalize hoặc chứng nhận sản phẩm an toàn.
+ShopLab hoàn chỉnh cần product tests, runtime evidence và review. PTES hoàn chỉnh cần phase-specific exit evidence và quyền phù hợp; blocked/skipped/not-run không phải completed. Nhóm RT tuân thủ thứ tự chặt chẽ: RT-00 tái chuẩn hóa tài liệu/governance, RT-01 rào chắn zero-knowledge, RT-02 belief state, RT-03 enterprise action model, RT-04 simulation backend (bắt buộc hoàn thành và kiểm chứng trước live range), RT-05 tích hợp planner, RT-06 mini enterprise live range, RT-07 đánh giá thực nghiệm. Documentation không cấp runtime approval, tự finalize hoặc chứng nhận sản phẩm an toàn.

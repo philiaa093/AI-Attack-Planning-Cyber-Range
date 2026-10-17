@@ -6,7 +6,7 @@ Read `PROJECT_CONTEXT.md`, `PROJECT_PLAN.md`, `TASKS.md`, relevant canonical doc
 
 ## Scope and Allowed Paths
 
-Work only inside assigned allowlist. Runtime vertical-slice work may edit `runtime/**`, `cyber-range/compose.yaml`, `cyber-range/runtime/**`, `cyber-range/targets/manifests/**`, `scripts/cyber-range/**`, and focused `tests/runtime/**` or `tests/integration/**`. Never edit contracts, configuration, catalog, scenario, evidence, or unrelated target paths without explicit task scope.
+Work only inside assigned allowlist. Do not use a fixed global code allowlist. Every task or tranche must declare its own explicit allowed paths in its approved specification. By default, agents have no repository-wide edit permissions. Documentation and governance tranches may only edit assigned governance and documentation files (`AGENTS.md`, `PROJECT_CONTEXT.md`, `PROJECT_PLAN.md`, `TASKS.md`, `docs/adr/**`). Technical and runtime tranches (e.g. RT-01..RT-07) must operate strictly within their tranche-specific allowed paths. Never edit contracts, configuration, catalog, scenario, evidence, or unrelated paths without explicit task scope.
 
 ## Trust Boundary and Input Validation
 
