@@ -9,18 +9,169 @@
       "type": "string",
       "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"
     },
-    "target_id": {
-      "type": "string",
-      "pattern": "^lab-[a-z0-9-]+$"
-    },
     "action_class": {
       "type": "string",
-      "enum": ["RECON", "SCAN", "WEB_TEST", "PLAN", "STOP"]
+      "enum": [
+        "RECON",
+        "SCAN",
+        "WEB_TEST",
+        "INITIAL_ACCESS",
+        "HOST_RECON",
+        "CREDENTIAL_ACCESS",
+        "LATERAL_MOVEMENT",
+        "PRIVILEGE_ESCALATION",
+        "OBJECTIVE_ACCESS",
+        "PLAN",
+        "STOP"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "target_kind": {
+      "type": "string",
+      "enum": [
+        "NONE",
+        "TARGET",
+        "HOST",
+        "SERVICE",
+        "ENDPOINT",
+        "CREDENTIAL",
+        "SESSION",
+        "OBJECTIVE",
+        "SUBNET",
+        "ENVIRONMENT"
+      ]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["ENTERPRISE_TTP", "LEGACY_WEB_COMPAT", "PLANNER_INTERNAL"]
+    },
+    "preconditions": {
+      "$ref": "#/$defs/preconditions"
+    },
+    "expected_effects": {
+      "$ref": "#/$defs/expected_effects"
+    },
+    "step_cost": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "noise_cost": {
+      "type": "number",
+      "minimum": 0
+    },
+    "required_capability": {
+      "type": "string",
+      "enum": [
+        "NETWORK_CLIENT",
+        "ACTIVE_SESSION",
+        "LOCAL_AGENT",
+        "INERT_PROBE",
+        "PLANNER_INTERNAL",
+        "BOUNDED_SCANNER",
+        "REMOTE_SERVICE",
+        "HTTP_PROBE"
+      ]
+    },
+    "argument_schema": {
+      "type": "object"
     },
     "parameters": {
       "type": "object",
       "additionalProperties": false
+    },
+    "mitre_attack": {
+      "$ref": "#/$defs/mitre_attack"
+    },
+    "target_id": {
+      "type": "string",
+      "pattern": "^lab-[a-z0-9-]+$"
     }
   },
-  "required": ["action_id", "target_id", "action_class"]
+  "required": ["action_id", "action_class"],
+  "$defs": {
+    "preconditions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target_visible": {"type": "boolean"},
+        "host_observed": {"type": "boolean"},
+        "service_observed": {"type": "boolean"},
+        "required_service_type": {"type": "string"},
+        "finding_confirmed": {"type": "boolean"},
+        "min_access_level": {
+          "type": "string",
+          "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+        },
+        "require_active_session": {"type": "boolean"},
+        "require_valid_credential": {"type": "boolean"},
+        "require_reachability": {"type": "boolean"},
+        "objective_not_achieved": {"type": "boolean"},
+        "allowed_phases": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "expected_effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "potential_facts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "TARGET",
+              "HOST",
+              "SERVICE",
+              "ENDPOINT",
+              "PARAMETER",
+              "CANDIDATE_FINDING",
+              "CONFIRMED_FINDING",
+              "ACCESS",
+              "CREDENTIAL",
+              "SESSION",
+              "REACHABILITY",
+              "ACTION_OUTCOME",
+              "DETECTION_SIGNAL",
+              "OBJECTIVE",
+              "CONTROL"
+            ]
+          }
+        },
+        "potential_access_level": {
+          "type": "string",
+          "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+        },
+        "potential_session_transition": {
+          "type": "string",
+          "enum": ["NONE", "OPEN_SESSION", "CLOSE_SESSION"]
+        },
+        "potential_credential_discovery": {"type": "boolean"},
+        "potential_lateral_reachability": {"type": "boolean"},
+        "potential_objective_completion": {"type": "boolean"},
+        "description": {"type": "string"}
+      }
+    },
+    "mitre_attack": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tactic": {"type": "string"},
+        "technique_id": {
+          "type": "string",
+          "pattern": "^T[0-9]{4}(\\.[0-9]{3})?$"
+        },
+        "technique_name": {"type": "string"}
+      },
+      "required": ["tactic", "technique_id"]
+    }
+  }
 }
