@@ -1,0 +1,564 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-HELD-002",
+  "name": "H2 Straight Enterprise Path B",
+  "description": "Linear 3-tier enterprise path B",
+  "random_seed": 2002,
+  "entry_seed": "held-pub-ingress",
+  "hidden_nodes": [
+    {
+      "node_id": "held-pub-ingress",
+      "node_kind": "ENTRY",
+      "network_zone": "PERIMETER",
+      "ip": "172.16.1.10",
+      "hostname": "pub-ingress.fin.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-pub-ingress-80",
+          "port": 80,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": [
+            "WEB_HOSTING",
+            "REST_API"
+          ]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SCN-HELD-002-001",
+          "vulnerability_family": "SQLI",
+          "severity": "HIGH",
+          "target_service_id": "svc-held-pub-ingress-80"
+        }
+      ],
+      "credentials_present": [
+        "cred-held-002-app"
+      ]
+    },
+    {
+      "node_id": "held-srv-worker",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL_APP",
+      "ip": "172.16.2.20",
+      "hostname": "worker-srv.fin.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-srv-worker-22",
+          "port": 22,
+          "protocol": "SSH",
+          "service_type": "SSH",
+          "capabilities": [
+            "REMOTE_SHELL",
+            "PIVOT"
+          ]
+        },
+        {
+          "service_id": "svc-held-srv-worker-8080",
+          "port": 8080,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": [
+            "BACKEND_API"
+          ]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SCN-HELD-002-002",
+          "vulnerability_family": "MISCONFIGURATION",
+          "severity": "MEDIUM",
+          "target_service_id": "svc-held-srv-worker-8080"
+        }
+      ],
+      "credentials_present": [
+        "cred-held-002-db"
+      ]
+    },
+    {
+      "node_id": "held-db-ledger",
+      "node_kind": "DATABASE",
+      "network_zone": "SECURE_DATA",
+      "ip": "172.16.3.30",
+      "hostname": "ledger-db.fin.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-db-ledger-5432",
+          "port": 5432,
+          "protocol": "TCP",
+          "service_type": "DATABASE",
+          "capabilities": [
+            "DATA_STORAGE",
+            "CONFIDENTIAL_RECORDS"
+          ]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": []
+    }
+  ],
+  "hidden_topology": {
+    "edges": [
+      {
+        "edge_id": "edge-held-pub-ingress-to-held-srv-worker",
+        "source": "held-pub-ingress",
+        "target": "held-srv-worker",
+        "protocol": "TCP",
+        "port": 22,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-held-srv-worker-to-held-db-ledger",
+        "source": "held-srv-worker",
+        "target": "held-db-ledger",
+        "protocol": "TCP",
+        "port": 5432,
+        "bidirectional": false,
+        "is_blocked": false
+      }
+    ]
+  },
+  "hidden_credentials": [
+    {
+      "credential_id": "cred-held-002-app",
+      "principal": "held-srv-worker_svc",
+      "credential_kind": "SSH_KEY",
+      "valid_nodes": [
+        "held-srv-worker"
+      ],
+      "granted_access_level": "USER",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-held-002-db",
+      "principal": "held-db-ledger_admin",
+      "credential_kind": "PASSWORD",
+      "valid_nodes": [
+        "held-db-ledger"
+      ],
+      "granted_access_level": "PRIVILEGED",
+      "validity_state": "VALID",
+      "is_decoy": false
+    }
+  ],
+  "objective": {
+    "objective_id": "OBJ-HELD-002",
+    "target_node_id": "held-db-ledger",
+    "target_artifact": "vault_records.enc",
+    "required_access_level": "PRIVILEGED",
+    "completion_condition": "ACCESS",
+    "description": "Held-out objective for SCN-HELD-002"
+  },
+  "detection_model": {
+    "noise_threshold": 12.0,
+    "alert_threshold": 22.0,
+    "containment_threshold": 32.0,
+    "initial_detection_state": "QUIET"
+  },
+  "transitions": [
+    {
+      "transition_id": "TRANS-SCN-HELD-002-RECON-ENTRY",
+      "action_id": "ACTION-RECON-001",
+      "match_conditions": {
+        "target_node_id": "held-pub-ingress",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "SERVICE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-pub-ingress:80",
+            "value_template": {
+              "port": 80,
+              "protocol": "HTTP",
+              "service_type": "HTTP"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-SCAN-ENTRY",
+      "action_id": "ACTION-SCAN-001",
+      "match_conditions": {
+        "target_node_id": "held-pub-ingress",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONFIRMED_FINDING",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-pub-ingress",
+            "value_template": {
+              "finding_id": "FIND-SCN-HELD-002-01",
+              "vulnerability_id": "VULN-SCN-HELD-002-001"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-FOOTHOLD-ENTRY",
+      "action_id": "ACTION-WEB-001",
+      "match_conditions": {
+        "target_node_id": "held-pub-ingress",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "FOOTHOLD",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-pub-ingress",
+            "value_template": {
+              "access_level": "FOOTHOLD"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-pub-ingress-01",
+            "value_template": {
+              "node_id": "held-pub-ingress",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-HOSTRECON-ENTRY",
+      "action_id": "ACTION-HOSTRECON-001",
+      "match_conditions": {
+        "target_node_id": "held-pub-ingress",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-pub-ingress->held-srv-worker",
+            "value_template": {
+              "source": "held-pub-ingress",
+              "target": "held-srv-worker",
+              "reachable": true
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-CREDS-ENTRY",
+      "action_id": "ACTION-AUTH-001",
+      "match_conditions": {
+        "target_node_id": "held-pub-ingress",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "reveal_credentials": [
+            "cred-held-002-app"
+          ]
+        },
+        "observations": [
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-held-002-app",
+            "value_template": {
+              "credential_id": "cred-held-002-app",
+              "principal": "held-srv-worker_svc",
+              "kind": "SSH_KEY"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-PIVOT-APP",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-srv-worker",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-srv-worker",
+            "value_template": {
+              "access_level": "USER"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-srv-worker-01",
+            "value_template": {
+              "node_id": "held-srv-worker",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-HOSTRECON-APP",
+      "action_id": "ACTION-HOSTRECON-001",
+      "match_conditions": {
+        "target_node_id": "held-srv-worker",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-srv-worker->held-db-ledger",
+            "value_template": {
+              "source": "held-srv-worker",
+              "target": "held-db-ledger",
+              "reachable": true
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-CREDS-APP",
+      "action_id": "ACTION-AUTH-001",
+      "match_conditions": {
+        "target_node_id": "held-srv-worker",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "reveal_credentials": [
+            "cred-held-002-db"
+          ]
+        },
+        "observations": [
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-held-002-db",
+            "value_template": {
+              "credential_id": "cred-held-002-db",
+              "principal": "held-db-ledger_admin",
+              "kind": "PASSWORD"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-PIVOT-DB",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-db-ledger",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "PRIVILEGED",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-db-ledger",
+            "value_template": {
+              "access_level": "PRIVILEGED"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-db-ledger-01",
+            "value_template": {
+              "node_id": "held-db-ledger",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-OBJECTIVE",
+      "action_id": "ACTION-FLOW-002",
+      "match_conditions": {
+        "target_node_id": "held-db-ledger",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "set_objective_achieved": true
+        },
+        "observations": [
+          {
+            "fact_type": "OBJECTIVE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-db-ledger",
+            "value_template": {
+              "objective_id": "OBJ-HELD-002",
+              "objective_state": "ACHIEVED"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-002-STOP",
+      "action_id": "ACTION-END-001",
+      "match_conditions": {
+        "target_node_id": "ANY",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": []
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    }
+  ]
+}

@@ -24,7 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 _SENSITIVE_PARAM_NAMES = frozenset({
     "session", "token", "password", "passwd", "secret", "key", "api_key",

@@ -1,0 +1,730 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-HELD-009",
+  "name": "H9 Blocked Path & Re-planning C",
+  "description": "Direct route blocked, recovery requires security gateway pivot C",
+  "random_seed": 2009,
+  "entry_seed": "held-gw-router",
+  "hidden_nodes": [
+    {
+      "node_id": "held-gw-router",
+      "node_kind": "ENTRY",
+      "network_zone": "PERIMETER",
+      "ip": "192.168.70.2",
+      "hostname": "router-gw.sys.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-gw-router-80",
+          "port": 80,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": [
+            "WEB_HOSTING",
+            "REST_API"
+          ]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SCN-HELD-009-001",
+          "vulnerability_family": "SQLI",
+          "severity": "HIGH",
+          "target_service_id": "svc-held-gw-router-80"
+        }
+      ],
+      "credentials_present": [
+        "cred-held-009-app"
+      ]
+    },
+    {
+      "node_id": "held-compute-srv",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL_APP",
+      "ip": "192.168.70.20",
+      "hostname": "compute-srv.sys.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-compute-srv-22",
+          "port": 22,
+          "protocol": "SSH",
+          "service_type": "SSH",
+          "capabilities": [
+            "REMOTE_SHELL",
+            "PIVOT"
+          ]
+        },
+        {
+          "service_id": "svc-held-compute-srv-8080",
+          "port": 8080,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": [
+            "BACKEND_API"
+          ]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SCN-HELD-009-002",
+          "vulnerability_family": "MISCONFIGURATION",
+          "severity": "MEDIUM",
+          "target_service_id": "svc-held-compute-srv-8080"
+        }
+      ],
+      "credentials_present": [
+        "cred-held-009-db",
+        "cred-held-009-jump"
+      ]
+    },
+    {
+      "node_id": "held-crown-node",
+      "node_kind": "DATABASE",
+      "network_zone": "SECURE_DATA",
+      "ip": "192.168.80.30",
+      "hostname": "crown-node.sys.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-crown-node-5432",
+          "port": 5432,
+          "protocol": "TCP",
+          "service_type": "DATABASE",
+          "capabilities": [
+            "DATA_STORAGE",
+            "CONFIDENTIAL_RECORDS"
+          ]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": []
+    },
+    {
+      "node_id": "held-sec-gateway",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL_OPS",
+      "ip": "192.168.70.70",
+      "hostname": "sec-gw.sys.net",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-held-sec-gateway-22",
+          "port": 22,
+          "protocol": "SSH",
+          "service_type": "SSH",
+          "capabilities": [
+            "REMOTE_SHELL",
+            "PIVOT"
+          ]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": [
+        "cred-held-009-db"
+      ]
+    }
+  ],
+  "hidden_topology": {
+    "edges": [
+      {
+        "edge_id": "edge-held-gw-router-to-held-compute-srv",
+        "source": "held-gw-router",
+        "target": "held-compute-srv",
+        "protocol": "TCP",
+        "port": 22,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-held-compute-srv-to-held-crown-node-blocked",
+        "source": "held-compute-srv",
+        "target": "held-crown-node",
+        "protocol": "TCP",
+        "port": 5432,
+        "bidirectional": false,
+        "is_blocked": true
+      },
+      {
+        "edge_id": "edge-held-compute-srv-to-held-sec-gateway",
+        "source": "held-compute-srv",
+        "target": "held-sec-gateway",
+        "protocol": "TCP",
+        "port": 22,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-held-sec-gateway-to-held-crown-node",
+        "source": "held-sec-gateway",
+        "target": "held-crown-node",
+        "protocol": "TCP",
+        "port": 5432,
+        "bidirectional": false,
+        "is_blocked": false
+      }
+    ]
+  },
+  "hidden_credentials": [
+    {
+      "credential_id": "cred-held-009-app",
+      "principal": "held-compute-srv_svc",
+      "credential_kind": "SSH_KEY",
+      "valid_nodes": [
+        "held-compute-srv"
+      ],
+      "granted_access_level": "USER",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-held-009-db",
+      "principal": "held-crown-node_admin",
+      "credential_kind": "PASSWORD",
+      "valid_nodes": [
+        "held-crown-node"
+      ],
+      "granted_access_level": "PRIVILEGED",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-held-009-jump",
+      "principal": "held-sec-gateway_ops",
+      "credential_kind": "SSH_KEY",
+      "valid_nodes": [
+        "held-sec-gateway"
+      ],
+      "granted_access_level": "USER",
+      "validity_state": "VALID",
+      "is_decoy": false
+    }
+  ],
+  "objective": {
+    "objective_id": "OBJ-HELD-009",
+    "target_node_id": "held-crown-node",
+    "target_artifact": "vault_records.enc",
+    "required_access_level": "PRIVILEGED",
+    "completion_condition": "ACCESS",
+    "description": "Held-out objective for SCN-HELD-009"
+  },
+  "detection_model": {
+    "noise_threshold": 12.0,
+    "alert_threshold": 22.0,
+    "containment_threshold": 32.0,
+    "initial_detection_state": "QUIET"
+  },
+  "transitions": [
+    {
+      "transition_id": "TRANS-SCN-HELD-009-RECON-ENTRY",
+      "action_id": "ACTION-RECON-001",
+      "match_conditions": {
+        "target_node_id": "held-gw-router",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "SERVICE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-gw-router:80",
+            "value_template": {
+              "port": 80,
+              "protocol": "HTTP",
+              "service_type": "HTTP"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-SCAN-ENTRY",
+      "action_id": "ACTION-SCAN-001",
+      "match_conditions": {
+        "target_node_id": "held-gw-router",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONFIRMED_FINDING",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-gw-router",
+            "value_template": {
+              "finding_id": "FIND-SCN-HELD-009-01",
+              "vulnerability_id": "VULN-SCN-HELD-009-001"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-FOOTHOLD-ENTRY",
+      "action_id": "ACTION-WEB-001",
+      "match_conditions": {
+        "target_node_id": "held-gw-router",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "FOOTHOLD",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-gw-router",
+            "value_template": {
+              "access_level": "FOOTHOLD"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-gw-router-01",
+            "value_template": {
+              "node_id": "held-gw-router",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-HOSTRECON-ENTRY",
+      "action_id": "ACTION-HOSTRECON-001",
+      "match_conditions": {
+        "target_node_id": "held-gw-router",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-gw-router->held-compute-srv",
+            "value_template": {
+              "source": "held-gw-router",
+              "target": "held-compute-srv",
+              "reachable": true
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-CREDS-ENTRY",
+      "action_id": "ACTION-AUTH-001",
+      "match_conditions": {
+        "target_node_id": "held-gw-router",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "reveal_credentials": [
+            "cred-held-009-app"
+          ]
+        },
+        "observations": [
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-held-009-app",
+            "value_template": {
+              "credential_id": "cred-held-009-app",
+              "principal": "held-compute-srv_svc",
+              "kind": "SSH_KEY"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-PIVOT-APP",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-compute-srv",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-compute-srv",
+            "value_template": {
+              "access_level": "USER"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-compute-srv-01",
+            "value_template": {
+              "node_id": "held-compute-srv",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-HOSTRECON-APP",
+      "action_id": "ACTION-HOSTRECON-001",
+      "match_conditions": {
+        "target_node_id": "held-compute-srv",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-compute-srv->held-crown-node",
+            "value_template": {
+              "source": "held-compute-srv",
+              "target": "held-crown-node",
+              "reachable": true
+            }
+          },
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-compute-srv->held-sec-gateway",
+            "value_template": {
+              "source": "held-compute-srv",
+              "target": "held-sec-gateway",
+              "reachable": true
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-CREDS-APP",
+      "action_id": "ACTION-AUTH-001",
+      "match_conditions": {
+        "target_node_id": "held-compute-srv",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "reveal_credentials": [
+            "cred-held-009-db"
+          ]
+        },
+        "observations": [
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-held-009-db",
+            "value_template": {
+              "credential_id": "cred-held-009-db",
+              "principal": "held-crown-node_admin",
+              "kind": "PASSWORD"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-PIVOT-DB",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-crown-node",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 0.0,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": []
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-OBJECTIVE",
+      "action_id": "ACTION-FLOW-002",
+      "match_conditions": {
+        "target_node_id": "held-crown-node",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "set_objective_achieved": true
+        },
+        "observations": [
+          {
+            "fact_type": "OBJECTIVE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-crown-node",
+            "value_template": {
+              "objective_id": "OBJ-HELD-009",
+              "objective_state": "ACHIEVED"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-STOP",
+      "action_id": "ACTION-END-001",
+      "match_conditions": {
+        "target_node_id": "ANY",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": []
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-PIVOT-JUMP",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-sec-gateway",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-sec-gateway",
+            "value_template": {
+              "access_level": "USER"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-sec-gateway-01",
+            "value_template": {
+              "node_id": "held-sec-gateway",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-HOSTRECON-JUMP",
+      "action_id": "ACTION-HOSTRECON-001",
+      "match_conditions": {
+        "target_node_id": "held-sec-gateway",
+        "require_active_session": true,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-sec-gateway->held-crown-node",
+            "value_template": {
+              "source": "held-sec-gateway",
+              "target": "held-crown-node",
+              "reachable": true
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCN-HELD-009-PIVOT-JUMP-TO-DB",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "held-crown-node",
+        "require_active_session": false,
+        "require_reachability": true
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "PRIVILEGED",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "held-crown-node",
+            "value_template": {
+              "access_level": "PRIVILEGED"
+            }
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-held-crown-node-01",
+            "value_template": {
+              "node_id": "held-crown-node",
+              "session_state": "ACTIVE"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    }
+  ]
+}

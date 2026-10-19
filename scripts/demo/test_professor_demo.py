@@ -7,20 +7,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import unittest
 from unittest.mock import patch
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_professor_demo as demo
+from runtime.lab import control_support as lab
 from runtime.safety.discovery_gate import DispatchResponse
 
 
 class DemoTests(unittest.TestCase):
     def setUp(self):
-        self.root = demo.OUTPUT / ("TEST-" + uuid.uuid4().hex)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.output_patch = patch.object(lab, "OUTPUT", Path(self.temp.name))
+        self.output_patch.start()
+        self.addCleanup(self.output_patch.stop)
+        self.root = lab.OUTPUT / ("TEST-" + uuid.uuid4().hex)
         self.run_id = "RUN-TEST-" + uuid.uuid4().hex
-        self.rec = demo.new_recorder(self.root / "evidence", self.run_id)
+        self.rec = lab.new_recorder(self.root / "evidence", self.run_id)
         self.hits = []
         hits = self.hits
 
@@ -47,7 +54,7 @@ class DemoTests(unittest.TestCase):
         self.sink = io.StringIO()
 
     def gate(self, pages=1):
-        gate = demo.make_gate(self.rec, self.origin, pages)
+        gate = lab.make_gate(self.rec, self.origin, pages)
         return gate
 
     def assess(self, gate=None, **kwargs):
@@ -70,14 +77,14 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(self.hits, ["/", "/renamed-from-observation"])
         self.assertEqual(result["discovery"]["requests"], 2)
         self.assertEqual(result["discovery"]["forms_submitted"], 0)
-        self.assertTrue(demo.EvidenceVerifier.verify_directory(self.rec.directory).ordering_ok)
+        self.assertTrue(lab.EvidenceVerifier.verify_directory(self.rec.directory).ordering_ok)
 
     def test_verifier_failure_halts_before_planner(self):
-        real = demo.EvidenceVerifier.verify_directory(self.rec.directory)
+        real = lab.EvidenceVerifier.verify_directory(self.rec.directory)
         failed = replace(real, passed=False, ordering_ok=False)
-        with patch.object(demo.EvidenceVerifier, "verify_directory", return_value=failed), \
+        with patch.object(lab.EvidenceVerifier, "verify_directory", return_value=failed), \
              patch.object(demo.ObservedStatePlanner, "propose", side_effect=AssertionError("planner must halt")), \
-             self.assertRaisesRegex(demo.DemoBlocked, "CORE_EVIDENCE_VERIFIER_ORDERING"):
+             self.assertRaisesRegex(lab.DemoBlocked, "CORE_EVIDENCE_VERIFIER_ORDERING"):
             self.assess(self.gate(2))
 
     def test_deny_zero_http(self):
@@ -87,14 +94,34 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(result["decision"], "DENIED")
         self.assertEqual(result["network_dispatch_delta"], 0)
         self.assertEqual(self.hits, [])
-        self.assertTrue(demo.verify(self.rec)["passed"])
+        self.assertTrue(lab.verify(self.rec)["passed"])
+
+    def test_deny_heading_neutral_for_allowed_and_denied_prechecks(self):
+        for stopped, decision in ((False, "PERMITTED_PROPOSAL_ONLY"), (True, "DENIED")):
+            with self.subTest(kill_switch=stopped):
+                recorder = lab.new_recorder(self.root / str(stopped), self.run_id + str(stopped))
+                gate = lab.make_gate(recorder, self.origin)
+                if stopped:
+                    gate.kill_switch.activate()
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output), \
+                     patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
+                    result = demo.deny_case(gate, recorder)
+                self.assertIn("KIỂM TRA ĐỀ XUẤT SYNTHETIC ĐỌC-ONLY", output.getvalue())
+                self.assertNotIn("SAFETY APPROVE", output.getvalue())
+                self.assertEqual(result["decision"], "DENIED")
+                self.assertEqual(result["network_dispatch_delta"], 0)
+                permitted = json.loads(Path(recorder.artifacts[0]["payload_path"]).read_text(encoding="utf-8"))
+                self.assertEqual(permitted["evaluation"]["decision"], decision)
+                self.assertTrue(lab.verify(recorder)["passed"])
+        self.assertEqual(self.hits, [])
 
     def test_missing_approval_zero_http(self):
         gate = self.gate()
         with patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
-            response = gate.dispatch(demo.DiscoveryRequest(self.run_id, demo.TARGET, demo.ACTION, self.origin + "/"))
+            response = gate.dispatch(demo.DiscoveryRequest(self.run_id, lab.TARGET, lab.ACTION, self.origin + "/"))
             self.assertEqual(response.refusal_reason, "MISSING_APPROVAL")
-            with self.assertRaisesRegex(demo.DemoBlocked, "MISSING_OR_INVALID"):
+            with self.assertRaisesRegex(lab.DemoBlocked, "MISSING_OR_INVALID"):
                 demo.assess(gate, self.rec, None)
         self.assertEqual(self.hits, [])
 
@@ -107,33 +134,33 @@ class DemoTests(unittest.TestCase):
         self.assertIn("PROVIDER_NOT_CALLED_OFFLINE_DEMO", self.sink.getvalue())
 
     def test_provider_absent_without_fallback_halts(self):
-        with self.assertRaisesRegex(demo.DemoBlocked, "PLANNER_HALTED"):
+        with self.assertRaisesRegex(lab.DemoBlocked, "PLANNER_HALTED"):
             self.assess(planner_mode="llm-unavailable", fallback=False)
         self.assertEqual(self.hits, ["/"])
 
     def test_intent_failure_zero_http(self):
         self.rec.inject_intent_failure()
-        with self.assertRaisesRegex(demo.DemoBlocked, "EVIDENCE_NOT_DURABLE"), \
+        with self.assertRaisesRegex(lab.DemoBlocked, "EVIDENCE_NOT_DURABLE"), \
              patch("runtime.safety.discovery_gate.http.client.HTTPConnection", side_effect=AssertionError("no network")):
             self.assess(self.gate(2))
         self.assertEqual(self.hits, [])
 
     def test_result_failure_stops_next_request(self):
         self.rec.inject_result_failure()
-        with self.assertRaisesRegex(demo.DemoBlocked, "EVIDENCE_NOT_DURABLE"):
+        with self.assertRaisesRegex(lab.DemoBlocked, "EVIDENCE_NOT_DURABLE"):
             self.assess(self.gate(2))
         self.assertEqual(self.hits, ["/"])
 
     def test_runtime_unavailable_halts(self):
         self.server.shutdown()
         self.server.server_close()
-        with self.assertRaisesRegex(demo.DemoBlocked, "DISCOVERY_RESPONSE_ERROR"):
+        with self.assertRaisesRegex(lab.DemoBlocked, "DISCOVERY_RESPONSE_ERROR"):
             self.assess(self.gate(2))
         self.assertEqual(self.hits, [])
 
     def test_exclusive_directory_and_receipt_redaction(self):
         with self.assertRaises(demo.EvidenceFailure):
-            demo.new_recorder(self.rec.directory, self.run_id)
+            lab.new_recorder(self.rec.directory, self.run_id)
         demo.write_receipt(self.root, {"password": "sensitive-fixture-value"})
         text = (self.root / "summary.json").read_text(encoding="utf-8")
         self.assertNotIn("sensitive-fixture-value", text)
@@ -149,39 +176,39 @@ class DemoTests(unittest.TestCase):
         self.assertIn("WRITE_FAILED", self.sink.getvalue())
 
     def test_dry_run_without_approval_no_health(self):
-        with patch.object(demo, "docker", return_value=""), \
-             patch.object(demo, "service_snapshot", return_value={}), \
-             patch.object(demo, "inspect_runtime"), \
-             patch.object(demo.CentralizedSafetyGate, "dispatch", side_effect=AssertionError("no HTTP")), \
+        with patch.object(lab, "docker", return_value=""), \
+             patch.object(lab, "service_snapshot", return_value={}), \
+             patch.object(lab, "inspect_runtime"), \
+             patch.object(lab.CentralizedSafetyGate, "dispatch", side_effect=AssertionError("no HTTP")), \
              contextlib.redirect_stdout(self.sink):
             self.assertEqual(demo.main(["--dry-run"]), 2)
         self.assertIn("NOT_CHECKED", self.sink.getvalue())
 
     def test_preflight_health_no_assessment(self):
-        response = DispatchResponse(200, {}, "", 0, False, "SUCCESS", True, demo.ORIGIN + "/health")
-        with patch.object(demo, "docker", return_value=""), \
-             patch.object(demo, "service_snapshot", return_value={}), patch.object(demo, "inspect_runtime"), \
-             patch.object(demo.CentralizedSafetyGate, "dispatch", return_value=response) as dispatch, \
+        response = DispatchResponse(200, {}, "", 0, False, "SUCCESS", True, lab.ORIGIN + "/health")
+        with patch.object(lab, "docker", return_value=""), \
+             patch.object(lab, "service_snapshot", return_value={}), patch.object(lab, "inspect_runtime"), \
+             patch.object(lab.CentralizedSafetyGate, "dispatch", return_value=response) as dispatch, \
              patch.object(demo, "assess", side_effect=AssertionError("no assessment")), \
-             patch.object(demo, "verify", return_value={"passed": True, "fixture": True}), \
+             patch.object(lab, "verify", return_value={"passed": True, "fixture": True}), \
              contextlib.redirect_stdout(self.sink):
             self.assertEqual(demo.main(["--dry-run", "--approve-read-only"]), 0)
         self.assertEqual(dispatch.call_count, 1)
-        self.assertEqual(dispatch.call_args.args[0].url, demo.ORIGIN + "/health")
+        self.assertEqual(dispatch.call_args.args[0].url, lab.ORIGIN + "/health")
 
     def test_start_stop_ownership_and_preserve_volume(self):
         running = {"Id": "preexisting", "State": {"Running": True}}
         stopped = {"Id": "owned", "State": {"Running": False}}
-        after = {demo.TARGET: running, "gateway-ecommerce": {"Id": "owned", "State": {"Running": True}}}
+        after = {lab.TARGET: running, "gateway-ecommerce": {"Id": "owned", "State": {"Running": True}}}
         owned = {}
-        with patch.object(demo, "service_snapshot", side_effect=[{demo.TARGET: running, "gateway-ecommerce": stopped}, after]), \
-             patch.object(demo, "compose") as compose:
-            demo.start_services(owned)
+        with patch.object(lab, "service_snapshot", side_effect=[{lab.TARGET: running, "gateway-ecommerce": stopped}, after]), \
+             patch.object(lab, "compose") as compose:
+            lab.start_services(owned)
         self.assertEqual(owned, {"gateway-ecommerce": "owned"})
         compose.assert_called_once_with("start", "gateway-ecommerce")
-        with patch.object(demo, "service_snapshot", return_value=after), \
-             patch.object(demo, "docker", side_effect=["", json.dumps([stopped]), ""]) as docker:
-            result = demo.stop_owned(owned)
+        with patch.object(lab, "service_snapshot", return_value=after), \
+             patch.object(lab, "docker", side_effect=["", json.dumps([stopped]), ""]) as docker:
+            result = lab.stop_owned(owned)
         self.assertEqual(result, "OWNED_SERVICES_STOPPED_VOLUME_PRESERVED")
         self.assertEqual(docker.call_args_list[0].args, ("stop", "--time", "10", "owned"))
         self.assertEqual(docker.call_args_list[-1].args, ("volume", "inspect", "cyber-range_ecommerce-data"))
@@ -191,9 +218,9 @@ class DemoTests(unittest.TestCase):
         before = demo.file_hashes(self.root)
         row = {"Id": "owned", "State": {"Running": True}}
         stopped = {"Id": "owned", "State": {"Running": False}}
-        with patch.object(demo, "service_snapshot", return_value={demo.TARGET: row}), \
-             patch.object(demo, "docker", side_effect=["", json.dumps([stopped]), ""]):
-            demo.stop_owned({demo.TARGET: "owned"})
+        with patch.object(lab, "service_snapshot", return_value={lab.TARGET: row}), \
+             patch.object(lab, "docker", side_effect=["", json.dumps([stopped]), ""]):
+            lab.stop_owned({lab.TARGET: "owned"})
         demo.check_files(self.root, before)
         self.assertEqual(demo.file_hashes(self.root), before)
 
@@ -201,7 +228,7 @@ class DemoTests(unittest.TestCase):
         fixed_id = uuid.uuid4()
         with patch.object(demo.uuid, "uuid4", return_value=fixed_id), contextlib.redirect_stdout(self.sink):
             self.assertEqual(demo.main(["--mode", "deny-demo"]), 0)
-            directory = demo.OUTPUT / ("RUN-DEMO-" + fixed_id.hex)
+            directory = lab.OUTPUT / ("RUN-DEMO-" + fixed_id.hex)
             before = demo.file_hashes(directory)
             self.assertEqual(demo.main(["--mode", "deny-demo"]), 2)
         self.assertEqual(before, demo.file_hashes(directory))
@@ -210,15 +237,15 @@ class DemoTests(unittest.TestCase):
         directory = self.root / self.run_id
         directory.mkdir()
         demo.write_receipt(directory, {"run_id": "RUN-OLD", "evidence_refs": []})
-        with self.assertRaisesRegex(demo.DemoBlocked, "STALE_RECEIPT"):
+        with self.assertRaisesRegex(lab.DemoBlocked, "STALE_RECEIPT"):
             demo.check_receipt(directory, self.run_id)
 
     def test_failure_keeps_incomplete_diagnostic_receipt(self):
-        with patch.object(demo, "docker", side_effect=demo.DemoBlocked("FIXTURE_RUNTIME_UNAVAILABLE")), \
+        with patch.object(lab, "docker", side_effect=lab.DemoBlocked("FIXTURE_RUNTIME_UNAVAILABLE")), \
              contextlib.redirect_stdout(self.sink):
-            before = set(demo.OUTPUT.glob("RUN-DEMO-*"))
+            before = set(lab.OUTPUT.glob("RUN-DEMO-*"))
             self.assertEqual(demo.main(["--approve-read-only"]), 2)
-        directory, = set(demo.OUTPUT.glob("RUN-DEMO-*")) - before
+        directory, = set(lab.OUTPUT.glob("RUN-DEMO-*")) - before
         result = demo.check_receipt(directory, directory.name)
         self.assertEqual(result["completion_state"], "INCOMPLETE")
         self.assertEqual(result["demo_outcome"], "BLOCKED")
@@ -232,19 +259,19 @@ class DemoTests(unittest.TestCase):
                 raise FileNotFoundError("fixture: receipt unavailable")
             return original(directory, expected)
         with patch.object(demo, "check_files", side_effect=unavailable), contextlib.redirect_stdout(self.sink):
-            before = set(demo.OUTPUT.glob("RUN-DEMO-*"))
+            before = set(lab.OUTPUT.glob("RUN-DEMO-*"))
             self.assertEqual(demo.main(["--mode", "deny-demo", "--stop-owned"]), 2)
-        directory, = set(demo.OUTPUT.glob("RUN-DEMO-*")) - before
+        directory, = set(lab.OUTPUT.glob("RUN-DEMO-*")) - before
         result = demo.check_receipt(directory, directory.name)
         self.assertEqual(result["completion_state"], "INCOMPLETE")
         self.assertEqual(result["receipts_preserved"], "NO")
         self.assertIn("READY_FOR_DEMO: NO", self.sink.getvalue())
 
     def test_cleanup_identity_drift_not_stopped(self):
-        with patch.object(demo, "service_snapshot", return_value={demo.TARGET: {"Id": "changed"}}), \
-             patch.object(demo, "docker", side_effect=AssertionError("must not stop")):
-            with self.assertRaisesRegex(demo.DemoBlocked, "CLEANUP_OWNERSHIP"):
-                demo.stop_owned({demo.TARGET: "original"})
+        with patch.object(lab, "service_snapshot", return_value={lab.TARGET: {"Id": "changed"}}), \
+             patch.object(lab, "docker", side_effect=AssertionError("must not stop")):
+            with self.assertRaisesRegex(lab.DemoBlocked, "CLEANUP_OWNERSHIP"):
+                lab.stop_owned({lab.TARGET: "original"})
 
 
 if __name__ == "__main__":

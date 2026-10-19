@@ -2,6 +2,42 @@
 
 Status vocabulary: `SPEC_ONLY`, `TBD`, `UNRESOLVED`, `IMPLEMENTED`, `VALIDATED`, `DEFERRED`, `BLOCKED`.
 
+Ưu tiên hiện hành: **nền tảng nghiên cứu AI Red Team bằng mô phỏng và benchmark tái lập**, theo [context](PROJECT_CONTEXT.md) và [plan](PROJECT_PLAN.md). Đợt tài liệu chỉ chỉnh ba file governance; không đổi task IDs/status/dependencies, không cấp runtime approval.
+
+### Việc cần làm tiếp
+
+1. Hoàn thiện episode mô phỏng nhỏ và nối RULE/random đối chứng qua cùng observation/action/gate/evidence boundary (RT-04, phần tích hợp RT-05).
+2. Tái lập bảng so sánh bằng scenario splits, seeds và budgets cố định; tái dùng log/hash/metrics/report hiện có. Chưa đóng RT-07 toàn phần khi thiếu RT-06.
+3. Thêm từng LLM/RL/HYBRID sau baseline. Tạm ngừng mở rộng ecommerce, Oscar, dashboard và live range; giữ acceptance/pending work lịch sử.
+
+Các trạng thái bên dưới là ledger đã ghi, gồm thay đổi đang có trong working tree; không phải chứng nhận mọi phần đã commit/review. `IMPLEMENTED` không đồng nghĩa `VALIDATED`. Không chép receipts sang context/plan. Xem [blockers hiện hành](#blockers) trước khi tái dùng claim cũ.
+
+### Enterprise Red Team Planning backlog
+
+Bảng RT là nguồn trạng thái/dependencies cho hướng nghiên cứu; mở khi cần chi tiết. Không nâng trạng thái trong đợt chuẩn hóa.
+
+<details>
+<summary>Trạng thái và acceptance RT-00–RT-07</summary>
+
+
+Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` chuyển đổi trọng tâm sang **AI Attack Planning for Red Team under Partial Observability (Belief-State Planning)**. Kế thừa toàn bộ contracts, action catalog, safety gate và evidence framework hiện có; không thay đổi canonical task IDs `TASK-001..035` hoặc các validation lịch sử `SL-01..12`.
+
+| Work package | Liên kết task nền | Trạng thái ban đầu | Phụ thuộc | Đầu ra và điều kiện chấp nhận |
+|---|---|---|---|---|
+| RT-00 | TASK-002, TASK-003 | `IMPLEMENTED` | Không | Enterprise Red Team Planning Rebaseline: Tranche tài liệu và quản trị. Ban hành ADR-014 (Belief State Architecture), cập nhật AGENTS.md sang allowlist theo task, rebaseline PROJECT_CONTEXT.md, PROJECT_PLAN.md, TASKS.md. Bảo toàn toàn bộ lịch sử foundation và evidence. Báo cáo checks, blockers và allowlist RT-01. |
+| RT-01 | TASK-003, TASK-008, TASK-009 | `IMPLEMENTED` | RT-00 | Zero-Knowledge Boundary: Hoàn tất cả RT-01A (Ground Truth Physical Isolation) và RT-01B (Planner Visibility Boundary / Fog-of-War). Phân tách tuyệt đối Safety Scope khỏi Planner-Visible Scope. Automated boundary suites tests/boundary/ (16/16 tests PASS). |
+| RT-02 | TASK-005, TASK-006, TASK-019 | `IMPLEMENTED` | RT-01 | Belief State: Hoàn tất cả RT-02A (Enterprise Observation Model: 15 fact types, provenance, credential/session opaque redaction) và RT-02B (Belief State Projection: deterministic projection, facts vs hypotheses hard boundary, access monotonicity, zero-knowledge isolation, tích hợp StateManager/KnowledgeStateStore/PlannerStateAdapter/StateSnapshot). Chưa review độc lập / VALIDATED. |
+| RT-03 | TASK-004, TASK-012, TASK-013 | `IMPLEMENTED` | RT-01, RT-02 | Enterprise Action Model: Hoàn tất cả RT-03A (Generic TTP Action Contract) và RT-03B (Action Constraint Evaluator). Single canonical ActionConstraintEvaluator tại runtime/evaluators/action_evaluator.py. Thống nhất canonical access: NONE < FOOTHOLD < USER < PRIVILEGED < SYSTEM. Quarantined hypotheses. Historical access != active capability. Eligibility != Authorization. Chưa review độc lập / VALIDATED. |
+| RT-04 | TASK-007, TASK-010, TASK-023 | `IMPLEMENTED` | RT-02, RT-03 | Simulation Backend: Hoàn tất cả RT-04A (Hidden Scenario & True-State Model), RT-04B (Transition & Observation Simulator), và RT-04C (Unified Episode Environment & Gymnasium Adapter: canonical EpisodeEnvironment lifecycle loop, Farama Gymnasium adapter, action masking, 16D belief state encoding, replay bit-for-bit determinism, legacy RL coexistence). Chưa review độc lập / VALIDATED. |
+| RT-05 | TASK-020, TASK-021, TASK-022, TASK-027 | `IMPLEMENTED` | RT-04 | Planner Integration: Lớp tích hợp tập hoạch định chuẩn mực (Planner-Neutral Episode Integration Layer). Hoàn tất toàn bộ gói RT-05 gồm RT-05A (Common Planner Episode Interface & Rule Baseline), RT-05A1 (Benchmark Action-Space Normalization: 9 canonical generic benchmark actions), RT-05B (Pure LLM Belief-State Planner Baseline), RT-05C (Hybrid Belief-State Planner — Proposed Method: LLM semantic ranking + deterministic symbolic scoring -> fusion, HYBRID_SCORING_V1, SYMBOLIC_ONLY fallback, ablation readiness), và RT-05D (Benchmark Protocol & Methodology Freeze: đóng băng RULE_POLICY_V1, LLM_ATTACK_PLANNER_PROMPT_V1, HYBRID_SCORING_V1_FROZEN, weights hash, 12 kịch bản held-out H1–H12 độc lập với S1–S4 dev, seed manifest cố định, primary/secondary metrics machine-computable, tests/runtime/test_benchmark_protocol.py 14/14 PASS). Chưa review độc lập / VALIDATED. |
+| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `SPEC_ONLY` | RT-04, RT-05 | Mini Enterprise Live Range: Cyber-range multi-host doanh nghiệp thu nhỏ cô lập (Docker internal networks, segmented VLANs, simulated services, loopback ingress). Dùng chung executor và observation contract với simulator (RT-04). Tích hợp CentralizedSafetyGate kiểm soát phân quyền. |
+| RT-07 | TASK-028, TASK-029, TASK-030, TASK-031 | `SPEC_ONLY` | RT-05, RT-06 | Experimental Evaluation: Bộ kịch bản đánh giá so sánh (benchmark suite) trên simulator và live range. Chấm điểm planner dựa trên Ground Truth (cô lập trong evaluation). Đo lường metrics: success rate, steps to goal, budget efficiency, belief accuracy vs true state. |
+
+</details>
+
+<details>
+<summary>Bảng TASK-001–TASK-035 và phạm vi baseline đã ghi</summary>
+
 Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` through `EV-FOUNDATION-001-004`. TASK-011 through TASK-014 are `VALIDATED` for local Docker runtime slice by RUNTIME-004 evidence and approved review; scope excludes public deployment, planner validation, and external tool execution. TASK-015 is `IMPLEMENTED` for offline discovery report import/observations, with related discovery implementation in SL-08; TASK-016 is `IMPLEMENTED` for the offline JSON parser/safety wrapper; TASK-017 is `IMPLEMENTED` for the offline Nuclei report parser/safety wrapper. These statuses do not close acceptance/review or validate external-tool execution. See the TASK-015/016/017 implementation states below. TASK-018 is `IMPLEMENTED` for the current offline Nuclei normalization extension, pending independent review and durable evidence integration. TASK-019 is `IMPLEMENTED` for the offline SQLite knowledge-state store, pending repository gate, independent review and consumer/evidence integration. Earlier TASK-018/019 subsets retain historical `VALIDATED` scope under perception evidence `EV-PERCEPTION-018-001` through `EV-PERCEPTION-019-003`; those receipts do not validate either new extension. TASK-020 is `IMPLEMENTED` for the offline Planner ABC/DTO/state-read adapter, pending repository gate, independent review and consumer/evidence integration. TASK-021 is `IMPLEMENTED` for the offline evidence-review rule baseline, pending repository gate, independent review and durable evidence/coordinator integration; full research baseline and scanner execution remain `UNRESOLVED`. TASK-022 is `IMPLEMENTED` for the offline LLM metadata evidence-review strategy, pending repository gate, independent review and provider/evidence/coordinator integration; real provider/model/tokenizer and runtime behavior remain `UNRESOLVED`. TASK-023 is `IMPLEMENTED` for offline Gymnasium replay only, pending repository gate, independent review and durable evidence/live integration. TASK-024 is `IMPLEMENTED` for the standalone offline metadata-review reward scorer and tests, pending independent review, config acceptance and environment/evidence integration; the repository-checker blocker is resolved by the validator repair below. TASK-025 is `IMPLEMENTED` for offline Q-learning replay as recorded in its table row and receipts below. TASK-027 is `IMPLEMENTED` for the offline hybrid routing reference and metadata handoff design, pending repository gate, independent review and adapter/history/evidence integration; full hybrid runtime remains `SPEC_ONLY`. Tasks 028-031 and 033-035 remain `SPEC_ONLY`. Tasks 026 and 032 remain `DEFERRED`; the Task-026 preparatory reward/mask wrapper and offline evaluation protocol are `IMPLEMENTED` as a subset, pending repository gate, independent review and learned-model/evidence integration. No DQN/PPO result claim exists.
 
 | ID | Descriptive name | Status | Dependencies |
@@ -42,7 +78,15 @@ Tasks 001-010 are `VALIDATED` by foundation evidence `EV-FOUNDATION-001-001` thr
 | TASK-034 | Reproducibility package | `SPEC_ONLY` | TASK-030, TASK-031, TASK-033 |
 | TASK-035 | Final foundation audit | `SPEC_ONLY` | all-required |
 
+</details>
+
 ## ShopLab/PTES implementation backlog
+
+Baseline Web/ShopLab/Oscar được giữ để tra cứu. Các chỉ dẫn “hướng hiện hành” trong khối lưu giữ sau thuộc roadmap cũ; ưu tiên hiện tại theo plan ở trên. Không chuyển validation giữa source/target hoặc tự đóng acceptance còn thiếu.
+
+<details>
+<summary>Bảng SL-01–SL-12, acceptance và hướng Web/Oscar trước tái định hướng</summary>
+
 
 Nguồn kế hoạch: `PLAN-SHOPLAB-PTES-001` / `SHOPLAB-PTES-001`, xem [PROJECT_PLAN.md](PROJECT_PLAN.md). Người dùng đã mở phạm vi cập nhật tài liệu/task; không cấp per-run approval hoặc quyền sửa contracts/catalog/evidence. Giữ TASK-001–035 IDs/dependencies và các validation lịch sử; theo yêu cầu người dùng, cập nhật TASK-015/016/017 thành `IMPLEMENTED` trong phạm vi mô tả bên dưới, không tự review hoặc nâng validation. `SL-*` là work packages bổ sung, không thay thế hoặc tạo lại canonical task IDs.
 
@@ -71,22 +115,15 @@ Hướng hiện hành: **thẩm định/pin/configuration upstream → fit-gap/a
 
 Các specs [TASK-011](docs/task-specs/TASK-011-cyber-range-network.md), [TASK-012](docs/task-specs/TASK-012-web-target-a.md), [TASK-013](docs/task-specs/TASK-013-web-target-b.md), [TASK-014](docs/task-specs/TASK-014-clean-control-target.md), [TASK-018](docs/task-specs/TASK-018-observation-normalizer.md) và [TASK-019](docs/task-specs/TASK-019-knowledge-state-store.md) phân loại phần giữ nguyên, impact assessment và receipts mới khi web snapshot đổi. Bảng trạng thái/dependencies và evidence lịch sử ở trên không đổi; validation cũ không áp dụng tự động cho snapshot mới. TARGETS-012/013/014 là evidence target riêng theo phạm vi lịch sử; linkage RUNTIME-004 cần đối chiếu riêng trước tái sử dụng. Instance scenario/ground-truth/experiment version theo snapshot tại TASK-008–010; ground truth chỉ evaluation.
 
-### Enterprise Red Team Planning backlog
-
-Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` chuyển đổi trọng tâm sang **AI Attack Planning for Red Team under Partial Observability (Belief-State Planning)**. Kế thừa toàn bộ contracts, action catalog, safety gate và evidence framework hiện có; không thay đổi canonical task IDs `TASK-001..035` hoặc các validation lịch sử `SL-01..12`.
-
-| Work package | Liên kết task nền | Trạng thái ban đầu | Phụ thuộc | Đầu ra và điều kiện chấp nhận |
-|---|---|---|---|---|
-| RT-00 | TASK-002, TASK-003 | `IMPLEMENTED` | Không | Enterprise Red Team Planning Rebaseline: Tranche tài liệu và quản trị. Ban hành ADR-014 (Belief State Architecture), cập nhật AGENTS.md sang allowlist theo task, rebaseline PROJECT_CONTEXT.md, PROJECT_PLAN.md, TASKS.md. Bảo toàn toàn bộ lịch sử foundation và evidence. Báo cáo checks, blockers và allowlist RT-01. |
-| RT-01 | TASK-003, TASK-008, TASK-009 | `SPEC_ONLY` | RT-00 | Zero-Knowledge Boundary: Di chuyển ground-truth schema từ `agent/planner/contracts/ground-truth.schema.json` sang vị trí canonical dưới `evaluation/**`. Thiết lập rào chắn Zero-Knowledge: Planner không nhận ground truth, global network topology, full target allowlist, hidden credentials hoặc defender state. Tests kiểm tra rào chắn fail-closed. |
-| RT-02 | TASK-005, TASK-006, TASK-019 | `SPEC_ONLY` | RT-01 | Belief State: Thiết kế schema và hiện thực hóa `BeliefState` kế thừa từ `StateManager`. Xây dựng cơ chế cập nhật niềm tin từ quan sát cục bộ (observed facts, reachable assets, open services, credential cache, privilege level, confidence decay). Tuyệt đối không chứa oracle state. |
-| RT-03 | TASK-004, TASK-012, TASK-013 | `SPEC_ONLY` | RT-01, RT-02 | Enterprise Action Model: Chuẩn hóa catalog hành động doanh nghiệp có giới hạn (Enterprise Bounded Actions: recon, discovery, credential access probe, lateral movement hypothesis). Tuân thủ nguyên tắc bounded action; cấm arbitrary shell và free-form payloads. |
-| RT-04 | TASK-007, TASK-010, TASK-023 | `SPEC_ONLY` | RT-02, RT-03 | Simulation Backend: Xây dựng simulator POMDP enterprise. Lưu giữ True State độc quyền trong engine, trả về partial observations và accounting chi phí/ngân sách cho planner. Chạy deterministic offline tests; hoàn thành và kiểm chứng độc lập TRƯỚC KHI kết nối live range. |
-| RT-05 | TASK-020, TASK-021, TASK-022, TASK-027 | `SPEC_ONLY` | RT-04 | Planner Integration: Tích hợp các planner (RULE baseline, LLM planner, RL policy, HYBRID router) với `BeliefState` và Simulation Backend. Tuân thủ proposal schema, kiểm định provenance, strict error fallback, zero-dispatch gate evaluation. |
-| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `SPEC_ONLY` | RT-04, RT-05 | Mini Enterprise Live Range: Cyber-range multi-host doanh nghiệp thu nhỏ cô lập (Docker internal networks, segmented VLANs, simulated services, loopback ingress). Dùng chung executor và observation contract với simulator (RT-04). Tích hợp CentralizedSafetyGate kiểm soát phân quyền. |
-| RT-07 | TASK-028, TASK-029, TASK-030, TASK-031 | `SPEC_ONLY` | RT-05, RT-06 | Experimental Evaluation: Bộ kịch bản đánh giá so sánh (benchmark suite) trên simulator và live range. Chấm điểm planner dựa trên Ground Truth (cô lập trong evaluation). Đo lường metrics: success rate, steps to goal, budget efficiency, belief accuracy vs true state. |
+</details>
 
 ## Checks and observed implementation state
+
+Giữ nguyên receipts đã ghi, gồm phần RT đang triển khai, để bảo toàn commands, hashes, limitations và các liên kết cũ. Từ “hiện tại/tiếp theo” trong receipt áp dụng cho snapshot lúc ghi; không thay kết quả gate/review của source mới. Không tái xác nhận receipts lịch sử trong đợt tài liệu này.
+
+<details>
+<summary>Receipts, kiểm chứng và handoff đã ghi trước đợt chuẩn hóa</summary>
+
 
 ### RT-00 — Enterprise Red Team Planning Rebaseline
 
@@ -107,6 +144,35 @@ Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` c
   4. Bắt buộc phát hiện malformed filenames, missing IDs trong chuỗi, và duy trì các kiểm tra cấu trúc H1/H2 template (`ADR_HEADINGS`).
 - Cập nhật bộ unit test `tests/scaffold/test_validator.py`: thay thế `test_exact_adr_manifest` bằng 5 unit tests toàn diện (`test_adr_filename_pattern`, `test_adr_invariants_contiguous_and_unique`, `test_adr_invariants_detect_duplicates`, `test_adr_invariants_detect_missing_sequence`, `test_adr_invariants_detect_malformed_filename`) đạt 5/5 PASS.
 - Xác thực: `ADR-014` không còn bị báo `extraneous`; không tạo regression cho `ADR-001..013`. Toàn bộ 52/53 unit tests của scaffold suite PASS (1 fail duy nhất do pre-existing blockers của workspace).
+
+### RT-01A — Ground Truth Physical Isolation
+
+`IMPLEMENTED` cho tranche tách ly vật lý Ground Truth và thiết lập rào chắn Zero-Knowledge tự động; chưa `VALIDATED`.
+- Di chuyển canonical Ground Truth schema từ `agent/planner/contracts/ground-truth.schema.json` sang vị trí canonical trong Evaluation domain: `evaluation/ground_truth/ground-truth.schema.json`. Xóa hoàn toàn file schema khỏi `agent/planner/contracts/` để bảo đảm zero copies trong Planner domain.
+- Cập nhật manifest liên kết `evaluation/ground-truth/schema-link.json`: trỏ `ground_truth_schema` tới `evaluation/ground_truth/ground-truth.schema.json` và duy trì `runtime_consumers: []`.
+- Cập nhật validator `scripts/validation/validate_scaffold.py`: khai báo `GROUND_TRUTH_SCHEMA_PATH`, tải 9 schemas planner từ `agent/planner/contracts` cùng 1 schema evaluation ground-truth; loại bỏ ngoại lệ miễn trừ `path.name == "ground-truth.schema.json"` khỏi kiểm tra `runtime_roots` để fail-closed nếu có bất kỳ file ground-truth nào xuất hiện trong runtime/agent; kiểm tra ràng buộc `schema-link.json` trỏ đúng schema canonical.
+- Cập nhật `tests/contracts/test_contracts.py` (đã được phê duyệt mở rộng allowlist): kiểm tra 9 planner schemas trong `agent/planner/contracts`, 1 canonical schema trong `evaluation/ground_truth/`, xác nhận `agent/planner/contracts/ground-truth.schema.json` không tồn tại, và kiểm tra tính toàn vẹn closed Draft 2020-12 object trên toàn bộ 10 contracts (12/12 tests PASS).
+- Xây dựng bộ test suite boundary tự động `tests/boundary/test_ground_truth_boundary.py` (8/8 tests PASS) chứng minh các bất biến:
+  1. *Physical Isolation*: Schema Ground Truth chỉ nằm ở Evaluation domain, không còn ở Planner contracts.
+  2. *Planner Boundary*: `runtime/planners/**` và `agent/planner/**` không import, load hoặc reference Ground Truth (AST scan).
+  3. *State Boundary*: `agent/memory/**` và `runtime/state/**` không đọc hoặc lưu trữ Ground Truth; `StateSnapshot.from_state` từ chối fail-closed mọi state chứa truth keys.
+  4. *Runtime Orchestration Boundary*: `runtime/orchestration/**` không đưa ground truth vào planner input; `PlanningInput` không chứa accessors/thuộc tính ground truth.
+  5. *Evaluation Exception*: Evaluation domain được phép load canonical schema và validate dữ liệu `sample.json` sạch sẽ.
+  6. *No Source Leakage*: Các lớp planner không chứa bất kỳ API/helper nào để truy vấn ground truth hoặc oracle ngầm.
+  7. *Active Regression Detection*: Bộ quét AST chủ động phát hiện và chặn đứng các vi phạm import/call mới trong mã nguồn planner/state.
+- Receipts kiểm thử:
+  - `tests/boundary/test_ground_truth_boundary.py`: 8 tests PASS (exit code 0).
+  - `tests/contracts/test_contracts.py`: 12 tests PASS (exit code 0).
+  - `tests/safety/test_root_types.py`: 13 tests PASS (exit code 0).
+  - `tests/evaluation/test_metrics.py`: 8 tests PASS (exit code 0).
+  - `tests/runtime/test_planner_interface.py`: 16 tests PASS (exit code 0).
+  - `tests/runtime/test_observed_planner.py`: 13 tests PASS (exit code 0).
+  - `tests/runtime/test_rule_based_planner.py`: 28 tests PASS (exit code 0).
+  - `tests/runtime/test_llm_planner.py`: 31 tests PASS (exit code 0).
+  - `tests/runtime/test_hybrid_router.py`: 20 tests PASS (exit code 0).
+  - `tests/runtime/test_autonomous_runner.py` & `test_autonomous_pentest.py`: 34 tests PASS (exit code 0).
+  - `git diff --check`: PASS (exit code 0).
+  - `scripts/validation/validate_scaffold.py`: không tạo thêm lỗi mới (0 regressions); bảo toàn nguyên trạng các blocker pre-existing của workspace (.demo-session.json, missing fixtures, .pyc artifacts).
 
 ### TASK-027 — Router tham chiếu hybrid ngoại tuyến
 
@@ -790,6 +856,418 @@ Bổ sung bộ năng lực kiểm thử an toàn có giới hạn (Bounded Safe 
 | `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
 | `python -B scripts/cyber-range/run_autonomous_pentest.py` | 0 | Live Cyber Range Pentest Run PASS (RUN-AUTONOMOUS-PENTEST-1791723996) |
 
+### RT-01 — Zero-Knowledge Boundary receipts
+
+Tranche `RT-01` (Zero-Knowledge Boundary) gồm hai tiểu tranche:
+- `RT-01A` (Ground Truth Physical Isolation): Di chuyển canonical Ground Truth schema ra khỏi Planner domain sang `evaluation/ground_truth/ground-truth.schema.json`. Cập nhật `schema-link.json` và `validate_scaffold.py`. Xây dựng bộ kiểm thử biên tự động `tests/boundary/test_ground_truth_boundary.py` (8/8 PASS).
+- `RT-01B` (Planner Visibility Boundary / Fog-of-War): Tách biệt hoàn toàn Safety Target Scope (do `CentralizedSafetyGate` sở hữu) khỏi Planner-Visible Target Scope (do `PlanningInput` và `AutonomousRunner` sở hữu).
+  - Thuộc tính canonical `visible_target_ids: frozenset[str]` trên `PlanningInput`, cung cấp `@property allowed_target_ids` tương thích ngược (phát cảnh báo `DeprecationWarning`).
+  - Hàm chiếu `project_visible_targets(state, initial_seed)` chỉ đưa target vào visibility khi có sự kiện quan sát chuẩn tắc (`fact_type == "TARGET"` hoặc host trong `SERVICE`/`ENDPOINT`).
+  - `ObservedStatePlanner` mặc định visibility là `{self.target_id}`, loại bỏ hoàn toàn việc nạp ngầm toàn bộ allowlist an toàn.
+  - `AutonomousRunner` tại $t=0$ chỉ cấp target seed (`self.target_id`) cho planner, tự động cập nhật tầm nhìn khi quan sát thấy target mới qua `_ingest_and_update_visibility`.
+  - Bộ kiểm thử biên tự động `tests/boundary/test_planner_visibility_boundary.py` (8/8 PASS).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -m unittest tests/boundary/test_ground_truth_boundary.py` | 0 | 8 tests PASS (Ground Truth physical isolation & non-leakage) |
+| `python -m unittest tests/boundary/test_planner_visibility_boundary.py` | 0 | 8 tests PASS (Planner visibility boundary & fog-of-war) |
+| `python -m unittest discover -s tests/boundary` | 0 | 16 tests PASS (Full boundary test suite) |
+| `python -m unittest tests/runtime/test_planner_interface.py` | 0 | 28 tests PASS (Planner interface & visible_target_ids contract) |
+| `python -m unittest tests/runtime/test_observed_planner.py` | 0 | 16 tests PASS (Observed planner without allowlist leakage) |
+| `python -m unittest tests/runtime/test_rule_based_planner.py` | 0 | 29 tests PASS (Rule planner visibility candidate loop) |
+| `python -m unittest tests/runtime/test_llm_planner.py` | 0 | 30 tests PASS (LLM planner zero hidden target leakage) |
+| `python -m unittest tests/runtime/test_hybrid_router.py` | 0 | 20 tests PASS (Hybrid router backward compatibility) |
+| `python -m unittest tests/runtime/test_autonomous_runner.py` | 0 | 14 tests PASS (Autonomous runner fog-of-war lifecycle) |
+| `python -m unittest tests/contracts/test_contracts.py` | 0 | 12 tests PASS (Canonical contract schema validation) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-02A — Enterprise Observation Model receipts
+
+Tranche `RT-02A` (Enterprise Observation Model) hoàn thành việc mở rộng canonical Observation Model cho Enterprise Red Team Planning và thiết lập rào chắn tin cậy (Trust Boundary) giữa Execution/Perception và Planning mà tuyệt đối không cho raw executor/tool output đi trực tiếp vào Planner:
+- Mở rộng canonical vocabulary trong `agent/planner/contracts/observation.schema.json` từ 8 lên 15 fact types: `TARGET`, `HOST`, `SERVICE`, `ENDPOINT`, `PARAMETER`, `CANDIDATE_FINDING`, `CONFIRMED_FINDING`, `ACCESS`, `CREDENTIAL`, `SESSION`, `REACHABILITY`, `ACTION_OUTCOME`, `DETECTION_SIGNAL`, `OBJECTIVE`, `CONTROL`. Bảo toàn 100% tương thích ngược với vocabulary cũ.
+- Bổ sung các trường provenance trên Observation envelope: `source_kind`, `source_target`, `source_session`, `confidence`, `sequence_num`, `evidence_refs`.
+- Xây dựng `EnterpriseObservationNormalizer` (`agent/perception/normalizers/enterprise_normalizer.py`):
+  - Khử bí mật credentials: chỉ xuất hiện handle mờ (`credential_id`, `principal`, `credential_kind`, `observed_scope`, `validity_state`), loại bỏ hoàn toàn plaintext password/secret khỏi Planner-facing context.
+  - Vô trùng sessions: chỉ xuất hiện opaque handle (`session_id`, `target_id`, `access_level`, `state`), không để lộ raw subprocess, socket hay shell internals.
+  - Cách ly reachability: chỉ sinh từ kết quả thăm dò/hành động hợp lệ có evidence; cấm tổng hợp từ cấu hình đồ thị toàn cục (Docker Compose, target-allowlist).
+  - Giới hạn detection signal: chỉ chấp nhận các tín hiệu quan sát được từ phía attacker (`BLOCKED`, `THROTTLED`, `SESSION_LOST`, `AUTH_LOCKOUT`, `WAF_REJECTION`, `RATE_LIMITED`); cấm nuốt trường Ground Truth hay SIEM riêng của defender.
+  - Xác thực objective: chỉ sinh khi objective đạt được qua action hợp lệ kèm evidence reference; không leak metadata flag ẩn.
+  - Phân tách fact vs hypothesis: giả thuyết suy diễn mang `source_kind="PLANNER_INFERENCE"` và không mở khóa tầm nhìn mục tiêu (`visible_target_ids`).
+- Enforce Trust Boundary: `PlannerStateAdapter` và `AutonomousRunner._ingest_and_update_visibility` từ chối fail-closed mọi object thô/untrusted nếu chưa qua canonical normalizer; bảo toàn fog-of-war.
+- Tạo đặc tả nhiệm vụ chi tiết tại `docs/task-specs/RT-02-enterprise-observation-model.md`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest tests/perception/test_enterprise_observation.py` | 0 | 10 tests PASS (Enterprise observation fixtures, provenance, credential/session redaction, reachability & detection isolation) |
+| `python -B -m unittest tests/contracts/test_contracts.py` | 0 | 13 tests PASS (Canonical contract schema validation including 15-fact vocabulary & provenance) |
+| `python -B -m unittest tests/boundary/test_observation_boundary.py` | 0 | 5 tests PASS (Observation model trust boundary, raw output rejection, hypothesis non-expansion) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 21 tests PASS (Full boundary test suite: RT-01A 8 tests, RT-01B 8 tests, RT-02A 5 tests) |
+| `python -B -m unittest tests/unit/test_observation_normalizer.py tests/integration/test_nuclei_normalizer.py` | 0 | 57 tests PASS (Normalizer backwards compatibility & regression suite) |
+| `python -B -m unittest tests/runtime/test_observed_planner.py tests/runtime/test_rule_based_planner.py tests/runtime/test_llm_planner.py tests/runtime/test_hybrid_router.py tests/runtime/test_planner_interface.py tests/runtime/test_autonomous_runner.py` | 0 | 137 tests PASS (Runtime planners & autonomous runner regression suite, 0 regressions) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-02B — Belief State Projection receipts
+
+Tranche `RT-02B` (Belief State Projection) hoàn thành việc xây dựng cơ chế chiếu trạng thái niềm tin tất định (deterministic Belief State Projection) từ canonical observations/knowledge store mà không tạo nguồn sự thật độc lập, không rò rỉ Ground Truth, không lộ full safety allowlist, và phân tách triệt để giả thuyết khỏi sự thật:
+- Source of truth invariant: Kiến tạo mô hình `BeliefState` và hàm chiếu `project_belief_state` (`agent/memory/state/belief_state.py`) dẫn xuất 100% từ chuỗi quan sát chuẩn tắc (`observed_facts`). Cấm Planner chỉnh sửa trực tiếp Belief State.
+- Facts vs Hypotheses Hard Boundary: Mọi quan sát mang `source_kind="PLANNER_INFERENCE"` bị cách ly hoàn toàn vào `belief.hypotheses`; tuyệt đối không tự thêm máy chủ (`known_hosts`), không mở rộng tầm nhìn (`visible_target_ids`), không tạo thông tin xác thực (`known_credentials`), không nâng quyền hạn (`access_state`), không tạo phiên (`sessions`), không tạo liên kết mạng (`observed_reachability`), không xác nhận lỗ hổng, và không hoàn thành mục tiêu.
+- Monotonicity & State Transitions:
+  - Máy chủ (`known_hosts`): Khám phá đơn điệu kèm địa chỉ IP và mức quyền cao nhất đã xác nhận.
+  - Quyền hạn (`access_state`): Chuyển trạng thái thứ bậc `NONE` -> `FOOTHOLD` -> `USER` -> `PRIVILEGED` -> `SYSTEM`; ghi nhận mức quyền đỉnh đã chứng minh.
+  - Thông tin xác thực (`known_credentials`): Khử triệt để plaintext password/secret; handle mờ không suy ngược được từ digest của secret; chuyển trạng thái hợp lệ (`VALID` -> `REVOKED` / `INVALID` là trạng thái cuối).
+  - Phiên kết nối (`sessions`): Khử sạch raw shell, subprocess hay socket handle; chuyển trạng thái `ACTIVE` -> `CLOSED` không thể mở lại.
+  - Khả năng tiếp cận mạng (`observed_reachability`): Cung có hướng sinh độc quyền từ các sự kiện probe/reachability thực nghiệm; cấm đoán mò từ Docker Compose hay allowlist an toàn.
+  - Tín hiệu phòng thủ (`detection_signals`): Chỉ ghi nhận các sự kiện quan sát được từ phía attacker; loại bỏ toàn bộ dữ liệu SIEM/điểm phát hiện riêng của defender.
+  - Mục tiêu (`objective_status`): Chỉ cập nhật trạng thái `DISCOVERED` / `ACHIEVED` khi có quan sát tin cậy gắn kèm bằng chứng (`evidence_refs`).
+- Tích hợp chuẩn tắc:
+  - `StateManager`: bổ sung `get_belief_state() -> BeliefState`, bảo toàn tính tương thích của `get_state()`.
+  - `KnowledgeStateStore`: bổ sung `get_belief_state(context) -> BeliefState`.
+  - `PlannerStateAdapter`: bổ sung `get_belief_state()` và nạp cấu trúc `belief_state` trong `get_minimized_planner_state()`; pre-seed cache quan sát tránh duplicate replay.
+  - `StateSnapshot`: bổ sung `get_belief_state() -> BeliefState` từ danh sách facts đã xác thực.
+  - `project_visible_targets`: chặn đứng hoàn toàn `PLANNER_INFERENCE` facts mở khóa `visible_target_ids`.
+  - `scripts/validation/validate_scaffold.py`: tổng quát hóa quy ước kiểm định task spec với pattern `RT_SPEC_PATTERN = re.compile(r"^RT-([0-9]{2}[A-Za-z]?)-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest tests/runtime/test_belief_state_projection.py` | 0 | 16 tests PASS (A–R requirements: hosts, services, endpoints, access monotonicity, credential/session redaction, reachability, detection signals, hypotheses quarantine, zero GT, replay determinism) |
+| `python -B -m unittest tests/boundary/test_belief_state_boundary.py` | 0 | 5 tests PASS (Belief State immutability, self-confirming attack regression, hypothesis visibility isolation, safety allowlist isolation, ground-truth rejection) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 26 tests PASS (Toàn bộ boundary test suite: RT-01A 10 tests, RT-01B 6 tests, RT-02A 5 tests, RT-02B 5 tests) |
+| `python -B -m unittest discover -s tests/contracts` | 0 | 13 tests PASS (Toàn bộ contracts schemas bao gồm 15-fact vocabulary, Draft 2020-12 closed object validation) |
+| `python -B -m unittest discover -s tests/perception` | 0 | 10 tests PASS (Enterprise observation normalizer suite) |
+| `python -B -m unittest tests/unit/test_knowledge_state_store.py` | 0 | 39 tests PASS (StateManager & KnowledgeStateStore unit suite) |
+| `python -B -m unittest discover -s tests/runtime` | 0 | 478 tests PASS (Toàn bộ runtime test suite, 0 regressions) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-03A — Generic TTP Action Contract receipts
+
+Tranche `RT-03A` (Generic TTP Action Contract) hoàn thành việc chuyển đổi Action Model từ các action gắn chặt với target/vulnerability cụ thể sang **generic bounded TTP capabilities** có contract rõ ràng, bảo đảm các bất biến:
+- Source of truth & Schema: Cập nhật `agent/planner/contracts/action.schema.json` thành Draft 2020-12 closed object (`additionalProperties: false`) biểu diễn đầy đủ năng lực TTP tổng quát: `action_id`, `action_class`, `name`, `description`, `target_kind`, `preconditions`, `expected_effects`, `step_cost`, `noise_cost`, `required_capability`, `argument_schema`, `mitre_attack`, `classification`.
+- Danh mục năng lực TTP doanh nghiệp MVP (8 capabilities):
+  1. `RECON` / `DISCOVERY` (`ACTION-DISCOVERY-001`): Khám phá mạng và dịch vụ mở trên subnet (`T1018`).
+  2. `INITIAL_ACCESS` / `FOOTHOLD` (`ACTION-FOOTHOLD-001`): Thiết lập phiên foothold ban đầu qua dịch vụ mở có lỗ hổng (`T1190`).
+  3. `HOST_RECON` (`ACTION-HOSTRECON-001`): Thu thập cấu hình hệ điều hành và giao diện nội bộ từ active session (`T1082`).
+  4. `CREDENTIAL_ACCESS` / `CREDENTIAL_DISCOVERY` (`ACTION-CREDS-001`): Khám phá và thu thập credential handle hợp lệ (`T1552`).
+  5. `LATERAL_MOVEMENT` / `PIVOT` (`ACTION-PIVOT-001`): Mở rộng phiên tấn công sang máy chủ nội bộ qua thông tin xác thực (`T1021`).
+  6. `PRIVILEGE_ESCALATION` (`ACTION-PRIVESC-001`): Nâng đặc quyền thực thi cục bộ từ unprivileged lên privileged (`T1068`).
+  7. `OBJECTIVE_ACCESS` (`ACTION-OBJECTIVE-001`): Truy cập và xác thực mục tiêu crown-jewel (`T1565`).
+  8. `STOP` (`ACTION-STOP-001`): Kết thúc hoạch định khi hoàn thành mục tiêu hoặc cạn ngân sách.
+- Target Independence: Định nghĩa năng lực hoàn toàn độc lập với mục tiêu cụ thể; không chứa IP, hostname, lab target ID, hoặc vulnerability fixture name. Target được lựa chọn tại planning/proposal time từ `visible_target_ids`.
+- Structured Preconditions: Điều kiện tiên quyết có cấu trúc, định kiểu chặt chẽ; cấm hoàn toàn eval strings hoặc mã thực thi tùy ý.
+- Current vs Historical Access: Phân biệt rạch ròi `proven_access_level` với `active_execution_capability`; các hành động yêu cầu quyền thực thi bắt buộc có `require_active_session: true`. Toàn bộ phiên `CLOSED` không thể thỏa mãn năng lực thực thi dù mức quyền đỉnh trong quá khứ là `PRIVILEGED` hay `SYSTEM`.
+- Hard Invariant: `expected_effects` tuyệt đối không được trực tiếp đột biến Belief State; mọi biến đổi trạng thái phải đi qua chuỗi sống: Proposal -> Safety Gate -> Executor -> Canonical Observation -> Belief Projection.
+- Bounded Costs: `step_cost` là số nguyên không âm; `noise_cost` (Operational Noise Cost) là số thực không âm.
+- Backward Compatibility: Giữ nguyên vẹn 100% các action Web Pentest hiện hữu (`LEGACY_WEB_COMPAT` và `PLANNER_INTERNAL`) trong `actions/catalog/action-catalog.json`.
+- Canonical Registry: Hiện thực hóa `actions/catalog/action_registry.py` cung cấp API nạp, kiểm tra schema, quét rò rỉ mục tiêu và thẩm định hợp đồng điều kiện tiên quyết.
+- Trạng thái: RT-03A là `IMPLEMENTED`; RT-03B (Action Constraint Evaluator) giữ nguyên `SPEC_ONLY`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest tests/contracts/test_action_contract.py` | 0 | 8 tests PASS (A, B, D, E, F: Draft 2020-12 closed schema, generic enterprise actions, legacy web compat, structured preconditions, non-negative step/noise cost, MITRE ATT&CK schema) |
+| `python -B -m unittest tests/boundary/test_action_boundary.py` | 0 | 6 tests PASS (C, G, H, I, J, K: zero target/IP leakage, expected_effects zero mutation invariant, closed session rejection for active execution, zero ground truth references, target-neutral metadata) |
+| `python -B -m unittest discover -s tests/contracts` | 0 | 21 tests PASS (Toàn bộ contract test suite: 13 foundation/enterprise schemas + 8 action contract tests) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 32 tests PASS (Toàn bộ boundary test suite: 26 baseline + 6 action boundary tests) |
+| `python -B -m unittest discover -s tests/perception` | 0 | 10 tests PASS (Enterprise observation normalizer suite) |
+| `python -B -m unittest tests/runtime/test_belief_state_projection.py` | 0 | 16 tests PASS (Belief State projection suite) |
+| `python -B -m unittest discover -s tests/planner` | 0 | 16 tests PASS (Planner contract suite) |
+| `python -B -m unittest tests/unit/test_knowledge_state_store.py` | 0 | 39 tests PASS (StateManager & KnowledgeStateStore unit suite) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-03B — Action Constraint Evaluator receipts
+
+Tranche `RT-03B` (Action Constraint Evaluator) hoàn thành việc triển khai một **single canonical Constraint Evaluator** duy nhất xác định action nào khả thi dựa trên Planner-visible Belief State hiện tại, bảo đảm:
+- Single Canonical Evaluator: Hiện thực hóa `ActionConstraintEvaluator` tại `runtime/evaluators/action_evaluator.py`; `evaluate_precondition_contract` tại `actions/catalog/action_registry.py` được tinh gọn thành thin wrapper ủy nhiệm hoàn toàn sang canonical evaluator mà không nhân đôi logic.
+- Rich Evaluation Outcome: Trả về dataclass `EvaluationResult` gồm `eligible: bool`, `action_id: str`, `target_id: str | None`, `satisfied_conditions`, `failed_conditions`, `reason_codes`, `relevant_fact_ids`, `reasons`, `step_cost`, `noise_cost`, `action_class`, `target_kind`.
+- Canonical Reason Codes Vocabulary:
+  - `ACTIVE_SESSION_REQUIRED`: Thiếu phiên ACTIVE unclosed trên target.
+  - `TARGET_NOT_VISIBLE`: Target không nằm trong planner-visible scope (RT-01 boundary).
+  - `HOST_NOT_OBSERVED`: Host chưa được quan sát authoritatively trong Belief State.
+  - `SERVICE_NOT_OBSERVED`: Chưa có dịch vụ được quan sát trên target.
+  - `SERVICE_TYPE_MISMATCH`: Loại dịch vụ quan sát không khớp required_service_type.
+  - `CONFIRMED_FINDING_REQUIRED`: Thiếu phát hiện được xác nhận (CANDIDATE_FINDING không được pass).
+  - `INSUFFICIENT_ACCESS`: Mức quyền hiện thời thấp hơn min_access_level yêu cầu.
+  - `NO_VALID_CREDENTIAL`: Thiếu credential hợp lệ ở trạng thái VALID.
+  - `REACHABILITY_NOT_OBSERVED`: Thiếu cạnh reachability được quan sát đến target.
+  - `OBJECTIVE_ALREADY_ACHIEVED`: Mục tiêu đã đạt trạng thái ACHIEVED.
+  - `PHASE_NOT_ALLOWED`: Phase hiện tại không nằm trong allowed_phases.
+  - `INVALID_TARGET_KIND`: Target không tương thích với target_kind của action.
+- Unified Access Hierarchy: Thống nhất thang đo quyền truy cập `NONE < FOOTHOLD < USER < PRIVILEGED < SYSTEM` trên schema, catalog và evaluator; tự động chuẩn hóa `UNPRIVILEGED` sang `USER` tại parser compatibility layer.
+- Quarantined Hypotheses: Các fact từ `PLANNER_INFERENCE` hoặc có cờ `hypothesis=True` bị cô lập hoàn toàn, tuyệt đối không được thỏa mãn các điều kiện tiên quyết mang tính authoritative.
+- Current vs Historical Access: Quyền lịch sử (`access_level = PRIVILEGED`) với toàn bộ phiên `CLOSED` bị evaluator đánh giá `INELIGIBLE` (`ACTIVE_SESSION_REQUIRED`).
+- Purity & Determinism: Evaluator hoàn toàn read-only, zero state mutation, zero network dispatch, zero Ground Truth inspection; 10 lần chạy cùng input cho ra kết quả bit-for-bit đồng nhất.
+- Eligibility != Authorization: `eligible=True` chỉ xác nhận tính khả thi logic; `CentralizedSafetyGate` giữ thẩm quyền tối cao từ chối lệnh dispatch nếu target không được cấp quyền (`DISALLOWED_TARGET`).
+- STOP Semantics: `ACTION-STOP-001` có `target_kind="ENVIRONMENT"`, không yêu cầu network target hay active session, đánh giá `eligible=True` an toàn.
+- Trạng thái: RT-03B là `IMPLEMENTED` (cả RT-03A và RT-03B đạt `IMPLEMENTED`; chưa `VALIDATED` khi chưa qua independent review).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest tests/runtime/test_action_evaluator.py` | 0 | 22 tests PASS (A–T requirements: target visibility, host/service observation, confirmed vs candidate findings, canonical access ordering, closed vs active session, historical access vs active capability, valid credential, reachability, objective status, determinism, zero mutation, safety gate independence, target neutrality, delegation compatibility, STOP semantics, evaluate_all) |
+| `python -B -m unittest discover -s tests/contracts` | 0 | 21 tests PASS (Draft 2020-12 closed schemas, canonical access enum, action catalog validity) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 32 tests PASS (Toàn bộ boundary test suite: RT-01 Zero-Knowledge, RT-02 Observation/Belief, RT-03 Action boundaries) |
+| `python -B -m unittest discover -s tests/perception` | 0 | 10 tests PASS (Enterprise normalizer suite) |
+| `python -B -m unittest discover -s tests/planner` | 0 | 16 tests PASS (Planner interface & contracts) |
+| `python -B -m unittest tests/runtime/test_belief_state_projection.py` | 0 | 16 tests PASS (Deterministic belief projection suite) |
+| `python -B -m unittest discover -s tests/runtime` | 0 | 478 tests PASS (Toàn bộ runtime test suite, 0 regressions) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` backend/frontend PID blocker |
+
+### RT-04A — Hidden Scenario & True-State Model receipts
+
+Tranche `RT-04A` (Hidden Scenario & True-State Model) hoàn thành việc định nghĩa hợp đồng kịch bản ẩn (Hidden Scenario Contract) và mô hình trạng thái thực (True State Contract) làm nền tảng cho Enterprise Attack Simulator, bảo đảm:
+- Phân tách vật lý ranh giới chân lý (Ground Truth Physical Isolation): True State và Hidden Scenario thuộc độc quyền miền `runtime/simulation` và môi trường Evaluation. Planner domain (`runtime/planners/**`, `agent/planner/**`, `agent/memory/**`) tuyệt đối không được đọc hay import scenario manifest, topology ẩn, lỗ hổng ẩn, credentials ẩn, vị trí crown jewel hay trạng thái phòng thủ ẩn.
+- Draft 2020-12 Closed Schema:
+  - `runtime/simulation/contracts/scenario.schema.json`: Closed schema mô tả `scenario_id`, `entry_seed`, `hidden_nodes`, `hidden_topology`, `hidden_credentials`, `objective`, `detection_model`, `transitions`.
+  - `runtime/simulation/contracts/true-state.schema.json`: Closed schema mô tả `scenario_id`, `run_id`, `current_step`, `random_seed`, `node_states`, `active_sessions`, `credentials_truth`, `reachability_truth`, `objective_truth`, `defender_state`, `action_history`.
+- Mô hình độc lập: `TrueState` là dataclass độc lập tại `runtime/simulation/models/true_state.py`, hoàn toàn tách biệt và không subclass hay chia sẻ state representation với `BeliefState`.
+- Initial Fog-of-War tại t=0: Chỉ có node `entry_seed` duy nhất được công bố cho planner tại thời điểm ban đầu; toàn bộ topology và node nội bộ còn lại ẩn hoàn toàn.
+- Cấu trúc khai báo (Declarative): Không chứa mã thực thi tùy ý, eval string, shell command hoặc payload trong kịch bản.
+- Tính tất định (Determinism): Tuần tự hóa JSON và tính toán băm SHA-256 hoàn toàn tất định và có thể tái lập qua `random_seed`.
+- 4 kịch bản mẫu chuẩn mực (MVP Scenarios S1–S4):
+  1. `scenario_s1_straight.json`: Tiến trình 3 tầng thẳng (Entry foothold -> Internal pivot -> Crown DB).
+  2. `scenario_s2_decoy.json`: Tiến trình có nhánh bẫy honeypot và honey-token (`validity_state: HONEY_TOKEN`).
+  3. `scenario_s3_blocked.json`: Đường trực tiếp bị chặn firewall (`is_blocked: true`), có đường phụ qua jump-box.
+  4. `scenario_s4_clean.json`: Hệ thống clean baseline không có lỗ hổng khả thi, kiểm chứng hành vi dừng an toàn.
+- Read-only Evaluator Interface: `ScenarioEvaluationView` tại `runtime/simulation/models/evaluator_view.py` cung cấp giao diện chấm điểm chỉ đọc kết hợp True State, Belief State và Action History.
+- Trạng thái: RT-04A là `IMPLEMENTED`; RT-04B (Transition & Observation Simulator) và RT-04C (Gymnasium Simulator Wrapper) giữ nguyên `SPEC_ONLY`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest discover -s tests/simulation` | 0 | 27 tests PASS (Draft 2020-12 closed schemas, S1–S4 validation, fail-closed loader, TrueState model separation, deterministic serialization, evaluator view) |
+| `python -B -m unittest tests/boundary/test_simulation_boundary.py` | 0 | 7 tests PASS (Zero simulation imports in planner domain, PlannerStateAdapter isolation, Evaluator isolation, t=0 fog-of-war, zero leakage of hidden inventory/topology/credentials/objective) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 39 tests PASS (Toàn bộ boundary test suite: 26 baseline + 6 action boundary + 7 simulation boundary) |
+| `python -B -m unittest discover -s tests/contracts` | 0 | 21 tests PASS (Toàn bộ contract test suite: 13 foundation/enterprise schemas + 8 action contract tests) |
+| `python -B -m unittest tests/perception/test_enterprise_observation.py` | 0 | 10 tests PASS (Enterprise observation normalizer suite) |
+| `python -B -m unittest tests/runtime/test_action_evaluator.py tests/runtime/test_belief_state_projection.py` | 0 | 38 tests PASS (Action constraint evaluator & belief state projection suites) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` backend/frontend PID blocker |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-04B — Transition & Observation Simulator receipts
+
+Tranche `RT-04B` (Transition & Observation Simulator) hoàn thành việc triển khai Transition Engine và Observation Generator chuẩn mực (canonical) biến action được Planner đề xuất, Constraint Evaluator chấp thuận và Safety Gate cho phép thành: (1) hidden True-State transition; (2) attacker-observable result; (3) canonical Observation hợp thức hóa với `observation.schema.json` dùng để cập nhật Belief State.
+
+Bảo đảm các bất biến cốt lõi:
+- Hard Invariant: `Eligible != Successful`. ActionConstraintEvaluator chỉ đánh giá logic trên Planner-visible Belief State; TransitionEngine thẩm định điều kiện thực tế trên hidden Scenario + TrueState. Một hành động có thể eligible=True nhưng environment outcome=FAILURE (ví dụ do firewall chặn trong S3, honeypot trong S2, hoặc hệ thống an toàn trong S4).
+- Pipeline thực thi chuẩn mực (End-to-end Execution Pipeline):
+  `Planner Proposal -> ActionConstraintEvaluator -> CentralizedSafetyGate -> Simulation Executor / Transition Engine -> Hidden True-State Transition -> Observation Generator -> Canonical Observation -> StateManager Ingestion -> Belief Projection`.
+  Không có đường thực thi nào bypass Safety Gate hay Constraint Evaluator.
+- Canonical Transition Engine (`runtime/simulation/engine/transition_engine.py`):
+  - Phương thức `transition(true_state, scenario, action, target, rng, proposal_parameters, authorized)` trả về dataclass `TransitionResult`.
+  - Functional / Copy-on-write semantics: không mutate TrueState gốc, tạo bản sao mới với các biến đổi (access level, session creation, credential reveal, reachability edges, objective completion).
+  - Tích lũy tiếng ồn hoạt động (`accumulated_noise += noise_delta`) và cập nhật trạng thái phòng thủ (`QUIET < MONITORING < ALERTED < CONTAINED`) theo ngưỡng kịch bản.
+  - Fail-closed khi hành động chưa được cấp quyền (`authorized=False`).
+- Canonical Observation Generator (`runtime/simulation/engine/observation_generator.py`):
+  - Phương thức `generate_observation(...)` tạo envelope quan sát canonical tuân thủ 100% JSON Schema Draft 2020-12 closed object qua `validate_canonical_observation`.
+  - Sinh fact ID tất định (`FACT-SIM-...`), source kind `SIMULATED`, timestamp UTC chuẩn.
+  - Tẩy xóa triệt để (fail-closed sanitization) các khóa cấm rò rỉ Ground Truth (`hidden_nodes`, `topology_graph`, `raw_token`, `cleartext_secret`, `is_decoy`, `is_blocked`).
+  - Tự động phát sinh fact fallback `ACTION_OUTCOME` failure khi transition thất bại mà kịch bản không định nghĩa template tương ứng.
+- Simulation Executor (`runtime/simulation/engine/simulation_executor.py`):
+  - Tích hợp điều phối khép kín: kiểm định điều kiện tiên quyết (`ActionConstraintEvaluator`), kiểm soát an toàn (`CentralizedSafetyGate`), thực hiện transition ẩn (`TransitionEngine`), sinh quan sát chuẩn (`ObservationGenerator`), và cập nhật trạng thái (`StateManager.apply_observation`).
+- Trạng thái: RT-04B là `IMPLEMENTED` (cả RT-04A và RT-04B đạt `IMPLEMENTED`; RT-04C Gymnasium Simulator Wrapper giữ nguyên `SPEC_ONLY`).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m unittest tests/simulation/test_transition_engine.py` | 0 | 7 tests PASS (S1 progression, S2 honey-token alert, S3 firewall blockage failure, S4 clean control failure, copy-on-write immutability, unauthorized rejection, deterministic replay) |
+| `python -B -m unittest tests/simulation/test_observation_generator.py` | 0 | 4 tests PASS (Draft 2020-12 schema conformance, secret/ground-truth leakage sanitization, fallback failure fact, deterministic fact IDs) |
+| `python -B -m unittest tests/simulation/test_simulation_executor.py` | 0 | 5 tests PASS (Precondition rejection, safety gate rejection, kill switch enforcement, S1 end-to-end progression to objective, S3 partial observability & replan) |
+| `python -B -m unittest discover -s tests/simulation` | 0 | 43 tests PASS (Toàn bộ simulation test suite: 27 RT-04A + 16 RT-04B tests) |
+| `python -B -m unittest discover -s tests/boundary` | 0 | 41 tests PASS (Toàn bộ boundary test suite bao gồm simulation boundary AST scan engine classes) |
+| `python -B -m unittest tests/perception/test_enterprise_observation.py tests/runtime/test_action_evaluator.py tests/runtime/test_belief_state_projection.py tests/contracts/test_action_contract.py` | 0 | 56 tests PASS (Perception, evaluator, belief projection, action contracts suites, 0 regressions) |
+
+### RT-05A — Common Planner Episode Interface & Rule Baseline
+
+- Triển khai thành công Planner-Neutral Episode Integration Layer và Rule-Based Planner Baseline cho Enterprise Red Team Planning theo kế hoạch RT-05A.
+- Bề mặt thông tin an toàn duy nhất (`runtime/planners/planner_context.py`):
+  - `PlannerDecisionContext`: Dataclass bất biến (`frozen=True`) chứa thông tin an toàn cho planner: `run_id`, `step_index`, `max_steps`, `current_phase`, `remaining_budget`, `max_budget`, `visible_target_ids`, `belief_state`, `candidate_proposals`, `eligible_proposals`, `rejected_proposals`, `previous_outcome`, `objective_statement`, `action_history`.
+  - Quét đệ quy thời gian chạy (`_scan_for_forbidden_data`) bảo đảm tuyệt đối không rò rỉ Ground Truth (`true_state`, `hidden_scenario`, `evaluator_view`, topology ẩn, credentials ẩn, defender state ẩn) và numeric Gym reward.
+  - Vết quyết định chuẩn tắc (`PlannerDecisionTrace`): ghi nhận đầy đủ `step_index`, `visible_targets`, `candidate_action_ids`, `eligible_candidates`, `chosen_proposal`, `rationale`, `reason_code`, `observable_prior_outcome`, `planning_latency_ms`.
+- Bộ sinh đề xuất chuẩn tắc (`runtime/planners/candidate_generator.py`):
+  - `CandidateGenerator`: Tái sử dụng thống nhất bởi mọi Planner và `SimulationGymEnv`.
+  - Sinh candidate proposals thuần túy từ `belief_state.visible_target_ids` và `ActionRegistry`. Tuyệt đối không đọc danh mục node của `HiddenScenario`.
+  - Không đọc danh sách target allowlist của `CentralizedSafetyGate`.
+  - Đánh giá tính hợp lệ logic qua `ActionConstraintEvaluator`, gán chi phí `step_cost` và `noise_cost`.
+  - Ưu tiên credential hợp lệ cho pivot và objective access; chỉ sinh đề xuất không xác thực khi chưa có credential khớp.
+- Gym Action-Mask Non-Leakage (`runtime/simulation/gym_adapter.py`):
+  - `SimulationGymEnv._generate_admissible_proposals` ủy quyền trực tiếp cho `CandidateGenerator`.
+  - Đảm bảo tại $t=0$, không gian hành động và action mask không tiết lộ số lượng hoặc định danh của các node ẩn.
+- Rule-Based Planner Baseline (`runtime/planners/rule_based_planner.py`):
+  - Triển khai `_plan_context(context: PlannerDecisionContext) -> PlannerDecision`.
+  - Bảo lưu 100% tính tương thích ngược với các kiểm thử evidence-review cũ (`PlanningInput`).
+  - Phân cấp ưu tiên ngữ nghĩa chuẩn mực (Semantic Priority Hierarchy):
+    1. `OBJECTIVE_COMPLETE` -> STOP
+    2. `BUDGET_EXHAUSTED` -> STOP
+    3. `NETWORK_RECON` (`ACTION-RECON-001`, `ACTION-DISCOVERY-001`)
+    4. `SERVICE_SCAN` (`ACTION-SCAN-001`)
+    5. `INITIAL_ACCESS_FOOTHOLD` (`ACTION-WEB-001`)
+    6. `HOST_RECON` (`ACTION-HOSTRECON-001`)
+    7. `CREDENTIAL_DISCOVERY` (`ACTION-AUTH-001`, `ACTION-CREDS-001`)
+    8. `LATERAL_PIVOT` (`ACTION-FLOW-001`, `ACTION-PIVOT-001`)
+    9. `PRIVILEGE_ESCALATION` (`ACTION-PRIVESC-001`)
+    10. `PURSUING_MISSION_OBJECTIVE` (`ACTION-FLOW-002`, `ACTION-OBJECTIVE-001`)
+    11. `NO_VALID_CANDIDATE` -> STOP
+  - Tính tất định: Sắp xếp tie-breaking ổn định theo `(target_id, from_node_id, has_credential, credential_id, action_id)`.
+  - Tránh lặp lại hành động/đường pivot đã thất bại trên host.
+- Common Episode Runner (`runtime/orchestration/planner_runner.py`):
+  - `PlannerEpisodeRunner(env, planner, candidate_generator)`: Điều phối vòng lặp tập hoạch định qua `PlannerDecisionContext`.
+- Kết quả thực nghiệm Rule Baseline trên S1–S4:
+  - **S1 (Straight)**: 12 bước, kết thúc `OBJECTIVE_ACHIEVED`, `obj_achieved=True`.
+  - **S2 (Decoy)**: 10 bước, kết thúc `CONTAINED` (tiến vào honeypot do không biết trước là decoy, kích hoạt báo động phòng thủ).
+  - **S3 (Blocked)**: 19 bước, kết thúc `OBJECTIVE_ACHIEVED` (bị firewall chặn đường trực tiếp sang crown jewel, tự động replan qua jump-box và hoàn thành mục tiêu).
+  - **S4 (Clean)**: 4 bước, kết thúc `PLANNER_STOP` với lý do `NO_VALID_CANDIDATE` (không có lỗ hổng khả thi, dừng sạch sẽ, không bịa đặt thành công).
+- Trạng thái: RT-05A là `IMPLEMENTED` (RT-05B LLM Planner và RT-05C Hybrid Planner giữ nguyên `SPEC_ONLY`).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest tests/runtime/test_planner_context.py -v -o pythonpath=". tests/runtime"` | 0 | 6 tests PASS (A, B, C, K, immutability, to_dict, deterministic hash) |
+| `python -B -m pytest tests/runtime/test_candidate_generator.py -v -o pythonpath=". tests/runtime"` | 0 | 4 tests PASS (D, F, I, candidate universe from visible targets, no safety bypass, determinism) |
+| `python -B -m pytest tests/boundary/test_planner_boundary.py -v -o pythonpath=". tests/runtime"` | 0 | 1 test PASS (G, AST import boundary scan: runtime/planners does not import runtime/simulation) |
+| `python -B -m pytest tests/runtime/test_rule_planner_baseline.py -v -o pythonpath=". tests/runtime"` | 0 | 8 tests PASS (H, I, J, L, M, N, O, P, determinism, S1-S4 baseline execution, safety denial handling) |
+| `python -B -m pytest tests/simulation/test_gym_adapter.py -v -o pythonpath=". tests/runtime"` | 0 | 8 tests PASS (E, Farama Gym env_checker, action mask non-leakage at t=0) |
+| `python -B -m pytest tests/runtime -o pythonpath=". tests/runtime"` | 0 | 525 passed, 2 skipped in 66.88s (Full runtime regression suite PASS) |
+| `python -B -m pytest tests/simulation -o pythonpath=". tests/runtime"` | 0 | 73 passed in 1.49s (Full simulation test suite PASS) |
+| `python -B -m pytest tests/boundary -o pythonpath=". tests/runtime"` | 0 | 42 passed in 1.36s (Full boundary test suite PASS) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` (backend/frontend PID blocker ngoài scope) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-05B — LLM Belief-State Planner Baseline
+
+- Triển khai thành công Pure LLM Belief-State Planner Baseline tích hợp trực tiếp vào `PlannerEpisodeRunner(env, planner)` theo kế hoạch RT-05B.
+- Tái sử dụng trọn vẹn kiến trúc và abstractions hiện có của `LLMPlanner`:
+  - Thừa hưởng `LLMProvider` Protocol, `count_tokens`, và `TokenUsage`.
+  - Không tạo tệp v2 thừa thãi; giữ 100% tương thích ngược với các kiểm thử offline metadata review cũ (`tests/runtime/test_llm_planner.py` 48/48 checks PASS).
+- Bộ tuần tự hóa ngữ cảnh LLM-safe (`serialize_llm_context`):
+  - Strict allowlist: `step_index`, `current_phase`, `remaining_budget`, `max_budget`, `visible_target_ids`, `belief_summary` (access levels, sessions, observed credentials, reachability edges), `observable_prior_outcome` (sanitized failure/success), `eligible_candidates`, `public_objective_statement`.
+  - Tuyệt đối cấm và đệ quy phát hiện/chặn: numeric Gym reward, TrueState, HiddenScenario, ScenarioEvaluationView, topology ẩn, credentials ẩn, defender state, detection thresholds, transition probabilities, scenario identifiers (S1/S2/S3/S4), decoy labels, transition IDs.
+  - Tạo mã băm SHA-256 bất biến: `context_hash`, `prompt_hash`.
+- Ổn định khóa ứng viên và Server-Side Membership Validation:
+  - Sinh khóa ứng viên tất định `CAND-001`, `CAND-002`, ... trong `CandidateGenerator` và prompt.
+  - Bắt buộc LLM phản hồi JSON thuần tuý: `{"selected_candidate_key": "CAND-001", "reason_code": "...", "brief_justification": "..."}`.
+  - Server-side membership validation đối chiếu `selected_candidate_key` trong `candidate_map` nội bộ của bước hiện tại và phục hồi proposal gốc; các tham số mục tiêu hoặc action ID do mô hình tự ý gửi bị phớt lờ, loại bỏ nguy cơ hallucination hoặc vượt quyền.
+- Hard Invariant: Fail-Closed Invalid Decision Handling:
+  - `fallback_to_rule = False` mặc định cho toàn bộ các lần chạy benchmark.
+  - Khi LLM trả về JSON lỗi, sai khóa ứng viên, timeout hoặc từ chối, quyết định lập tức fail-closed với reason `INVALID_LLM_DECISION` (`valid=False`), không tự ý fallback sang `RuleBasedPlanner`.
+  - Cơ chế fallback sang Rule chỉ kích hoạt khi được cấu hình tường minh (`fallback_to_rule=True`), ghi nhận cờ `fallback_used=True` và reason `LLM_FALLBACK_TO_RULE`.
+- Phân cách an toàn dữ liệu quan sát (Prompt Injection Resilience):
+  - Toàn bộ kết quả/quan sát từ môi trường được đóng gói trong khối dữ liệu `### CURRENT OPERATIONAL CONTEXT` với format JSON chuẩn, không thể tác động lên hệ thống chỉ dẫn hoặc vượt qua rào kiểm tra membership.
+- Theo dõi số liệu và đo lường (Benchmarking Metrics):
+  - Thu thập metadata chi tiết cho từng quyết định: `planner_type`, `model`, `prompt_version`, `prompt_hash`, `context_hash`, `response_hash`, `selected_candidate_key`, `canonical_action_id`, `execution_alias_id`, `target_id`, `reason_code`, `brief_justification`, `fallback_used`, `retry_count`, `valid`, `latency_ms`, `tokens_used`.
+  - Bộ đếm metrics: `total_decisions`, `valid_decisions`, `invalid_decisions`, `malformed_decisions`, `unknown_candidate_decisions`, `provider_errors`, `fallback_count`.
+- Kết quả thực nghiệm Scripted LLM Baseline trên S1–S4:
+  - **S1 (Straight)**: Kết thúc `OBJECTIVE_ACHIEVED`, `obj_achieved=True`.
+  - **S2 (Decoy)**: Prompt không chứa bất kỳ decoy oracle nào; LLM tiến vào decoy theo dữ liệu quan sát và kích hoạt containment.
+  - **S3 (Blocked)**: Phản ứng thuần túy trước thất bại quan sát được của kết nối trực tiếp, tự động replan sang jump-box và hoàn thành mục tiêu.
+  - **S4 (Clean)**: Thực hiện `ACTION-STOP-001` sạch sẽ, kết thúc `PLANNER_STOP`, không bịa đặt thành công mục tiêu.
+- Trạng thái: RT-05B là `IMPLEMENTED` (RT-05C Hybrid Planner giữ nguyên `SPEC_ONLY`).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest tests/runtime/test_llm_planner_baseline.py -v -o pythonpath=". tests/runtime"` | 0 | 18 tests PASS (Invariants A-X: context serialization, leakage prevention, candidate validation, fail-closed handling, token/latency metrics, S1-S4 baseline) |
+| `python -B -m pytest tests/runtime/test_llm_planner.py tests/runtime/test_evaluation_operations.py -v -o pythonpath=". tests/runtime"` | 0 | 48 tests PASS (48 subtests PASS, zero regressions on existing LLM planner & evaluation suites) |
+| `python -B -m pytest tests/runtime/test_action_space_normalization.py tests/runtime/test_rule_planner_baseline.py -v -o pythonpath=". tests/runtime"` | 0 | 18 tests PASS (Action normalization and rule baseline regression suites PASS) |
+| `python -B -m pytest tests/simulation -v -o pythonpath=". tests/simulation"` | 0 | 73 tests PASS (8 subtests PASS, full simulation test suite PASS) |
+| `python -B -m pytest tests/boundary -v -o pythonpath=". tests/boundary"` | 0 | 42 tests PASS (51 subtests PASS, full boundary test suite PASS) |
+| `python -B -m pytest tests/runtime tests/perception tests/contracts -q -o pythonpath=". tests/runtime"` | 0 | 590 passed, 2 skipped, 529 subtests passed in 350.52s (Full runtime test suite PASS) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` và bytecode artifacts ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-05C — Hybrid Belief-State Planner (Proposed Method)
+
+- Triển khai thành công Hybrid Belief-State Planner — phương pháp nghiên cứu đề xuất (proposed research method), kết hợp LLM semantic ranking và deterministic symbolic scoring thành mô hình hợp nhất (fusion ranking) theo kế hoạch RT-05C.
+- Kiến trúc Hybrid Planner (`runtime/planners/hybrid_planner.py` & `runtime/planners/symbolic_scorer.py`):
+  - Nhận cùng `PlannerDecisionContext`, `CandidateGenerator`, và 9 canonical actions như Rule và LLM baseline; không có quyền truy cập hay quan sát ẩn nào ngoài baseline.
+  - LLM Semantic Component: yêu cầu xếp hạng có cấu trúc (`ranked_candidate_keys: ["CAND-001", ...]`), kiểm tra membership chặt chẽ trên máy chủ (loại bỏ unknown/invented/duplicate keys), phục hồi proposal gốc, chuyển đổi tất định sang điểm thứ hạng tuyến tính trong đoạn $[0.0, 1.0]$.
+  - Tự động short-circuit khi chỉ có 1 ứng viên hợp lệ (`semantic_call_skipped_reason = SINGLE_CANDIDATE`), gán điểm ngữ nghĩa $1.0$ mà không gọi provider.
+  - Deterministic Symbolic Scorer (`SymbolicScorer`): tính toán các thành phần chuẩn tắc từ dữ liệu nhìn thấy được:
+    - Heuristic tiến trình generic `progress_score` dựa trên `BeliefState` và họ năng lực (scale $[0.0, 1.0]$).
+    - Chuẩn hóa chi phí công khai: `noise_cost_norm` và `step_cost_norm` trong $[0.0, 1.0]$.
+    - Hình phạt lặp lại: `repeat_penalty` từ `action_history` (scale $[0.0, 1.0]$).
+    - Hình phạt thất bại quan sát được: `failure_penalty` từ `previous_outcome` và `action_history` (scale $[0.0, 1.0]$); tuyệt đối không đọc nguyên nhân thất bại ẩn trong simulator.
+  - Mô hình hợp nhất phiên bản hóa `HYBRID_SCORING_V1`:
+    $$HybridScore(c) = w_{sem} \cdot S_{sem}(c) + w_{prog} \cdot S_{prog}(c) - w_{noise} \cdot C_{noise}(c) - w_{step} \cdot C_{step}(c) - w_{rep} \cdot P_{rep}(c) - w_{fail} \cdot P_{fail}(c)$$
+    với trọng số cố định ban đầu: $w_{sem}=0.40, w_{prog}=0.30, w_{noise}=0.10, w_{step}=0.05, w_{rep}=0.15, w_{fail}=0.20$.
+  - Tie-breaking tất định: giải quyết đồng điểm bằng thứ tự ổn định `(-fused_score, canonical_action_id, target_id, from_node_id, credential_id, candidate_signature)`.
+  - Fallback an toàn: Khi phản hồi của LLM bị lỗi cấu trúc/khóa lạ/timeout/từ chối, planner tự động hạ cấp sang chế độ `SYMBOLIC_ONLY` (`fallback_used=True`, `semantic_component_valid=False`, $w_{sem}=0.0$), tuyệt đối KHÔNG gọi `RuleBasedPlanner`.
+  - Sẵn sàng cho nghiên cứu phân rã (Ablation Readiness): `HybridScoringConfig` cung cấp các preset cho phép bật/tắt độc lập các trọng số (Full, without_noise, without_penalties, semantic_only, symbolic_only).
+  - Vết quyết định toàn diện (`HybridDecisionTrace`): ghi lại đầy đủ các điểm thành phần, thứ hạng ngữ nghĩa, thứ hạng cuối, mã băm trọng số, băm ngữ cảnh/prompt/phản hồi, độ trễ và số token tiêu thụ.
+- Kết quả thực nghiệm Scripted Hybrid Baseline trên S1–S4:
+  - **S1 (Straight)**: Kết thúc `OBJECTIVE_ACHIEVED`, `obj_achieved=True`.
+  - **S2 (Decoy)**: Prompt không chứa bất kỳ nhãn bẫy decoy/honeypot nào; Hybrid tiến vào decoy dựa trên dịch vụ quan sát được và kích hoạt containment.
+  - **S3 (Blocked)**: Thất bại quan sát được của kết nối trực tiếp làm tăng `failure_penalty`, giúp đường rẽ qua jump-box vươn lên dẫn đầu điểm hợp nhất và hoàn thành mục tiêu.
+  - **S4 (Clean)**: Các hành động quét lặp đi lặp lại bị phạt, đưa `ACTION-STOP-001` lên vị trí cao nhất; kết thúc sạch sẽ `PLANNER_STOP`, không tạo mục tiêu giả mạo.
+- Trạng thái: RT-05C là `IMPLEMENTED` -> Gói RT-05 chuyển sang trạng thái `IMPLEMENTED` toàn phần (Validation pending independent review).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest tests/runtime/test_hybrid_planner_baseline.py -v -o pythonpath=". tests/runtime"` | 0 | 24 tests PASS (Invariants A-X: candidate equality, Zero-Knowledge context, ranking validation, signature stability, deterministic scoring, noise/step/repeat/failure penalties, fusion formula, tie-break, symbolic fallback, STOP semantics, S1-S4 baseline execution) |
+| `python -B -m pytest tests/runtime/test_hybrid_router.py -v -o pythonpath=". tests/runtime"` | 0 | 20 tests PASS (16 subtests PASS, zero regressions on existing Task-027 hybrid router suite) |
+| `python -B -m pytest tests/runtime/test_action_space_normalization.py tests/runtime/test_rule_planner_baseline.py tests/runtime/test_llm_planner_baseline.py tests/runtime/test_hybrid_planner_baseline.py tests/runtime/test_hybrid_router.py -v -o pythonpath=". tests/runtime"` | 0 | 80 tests PASS (Toàn bộ 4 bộ kiểm thử planner baseline và router đạt 80/80 PASS) |
+| `python -B -m pytest tests/simulation tests/boundary -q -o pythonpath=". tests/runtime"` | 0 | 115 tests PASS (59 subtests PASS, full simulation + boundary suites PASS) |
+| `python -B -m pytest tests/runtime tests/perception tests/contracts -q -o pythonpath=". tests/runtime"` | 0 | 614 passed, 2 skipped, 529 subtests passed in 70.18s (Full runtime test suite PASS) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` và bytecode artifacts ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-05D — Benchmark Protocol & Methodology Freeze
+
+Tranche `RT-05D`, plan `PLAN-RT05D-BENCHMARK-FREEZE-001`, build `BUILD-RT05D-001`:
+- **Đóng băng phương pháp luận và giao thức đánh giá trước khi chạy comparative benchmark**:
+  - Xác lập ranh giới cứng: Kịch bản S1–S4 được sử dụng trong suốt quá trình phát triển hệ thống và kiểm thử tích hợp, do đó được định danh chuẩn tắc là `development / engineering validation scenarios`; tuyệt đối không được báo cáo là tập kiểm thử held-out.
+  - Bộ 12 kịch bản held-out chuẩn hóa (`SCN-HELD-001` đến `SCN-HELD-012`) tại `evaluation/datasets/held_out/` và manifest `manifest.json` được dành riêng cho comparative evaluation (H1–H3 Straight, H4–H6 Decoy, H7–H9 Blocked/Replan, H10–H12 Clean Control).
+  - Xác thực 100% schema đóng Draft 2020-12 và toàn vẹn tham chiếu ngữ nghĩa qua `ScenarioLoader`.
+  - Khử nhiễm benchmark (Non-contamination): Tuyệt đối không chứa ID kịch bản held-out, ID node, IP, hay nhãn họ kịch bản trong mã nguồn production của các planner (`rule_based_planner.py`, `llm_planner.py`, `hybrid_planner.py`, `symbolic_scorer.py`, `candidate_generator.py`).
+- **Đóng băng phiên bản và hàm băm bất biến của các Planner**:
+  - **RULE**: `RULE_POLICY_VERSION = "RULE_POLICY_V1"`, phân cấp 9 bước ưu tiên, tie-breaking tất định.
+  - **LLM**: `LLM_ATTACK_PLANNER_PROMPT_V1`, prompt hash `1d35855b6167b0ce151f400c4fb2b292d3e57779689da4a0273fed8a51ac3533`, `LLM_OUTPUT_SCHEMA_VERSION = "LLM_OUTPUT_SCHEMA_V1"`, `LLM_CONTEXT_SERIALIZER_VERSION = "LLM_CONTEXT_SERIALIZER_V1"`.
+  - **HYBRID**: `HYBRID_SCORING_V1_FROZEN`, `HYBRID_PLANNER_PROMPT_V1` (hash `d1280d0b3329c261344f8206fb2a9f61218b55262b0bf9d121c511d83a9e6ec1`), `HYBRID_OUTPUT_SCHEMA_VERSION = "HYBRID_OUTPUT_SCHEMA_V1"`, trọng số đông lạnh ($0.40, 0.30, 0.10, 0.05, 0.15, 0.20$), frozen hash `0e595f7294af58a8f635376e8beedb6688cee6784479ae2eb39c21f5c7213aa8`, V1 canonical hash `68e55385e064cb2867d07207022b665a9660b87938318efa355488d67bc2c799`.
+- **Minh bạch việc chọn trọng số**: Tuyên bố trung thực: *"Fixed heuristic weights selected during engineering development and frozen before held-out evaluation."* Tuyệt đối không tinh chỉnh trọng số trên tập held-out.
+- **Hình thức hóa định lượng các chỉ số chính (Primary Metrics)**:
+  - **Goal Completion Rate (GCR)**: Tỷ lệ hoàn thành mục tiêu chỉ tính trên các kịch bản tấn công ($E_{attack}$); các kịch bản Clean-Control hoàn toàn bị loại khỏi mẫu số.
+  - **Dead-End Recovery Rate (DERR)**: Mẫu số tính nghiêm ngặt trên các tập có xuất hiện thất bại quan sát được / ngõ cụt mà vẫn tồn tại đường tiến công thay thế hợp lệ.
+  - **Clean-Control Restraint (CCR)**: Đánh giá trên tập Clean-Control; yêu cầu lệnh `ACTION-STOP-001` sạch sẽ mà không kiệt quệ ngân sách, không tạo vòng lặp vô tận, không báo cáo mục tiêu giả, và không kích hoạt containment.
+- **Hình thức hóa các chỉ số phụ & chẩn đoán**: Steps to Goal, Operational Noise Cost (tuyệt đối không gọi là evasion/detection probability), Invalid Decision Rate, Replanning Success Rate, Planning Latency, Token/Cost metrics, LLM & Hybrid diagnostics.
+- **Quy tắc tổng hợp hành động chuẩn tắc**: Tổng hợp viễn trắc hành động luôn gom nhóm theo canonical benchmark action ID; các alias lịch sử (như `ACTION-FLOW-001`) được ghi nhận `execution_alias_id` riêng nhưng báo cáo dưới ID chuẩn tắc `ACTION-PIVOT-001`.
+- **Tiền đăng ký ma trận thực nghiệm và seed manifest**:
+  - `evaluation/experiments/seed_manifest.json`: Khóa 5 paired replicates ($R01..R05$: sim seeds `[1001..1005]`, provider seeds `[42..46]`) dưới `CONTROLLED_INFERENCE_CONFIG_V1`.
+  - `evaluation/experiments/benchmark_matrix.json`: Khóa 3 baseline (RULE, LLM, HYBRID_FULL) và 4 ablations (NO_NOISE, NO_PENALTIES, SEMANTIC_ONLY, SYMBOLIC_ONLY), tổng cộng chính xác 420 planned episodes (12 held-out $\times$ 5 paired replicates $\times$ 7 configs) với deterministic `experiment_id` — bảo lưu thực thi sang RT-07.
+  - `evaluation/datasets/held_out/manifest.json`: Khóa toàn bộ 12 kịch bản held-out với mã băm SHA-256 cố định; xác lập bất biến `evaluation uses manifest-pinned scenario bytes`.
+  - `docs/evaluation/benchmark-protocol.md`: Tài liệu đặc tả đóng băng toàn diện giao thức (`BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED`).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest tests/runtime/test_benchmark_protocol.py -v` | 0 | 20 tests PASS (Invariants A-N & Reqs: Exactly 5 paired replicates, 420 cardinality, non-Cartesian invariant, unambiguous provider seed semantics, manifest hash integrity, pinned scenario bytes, held-out token absence in planner code, family label isolation, evaluator-only recovery opportunity, clean-control error failures, frozen weights hash stability, prompt version/hashes, deterministic experiment_id, ablation isolation, GCR/DERR/CCR metrics) |
+| `python -B -m pytest tests/runtime/test_rule_planner_baseline.py tests/runtime/test_llm_planner_baseline.py tests/runtime/test_hybrid_planner_baseline.py -q` | 0 | 50 tests PASS (Rule 16 PASS, LLM 10 PASS, Hybrid 24 PASS — zero regression) |
+| `python -B -m pytest tests/simulation tests/boundary -q` | 0 | 115 tests PASS (59 subtests PASS, simulator & boundary contracts intact) |
+| `python -B -m pytest tests/runtime tests/perception tests/contracts` | 0 | 628 tests PASS, 2 skipped, zero failures |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Validator contract/schema checks pass; process exit remains 1 due documented pre-existing workspace blockers (`.demo-session.json` PIDs and cached bytecode outside task scope). |
+
+### RT-06 — Mini Enterprise Live Validation Range
+
+- Triển khai thành công Mini Enterprise Live Cyber Range theo kế hoạch RT-06, chứng minh tính tương đương kiến trúc (Simulation-to-Live Architectural Parity) của toàn bộ pipeline tác tử hoạch định tấn công (`PlannerDecisionContext`, canonical action model, `ActionConstraintEvaluator`, `CentralizedSafetyGate`, Planner, `EnterpriseObservationNormalizer`, `BeliefState`).
+- Bảo toàn tuyệt đối Hard Invariant:
+  - `BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` nguyên vẹn 100%; không thay đổi Rule policy, LLM prompt/schema, Hybrid weights, held-out scenarios, seed manifest, hay metric semantics.
+  - Zero bypass: Tác tử hoạch định tuyệt đối không gọi shell/socket/Docker trực tiếp, không nhìn thấy topology Compose hay địa chỉ IP ẩn.
+  - Bí mật tổng hợp (synthetic secrets) được cô lập hoàn toàn ở phía container/harness; Planner và `BeliefState` chỉ tiếp nhận opaque handles (`CRED-OPAQ-*`, `SESS-OPAQ-*`).
+  - ShopLab / e-commerce lab hiện hữu được bảo toàn nguyên vẹn; không gây phá vỡ baseline.
+  - Không bắt đầu benchmark held-out RT-07.
+- Kiến trúc thành phần RT-06:
+  - **Phân vùng mạng 4 Zone (`runtime/lab/enterprise_range/topology.py`)**: DMZ (`10.0.1.0/24`), Internal Corporate (`10.0.2.0/24`), Restricted Crown-Jewel Vault (`10.0.3.0/24`), Decoy Honeypot (`10.0.4.0/24`) và Clean Baseline (`lab-enterprise-clean`). Bộ kiểm tra rào chắn mạng fail-closed `validate_network_transition`.
+  - **Micro-Services Doanh Nghiệp Thu Nhỏ (`runtime/lab/enterprise_range/services.py`)**: `DMZServiceHandler`, `InternalServiceHandler`, `RestrictedServiceHandler`, `DecoyServiceHandler`, `CleanControlServiceHandler` hỗ trợ discovery, foothold, host recon, synthetic credential discovery, lateral pivot, privilege escalation và objective access.
+  - **Harness Quản Lý Cyber Range (`runtime/lab/enterprise_range/harness.py`)**: Quản lý vòng đời HTTP endpoints trên loopback ephemeral ports, tường lửa biên, cô lập route (`block_route`/`unblock_route`) và health checks.
+  - **Docker Compose Topology (`cyber-range/enterprise_range/compose.enterprise.yaml`, `Dockerfile`)**: Cấu hình 4 mạng bridge cô lập không có internet outbound (`internal: true`).
+  - **Live Executor Adapter (`runtime/lab/live_executor_adapter.py`)**: Bộ điều hợp thực thi live có pipeline tương đương hoàn toàn với `SimulationExecutor`: Proposal -> Precondition Evaluation -> Safety Gate -> Live Dispatch -> Enterprise Normalization -> State Ingestion -> Sanitized Evidence Bundle.
+  - **Live Episode Environment (`runtime/lab/live_environment.py`)**: Cung cấp giao diện tương thích hoàn toàn với `EpisodeEnvironment` cho `PlannerEpisodeRunner`, quản lý chu trình POMDP, ngân sách và điều kiện kết thúc.
+- Xác thực 4 Ca Kiểm Chứng Thực Địa (Live Validation Cases):
+  - **L1 Straight**: `RuleBasedPlanner` hoàn thành chuỗi thâm nhập xuyên suốt 3 zone (DMZ -> Internal -> Restricted) trong 21 bước, chiếm cờ mục tiêu tối thượng và kết thúc với `TerminationReason.OBJECTIVE_ACHIEVED`.
+  - **L2 Blocked/Replan**: Khi route chính bị chặn, hệ thống sinh tín hiệu phòng vệ (`WAF_REJECTION`), tác tử ghi nhận vào `BeliefState` và tái hoạch định qua route phụ thành công.
+  - **L3 Clean Control**: Tác tử tương tác với mục tiêu sạch không có lỗ hổng, kiềm chế hành vi và kết thúc sạch sẽ qua `ACTION-STOP-001`.
+  - **L4 Decoy Defense**: Tác tử tương tác với honeypot và nhận diện tín hiệu cảnh báo phòng thủ chuẩn mực.
+- Trạng thái: RT-06 là `IMPLEMENTED` (Validation pending review).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest tests/runtime/test_live_validation_range.py -v` | 0 | 21 tests PASS, 6 subtests PASS (Invariants A-W: explicit isolation, no compose leak, no socket access, canonical bounded actions, fail-closed unknown action/target, safety gate veto, kill switch veto, shell injection rejection, secret redaction, discovery/foothold/pivot/objective canonical normalization, belief ingestion, zero-dispatch STOP, protocol freeze hashes, L1/L2/L3/L4 live validation) |
+| `python -B -m pytest tests/runtime/test_benchmark_protocol.py -v` | 0 | 20 tests PASS (BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED confirmed intact) |
+| `python -B -m pytest tests/runtime/ -q` | 0 | 618 passed, 2 skipped, 387 subtests passed in 71.50s (Zero runtime regressions) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Validator checks pass; process exit remains 1 due documented pre-existing workspace blockers (`.demo-session.json` PIDs outside task scope) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
 ### Oscar — thẩm định nguồn offline
 
 Tranche `OSCAR-ADOPTION-001`, plan `PLAN-OSCAR-ADOPTION-001`, build `BUILD-OSCAR-ADOPTION-001`: candidate **HANDOFF_BLOCKED**, chưa là target đã cấu hình/test. Người dùng chọn tái sử dụng open-source để tập trung discovery, safety, observations, planner và evidence. Giữ ShopLab/source/tests và lịch sử SL-01–03; không sửa compose/gateway/registry hoặc chuyển validation cũ sang Oscar.
@@ -808,7 +1286,19 @@ Artifacts exclusive ngoài repo: `C:/Users/DELL/AppData/Local/Temp/claude/E--PBL
 
 Bước an toàn tiếp theo: kiểm chứng môi trường Linux cô lập và dependency lock/license/support; chỉ sau gate đạt mới cấu hình/test upstream offline. Nếu không đáp ứng, báo fit-gap và giữ blocked, không âm thầm đổi ứng dụng hoặc hạ safety.
 
+</details>
+
 ## Blockers
+
+- **SL-12 gate state: `UNRESOLVED`.** [Receipt SL-12](#sl-12--kết-quả-deterministic-pre-review-gate-và-pending-review-contract) ghi `HANDOFF_BLOCKED`, trong khi tổng kết cũ bên dưới ghi PASS. Chưa đối chiếu matching build/source/gate receipt; giữ nguyên task row `SPEC_ONLY`, chưa có independent approval. Không dùng một trong hai claim để chứng nhận handoff hiện hành.
+- RT extensions và simulator trong working tree cần checks/evidence/review theo scope; có model/loader hoặc test files không đóng RT-04/RT-05. Offline metadata replay không chứng minh benchmark enterprise.
+- README và một số canonical guides/specs vẫn phản ánh hướng Web hoặc validation claims khác ledger. Chúng ngoài allowlist đợt này; cần scope tài liệu riêng trước khi sửa. Context/plan hiện hành không coi các claims đó là bằng chứng mới.
+- Gate/checker errors trong receipts cũ không tự là blocker của source hôm nay. Mỗi handoff cần kết quả check mới và matching source; lỗi ngoài allowlist phải báo, không tự sửa hoặc chuyển attempts bị chặn thành PASS.
+- Review linkage RUNTIME-004, source binding, durable integration và các pending handoff chưa được giải quyết bằng việc thu gọn tài liệu; tra receipts đúng task. `TASK-026` và `TASK-032` giữ `DEFERRED`.
+
+<details>
+<summary>Các blocker/tổng kết đã ghi trước tái chuẩn hóa; không dùng làm trạng thái gate hiện hành</summary>
+
 
 - TASK-027 offline routing reference: `HANDOFF_BLOCKED`, gate triển khai exit 1
   với 27 lỗi ngoài scope và 0 lỗi thuộc router/docs/tests. [Receipts và handoff](docs/implementation/hybrid_router.md)
@@ -829,3 +1319,5 @@ Bước an toàn tiếp theo: kiểm chứng môi trường Linux cô lập và 
 - Docker isolation, durable storage và product E2E (SL-07), discovery safety gate (SL-08), observed planner (SL-09), PTES coordinator (SL-10) và evidence packaging/replay (SL-11) đã hoàn thành implementation; SL-12 deterministic pre-review gate đã PASS (khóa build/evidence identity, source manifest và review contract), đang chờ independent review độc lập thực hiện. Chưa có independent review / approval; không tự nâng `VALIDATED`.
 - Active exploitation và post-exploitation ngoài safe verification chưa có executable scope. Phase cần quyền vượt scope phải `BLOCKED`/`NOT_RUN`, không fake completed. Task status vocabulary giữ nguyên; `NOT_RUN` chỉ là phase execution status.
 - Public targets, production data, new payloads, arbitrary shell, dynamic actions và tự nâng validation vẫn không được phép.
+
+</details>

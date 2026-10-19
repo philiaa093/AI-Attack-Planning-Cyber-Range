@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -29,7 +30,7 @@ from dashboards.app.backend.models import (
     SafetyStatus,
     StepState,
 )
-import scripts.demo.run_professor_demo as demo
+from runtime.lab import control_support as lab
 from runtime.orchestration.autonomous_runner import AutonomousRunner
 from runtime.safety.discovery_gate import ApprovalToken, CentralizedSafetyGate, KillSwitch, BudgetTracker, TokenBucketRateLimiter
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
@@ -39,7 +40,16 @@ class TestRuntimeEvents(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
         event_sink.clear()
-        self.test_output = demo.OUTPUT / ("TEST-EVENTS-" + uuid.uuid4().hex[:8])
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.test_output = Path(self.temp.name)
+        for obj, name in ((lab, "OUTPUT"), (run_manager, "output_root")):
+            output_patch = patch.object(obj, name, self.test_output)
+            output_patch.start()
+            self.addCleanup(output_patch.stop)
+        docker_patch = patch.object(lab, "docker", side_effect=AssertionError("Docker forbidden in event tests"))
+        docker_patch.start()
+        self.addCleanup(docker_patch.stop)
 
         if run_manager._active_thread and run_manager._active_thread.is_alive():
             run_manager._active_thread.join(timeout=2.0)
@@ -273,8 +283,8 @@ class TestRuntimeEvents(unittest.TestCase):
         """Verify AutonomousRunner cleanly emits structured events without dashboard dependencies."""
         rec_dir = self.test_output / "autonomous-hook-test"
         run_id = "RUN-HOOK-TEST-" + uuid.uuid4().hex[:6]
-        rec = demo.new_recorder(rec_dir, run_id)
-        gate = demo.make_gate(rec, pages=1)
+        rec = lab.new_recorder(rec_dir, run_id)
+        gate = lab.make_gate(rec, pages=1)
         now = time.time()
         approval = ApprovalToken("APP-HOOK-" + uuid.uuid4().hex, run_id, "lab-ecommerce", "*", now, now + 180)
 

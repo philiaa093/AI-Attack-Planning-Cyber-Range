@@ -11,7 +11,8 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_PACKAGE_BYTES = 32 * 1024 * 1024

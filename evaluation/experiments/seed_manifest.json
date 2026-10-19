@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.1.0",
+  "manifest_id": "SEED_MANIFEST_V1",
+  "status": "IMPLEMENTED",
+  "seal_state": "SEALED",
+  "created_for": "RT-05D1 / RT-07 Comparative Benchmark",
+  "total_replicates": 5,
+  "repetition_count_per_instance": 5,
+  "paired_replicates": [
+    {
+      "replicate_id": "R01",
+      "simulator_seed": 1001,
+      "provider_seed": 42
+    },
+    {
+      "replicate_id": "R02",
+      "simulator_seed": 1002,
+      "provider_seed": 43
+    },
+    {
+      "replicate_id": "R03",
+      "simulator_seed": 1003,
+      "provider_seed": 44
+    },
+    {
+      "replicate_id": "R04",
+      "simulator_seed": 1004,
+      "provider_seed": 45
+    },
+    {
+      "replicate_id": "R05",
+      "simulator_seed": 1005,
+      "provider_seed": 46
+    }
+  ],
+  "simulator_seeds": [1001, 1002, 1003, 1004, 1005],
+  "provider_seeds": [42, 43, 44, 45, 46],
+  "benchmark_cardinality": {
+    "scenarios": 12,
+    "paired_replicates": 5,
+    "configurations": 7,
+    "total_episodes": 420,
+    "formula": "12 scenarios * 5 paired replicates * 7 configurations = 420 episodes"
+  },
+  "fairness_invariant": "All planners (RULE, LLM, HYBRID, and ablations) evaluate against the exact identical set of paired replicates (simulator_seed, provider_seed) without Cartesian expansion.",
+  "non_cartesian_invariant": "Dimensions are strictly 12 scenarios x 5 paired replicates x 7 planner configs = 420 episodes (NOT 12 x 5 x 5 x 7 = 2100).",
+  "provider_seed_semantics": {
+    "resolution_rule": "provider_seed = replicate.provider_seed if provider_seed_supported else None (recorded as non-guaranteed reproducibility)",
+    "terminology": "controlled inference configuration",
+    "determinism_disclosure": "No false claims of bit-for-bit LLM reproducibility; controlled inference enforces greedy decoding (temp=0.0) and requested seed where supported by provider."
+  },
+  "scenario_seed_mapping": {
+    "SCN-HELD-001": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-002": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-003": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-004": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-005": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-006": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-007": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-008": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-009": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-010": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-011": [1001, 1002, 1003, 1004, 1005],
+    "SCN-HELD-012": [1001, 1002, 1003, 1004, 1005]
+  }
+}

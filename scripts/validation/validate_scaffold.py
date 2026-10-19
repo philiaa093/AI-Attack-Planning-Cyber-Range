@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ast
-import datetime as dt
 import ipaddress
 import json
 import math
@@ -10,6 +9,11 @@ import os
 import re
 import sys
 from pathlib import Path
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from shared.schema_validation import _actual_type, _format_errors, _resolve_ref, validate_shape
 
 ROOT = Path(__file__).resolve().parents[2]
 STATUSES = {"SPEC_ONLY", "TBD", "UNRESOLVED", "IMPLEMENTED", "VALIDATED", "DEFERRED", "BLOCKED"}
@@ -29,6 +33,7 @@ ACTION_CLASSES = {
 TARGET_PATTERN = re.compile(r"^lab-[a-z0-9-]+$")
 SCENARIO_PATTERN = re.compile(r"^SCN-[0-9]{3}$")
 ADR_FILENAME_PATTERN = re.compile(r"^ADR-([0-9]{3})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
+RT_SPEC_PATTERN = re.compile(r"^RT-([0-9]{2}[A-Za-z]?)-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$")
 SCHEMA_NAMES = {"state", "action", "plan", "observation", "scanner-result", "scenario-manifest", "experiment-manifest", "ground-truth", "evidence", "model-metadata"}
 GUIDES = {
     "01-project-overview.md", "02-penetration-testing-lifecycle.md", "03-cyber-range-fundamentals.md",
@@ -68,6 +73,7 @@ ROOT_FILES = {
     "scenarios/README.md", "docs/thesis/README.md", "docs/guides/index.md", "docs/task-specs/index.md", "docs/runbooks/index.md", "docs/adr/index.md",
 }
 CONTRACT_DIR = "agent/planner/contracts"
+GROUND_TRUTH_SCHEMA_PATH = "evaluation/ground_truth/ground-truth.schema.json"
 SAFETY_FILES = {
     "configs/safety/lab-policy.yaml", "configs/safety/target-allowlist.yaml", "configs/safety/action-allowlist.yaml",
     "configs/safety/request-budget.yaml", "configs/safety/rate-limit.yaml", "configs/safety/kill-switch.yaml",
@@ -228,95 +234,6 @@ def load_json(path: Path, errors: list[str]):
         return None
 
 
-def _actual_type(value) -> str:
-    if value is None: return "null"
-    if isinstance(value, bool): return "boolean"
-    if isinstance(value, int): return "integer"
-    if isinstance(value, float): return "number"
-    if isinstance(value, str): return "string"
-    if isinstance(value, list): return "array"
-    return "object"
-
-
-def _format_errors(value, schema, path):
-    fmt = schema.get("format")
-    if fmt != "date-time" or not isinstance(value, str):
-        return []
-    try:
-        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return [f"{path}: invalid date-time"]
-    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
-        return [f"{path}: date-time must be UTC"]
-    return []
-
-
-def _resolve_ref(schema, root):
-    ref = schema.get("$ref") if isinstance(schema, dict) else None
-    if not ref or not ref.startswith("#/"):
-        return schema
-    value = root
-    for part in ref[2:].split("/"):
-        value = value[part]
-    return value
-
-
-def validate_shape(value, schema, path="$", _root=None) -> list[str]:
-    """Validate supported JSON Schema keywords without imports or network access."""
-    if not isinstance(schema, dict):
-        return []
-    _root = schema if _root is None else _root
-    schema = _resolve_ref(schema, _root)
-    errors: list[str] = []
-    for branch_key in ("oneOf", "anyOf"):
-        if branch_key in schema:
-            results = [validate_shape(value, branch, path, _root) for branch in schema[branch_key]]
-            valid = [result for result in results if not result]
-            if branch_key == "oneOf" and len(valid) != 1:
-                errors.append(f"{path}: oneOf mismatch")
-            elif branch_key == "anyOf" and not valid:
-                errors.append(f"{path}: anyOf mismatch")
-            return errors
-    expected = schema.get("type")
-    types = expected if isinstance(expected, list) else [expected]
-    if expected is not None:
-        actual = _actual_type(value)
-        if actual not in types and not (actual == "integer" and "number" in types):
-            return [f"{path}: expected {types}, got {actual}"]
-    if "const" in schema and value != schema["const"]:
-        errors.append(f"{path}: expected const {schema['const']!r}")
-    if "enum" in schema and value not in schema["enum"]:
-        errors.append(f"{path}: enum mismatch")
-    errors.extend(_format_errors(value, schema, path))
-    if isinstance(value, dict):
-        properties = schema.get("properties", {})
-        missing = set(schema.get("required", [])) - set(value)
-        errors.extend(f"{path}: missing required {key}" for key in sorted(missing))
-        if schema.get("additionalProperties") is False:
-            errors.extend(f"{path}: unknown property {key}" for key in sorted(set(value) - set(properties)))
-        for key, subschema in properties.items():
-            if key in value:
-                errors.extend(validate_shape(value[key], subschema, f"{path}.{key}", _root))
-    if isinstance(value, list):
-        if "minItems" in schema and len(value) < schema["minItems"]: errors.append(f"{path}: fewer than minItems")
-        if "maxItems" in schema and len(value) > schema["maxItems"]: errors.append(f"{path}: more than maxItems")
-        if schema.get("uniqueItems") and len({json.dumps(item, sort_keys=True) for item in value}) != len(value): errors.append(f"{path}: duplicate items")
-        for index, item in enumerate(value):
-            errors.extend(validate_shape(item, schema.get("items", {}), f"{path}[{index}]", _root))
-    if isinstance(value, str):
-        if "pattern" in schema and not re.fullmatch(schema["pattern"], value): errors.append(f"{path}: pattern mismatch")
-        if "minLength" in schema and len(value) < schema["minLength"]: errors.append(f"{path}: shorter than minLength")
-        if "maxLength" in schema and len(value) > schema["maxLength"]: errors.append(f"{path}: longer than maxLength")
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if not math.isfinite(value):
-            errors.append(f"{path}: number must be finite")
-        elif "minimum" in schema and value < schema["minimum"]:
-            errors.append(f"{path}: below minimum")
-        elif "maximum" in schema and value > schema["maximum"]:
-            errors.append(f"{path}: above maximum")
-    return errors
-
-
 def walk_keys(value, path="$"):
     if isinstance(value, dict):
         for key, item in value.items():
@@ -375,7 +292,8 @@ def validate_documents(errors: list[str]) -> None:
     for required in ROOT_FILES | {f"docs/{name}" for name in ("architecture.md", "system-boundaries.md", "threat-model.md", "planning-model.md", "mdp-pomdp-model.md", "safety-model.md", "experiment-design.md", "metrics.md", "ground-truth.md", "references.md", "reproducibility.md", "versions.md")}:
         if not (ROOT / required).is_file(): fail(errors, f"missing required file: {required}")
     _exact_dir(errors, "docs/guides", GUIDES)
-    _exact_dir(errors, "docs/task-specs", TASK_SPECS | SL_SPECS)
+    rt_task_specs = {item.name for item in (ROOT / "docs/task-specs").glob("RT-*.md") if RT_SPEC_PATTERN.fullmatch(item.name)}
+    _exact_dir(errors, "docs/task-specs", TASK_SPECS | SL_SPECS, exceptions={"index.md", "README.md"} | rt_task_specs)
     _exact_dir(errors, "docs/runbooks", RUNBOOKS)
     adr_dir = ROOT / "docs/adr"
     if not adr_dir.is_dir():
@@ -394,7 +312,7 @@ def validate_documents(errors: list[str]) -> None:
         if path.is_file(): _check_markdown(path, errors, headings if headings else None)
     for path in (ROOT / "docs/guides").glob("[0-9][0-9]-*.md"):
         _check_markdown(path, errors, GUIDE_HEADINGS)
-    for name in sorted(TASK_SPECS | SL_SPECS):
+    for name in sorted(TASK_SPECS | SL_SPECS | rt_task_specs):
         path = ROOT / "docs/task-specs" / name
         if path.is_file():
             _check_markdown(path, errors, TASK_HEADINGS)
@@ -520,6 +438,14 @@ def _schema_set(errors):
             schemas[name] = data
             if data.get("$schema") != "https://json-schema.org/draft/2020-12/schema" or data.get("type") != "object" or data.get("additionalProperties") is not False:
                 fail(errors, f"{rel(path)}: not closed Draft 2020-12 root object")
+    gt_path = ROOT / GROUND_TRUTH_SCHEMA_PATH
+    if gt_path.is_file():
+        gt_data = load_json(gt_path, errors)
+        if isinstance(gt_data, dict):
+            name = gt_path.name.removesuffix(".schema.json")
+            schemas[name] = gt_data
+            if gt_data.get("$schema") != "https://json-schema.org/draft/2020-12/schema" or gt_data.get("type") != "object" or gt_data.get("additionalProperties") is not False:
+                fail(errors, f"{rel(gt_path)}: not closed Draft 2020-12 root object")
     if set(schemas) != SCHEMA_NAMES: fail(errors, "schema set is not exact 10 schemas")
     return schemas
 
@@ -769,13 +695,15 @@ def validate_safety(errors: list[str]) -> None:
         fail(errors, f"{rel(link_path)}: root must be object")
     elif link.get("runtime_consumers"):
         fail(errors, "ground truth has runtime consumers")
+    elif link.get("ground_truth_schema") != GROUND_TRUTH_SCHEMA_PATH:
+        fail(errors, "schema-link does not point to canonical ground-truth schema")
     runtime_roots = (ROOT / "configs/agent", ROOT / "configs/llm", ROOT / "configs/rl", ROOT / "actions", ROOT / "agent")
     forbidden_truth = re.compile(r"ground[_-]?truth|expected[_-]?detection|\btruth\b", re.IGNORECASE)
     for directory in runtime_roots:
         if not directory.exists():
             continue
         for path in directory.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in {".json", ".yaml", ".yml"} or path.name == "ground-truth.schema.json":
+            if not path.is_file() or path.suffix.lower() not in {".json", ".yaml", ".yml"}:
                 continue
             try:
                 text = path.read_text(encoding="utf-8")

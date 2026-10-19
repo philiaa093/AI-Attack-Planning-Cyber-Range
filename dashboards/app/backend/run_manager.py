@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import scripts.demo.run_professor_demo as demo
+from runtime.lab import control_support as lab
 from runtime.orchestration.autonomous_runner import AutonomousRunner, AutonomousRunReport
 from runtime.safety.discovery_gate import CentralizedSafetyGate, ApprovalToken, BudgetTracker, TokenBucketRateLimiter
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
@@ -54,9 +54,6 @@ from dashboards.app.backend.models import (
 )
 
 
-import contextlib
-import io
-
 if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -69,13 +66,13 @@ def _utc_now_iso() -> str:
 
 
 def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
-    gate = demo.make_gate(recorder, pages=1 if req.preview_one_page else req.max_pages)
+    gate = lab.make_gate(recorder, pages=1 if req.preview_one_page else req.max_pages)
     gate.budget_tracker.max_requests = 1 if req.preview_one_page else req.max_requests
     if req.approve_active_verification and not req.preview_one_page:
         # Still intersected with canonical policy by the gate constructor.
         gate = CentralizedSafetyGate(
-            base_origin=demo.ORIGIN, target_registry=demo.load_canonical_target_registry(),
-            target_allowlist={demo.TARGET},
+            base_origin=lab.ORIGIN, target_registry=lab.load_canonical_target_registry(),
+            target_allowlist={lab.TARGET},
             action_allowlist=gate.effective_actions | {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
                 | ({"ACTION-SCAN-002"} if req.external_scanners else set())
                 | ({"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"} if req.approve_authenticated_workflow else set()),
@@ -91,7 +88,7 @@ class RunManager:
     def __init__(self, output_root: Optional[Path] = None, model_profiles: ProfileStore | None = None) -> None:
         self._lock = threading.Lock()
         self.model_profiles = model_profiles
-        self.output_root = Path(output_root or demo.OUTPUT).absolute()
+        self.output_root = Path(output_root or lab.OUTPUT).absolute()
 
         # Status tracking models
         self._run_status = RunStatus(state=AgentState.IDLE)
@@ -150,17 +147,17 @@ class RunManager:
 
         # 1. Docker version
         try:
-            ver = demo.docker("version", "--format", "{{.Server.Version}}").strip()
+            ver = lab.docker("version", "--format", "{{.Server.Version}}").strip()
             checks.append(PreflightCheckItem(name="DOCKER_AVAILABLE", passed=True, detail=f"Docker {ver}"))
-        except demo.DemoBlocked as exc:
+        except lab.DemoBlocked as exc:
             checks.append(PreflightCheckItem(name="DOCKER_AVAILABLE", passed=False, detail=str(exc)))
             blockers.append("DOCKER_UNAVAILABLE")
 
         # 2. Local Images check
         try:
-            demo.docker("image", "inspect", "cyber-range-lab-ecommerce:latest", "cyber-range-gateway:latest")
+            lab.docker("image", "inspect", "cyber-range-lab-ecommerce:latest", "cyber-range-gateway:latest")
             checks.append(PreflightCheckItem(name="LOCAL_IMAGES", passed=True, detail="ecommerce & gateway present"))
-        except demo.DemoBlocked as exc:
+        except lab.DemoBlocked as exc:
             checks.append(PreflightCheckItem(name="LOCAL_IMAGES", passed=False, detail=str(exc)))
             blockers.append("IMAGES_UNAVAILABLE")
 
@@ -168,9 +165,9 @@ class RunManager:
         try:
             dummy_run_id = "RUN-PREFLIGHT-CHECK"
             dummy_dir = self.output_root / "preflight-check"
-            gate = demo.make_gate(recorder=None)
-            allow_tgt = (demo.TARGET in gate.effective_targets)
-            allow_act = (demo.ACTION in gate.effective_actions)
+            gate = lab.make_gate(recorder=None)
+            allow_tgt = (lab.TARGET in gate.effective_targets)
+            allow_act = (lab.ACTION in gate.effective_actions)
             if allow_tgt and allow_act:
                 checks.append(PreflightCheckItem(name="CANONICAL_POLICY", passed=True, detail="Target & Action allowlisted"))
             else:
@@ -193,7 +190,7 @@ class RunManager:
 
         # 5. Service snapshot check
         try:
-            snapshot = demo.service_snapshot()
+            snapshot = lab.service_snapshot()
             running = any(row.get("State", {}).get("Running", False) for row in snapshot.values())
             checks.append(PreflightCheckItem(
                 name="RUNTIME_SERVICES",
@@ -202,7 +199,7 @@ class RunManager:
             ))
             if not running:
                 blockers.append("SERVICES_STOPPED")
-        except demo.DemoBlocked as exc:
+        except lab.DemoBlocked as exc:
             checks.append(PreflightCheckItem(name="RUNTIME_SERVICES", passed=False, detail=str(exc)))
             blockers.append(f"SERVICES_UNAVAILABLE:{exc}")
 
@@ -242,10 +239,10 @@ class RunManager:
         target_count = 0
         action_count = 0
         try:
-            gate = demo.make_gate(recorder=None)
+            gate = lab.make_gate(recorder=None)
             target_count = len(gate.effective_targets)
             action_count = len(gate.effective_actions)
-            if demo.TARGET in gate.effective_targets and demo.ACTION in gate.effective_actions:
+            if lab.TARGET in gate.effective_targets and lab.ACTION in gate.effective_actions:
                 gate_ok = True
                 checks.append(
                     ReadinessCheckItem(
@@ -312,7 +309,7 @@ class RunManager:
         # 4. Docker Engine (REQUIRED for live attacks)
         docker_ok = False
         try:
-            ver = demo.docker("version", "--format", "{{.Server.Version}}").strip()
+            ver = lab.docker("version", "--format", "{{.Server.Version}}").strip()
             docker_ok = True
             checks.append(
                 ReadinessCheckItem(
@@ -323,7 +320,7 @@ class RunManager:
                     detail=f"Docker engine v{ver} responsive",
                 )
             )
-        except demo.DemoBlocked as exc:
+        except lab.DemoBlocked as exc:
             checks.append(
                 ReadinessCheckItem(
                     name="DOCKER_ENGINE",
@@ -427,7 +424,7 @@ class RunManager:
                 "llm_fallback_ready": True,
                 "rule_baseline_ready": True,
                 "offline_replay_available": True,
-                "safe_targets": [demo.TARGET] if gate_ok else [],
+                "safe_targets": [lab.TARGET] if gate_ok else [],
                 "target_count": target_count,
                 "action_count": action_count,
                 "ports": {
@@ -984,15 +981,10 @@ class RunManager:
     def _worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink,
                 provider_config: ProviderConfig | None = None) -> None:
         """Background execution worker for active run."""
-        with contextlib.redirect_stdout(io.StringIO()):
-            self._execute_worker(run_id, req, run_dir, event_sink, provider_config)
-
-    def _execute_worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink,
-                        provider_config: ProviderConfig | None = None) -> None:
         try:
-            recorder = demo.new_recorder(run_dir / "assessment", run_id)
+            recorder = lab.new_recorder(run_dir / "assessment", run_id)
             gate = _run_gate(req, recorder)
-            approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, demo.TARGET, "*",
+            approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, lab.TARGET, "*",
                                       time.time(), time.time() + 900)
                         if req.approve_read_only or req.approve_active_verification else None)
 
@@ -1033,32 +1025,32 @@ class RunManager:
                     "run_id": run_id, "type": "PLANNER_STARTED", "iteration": 1, "phase": "RECON"
                 }, event_sink)
                 self._on_runtime_event({
-                    "run_id": run_id, "type": "PLANNER_PROPOSED", "iteration": 1, "action_id": demo.ACTION,
+                    "run_id": run_id, "type": "PLANNER_PROPOSED", "iteration": 1, "action_id": lab.ACTION,
                     "payload": {
-                        "target_id": "lab-not-approved", "action_id": demo.ACTION, "intent": "DENIAL_DEMO",
+                        "target_id": "lab-not-approved", "action_id": lab.ACTION, "intent": "DENIAL_DEMO",
                         "actual_mode": "RULE", "reason_code": "DEMO_DENIAL_PROPOSAL"
                     }
                 }, event_sink)
                 self._on_runtime_event({
-                    "run_id": run_id, "type": "SAFETY_EVALUATION_STARTED", "iteration": 1, "action_id": demo.ACTION,
+                    "run_id": run_id, "type": "SAFETY_EVALUATION_STARTED", "iteration": 1, "action_id": lab.ACTION,
                     "payload": {"target_id": "lab-not-approved"}
                 }, event_sink)
 
-                deny_res = demo.deny_case(gate, recorder)
+                deny_res = lab.deny_case(gate, recorder)
 
                 self._on_runtime_event({
-                    "run_id": run_id, "type": "SAFETY_DENIED", "iteration": 1, "action_id": demo.ACTION,
+                    "run_id": run_id, "type": "SAFETY_DENIED", "iteration": 1, "action_id": lab.ACTION,
                     "payload": {"target_id": "lab-not-approved", "reason": deny_res["reason"], "dispatched": False}
                 }, event_sink)
 
                 for art in reversed(recorder.artifacts):
                     self._on_runtime_event({
-                        "run_id": run_id, "type": "EVIDENCE_RECORDED", "iteration": 1, "action_id": demo.ACTION,
+                        "run_id": run_id, "type": "EVIDENCE_RECORDED", "iteration": 1, "action_id": lab.ACTION,
                         "payload": {"evidence_id": art["evidence_id"], "type": "decision"}
                     }, event_sink)
                     break
 
-                verify_res = demo.verify(recorder)
+                verify_res = lab.verify(recorder)
                 self._on_runtime_event({
                     "run_id": run_id, "type": "EVIDENCE_VERIFIED", "iteration": 1,
                     "payload": {"records": verify_res.get("records", 0), "status": "VERIFIED"}
@@ -1126,8 +1118,8 @@ class RunManager:
                 from runtime.lab.workflow_lab import WorkflowLab
                 from runtime.lab.authenticated_workflow import AuthenticatedWorkflow
                 on_runtime_event({"type": "WORKFLOW_STARTED", "payload": {"status": "RUNNING", "executor": "FIXED_WORKFLOW_NOT_LLM"}})
-                with WorkflowLab(run_id, recorder) as lab:
-                    workflow_result = AuthenticatedWorkflow(gate, recorder, approval, lab).execute()
+                with WorkflowLab(run_id, recorder) as workflow_lab:
+                    workflow_result = AuthenticatedWorkflow(gate, recorder, approval, workflow_lab).execute()
                     report = runner.run()
                 workflow_restored = True
                 workflow_result["original_volume_restored"] = True
@@ -1175,7 +1167,7 @@ class RunManager:
                 pass
 
             # Verify evidence integrity post-run
-            verify_res = demo.verify(recorder)
+            verify_res = lab.verify(recorder)
             self._on_runtime_event({
                 "run_id": run_id,
                 "type": "EVIDENCE_VERIFIED",

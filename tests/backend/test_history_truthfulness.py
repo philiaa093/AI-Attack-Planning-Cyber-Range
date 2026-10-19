@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from dashboards.app.backend.run_history import RunIndex
 from dashboards.app.backend.run_manager import RunManager
-import scripts.demo.run_professor_demo as demo
+from runtime.lab import control_support as lab
 
 
 class HistoryTruthfulnessTests(unittest.TestCase):
@@ -118,7 +118,7 @@ class HistoryTruthfulnessTests(unittest.TestCase):
     def test_configured_key_is_not_provider_verification(self):
         manager = RunManager(output_root=self.root / "readiness")
         with patch.dict("os.environ", {"OPENAI_API_KEY": "fixture-key"}), \
-                patch.object(demo, "docker", side_effect=demo.DemoBlocked("offline")):
+                patch.object(lab, "docker", side_effect=lab.DemoBlocked("offline")):
             result = manager.get_demo_readiness()
         self.assertEqual(result.details["llm_status"], "CONFIGURED")
         self.assertIn("E2E NOT VERIFIED", result.details["llm_provenance_disclosure"])

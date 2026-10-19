@@ -8,53 +8,23 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import time
 import uuid
 
-def _ensure_docker_on_path() -> None:
-    if shutil.which("docker"):
-        return
-    candidates = [
-        r"C:\Program Files\Docker\Docker\resources\bin",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin"),
-        os.path.expanduser(r"~\AppData\Local\Programs\DockerDesktop\resources\bin"),
-    ]
-    for cand in candidates:
-        if os.path.isdir(cand) and (os.path.isfile(os.path.join(cand, "docker.exe")) or os.path.isfile(os.path.join(cand, "docker"))):
-            os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
-            break
 
-_ensure_docker_on_path()
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from agent.memory.state.state_manager import StateManager
 from runtime.discovery.discovery_engine import ObservationDrivenDiscovery
-from runtime.safety.discovery_gate import (
-    ApprovalToken, BudgetTracker, CentralizedSafetyGate, DiscoveryRequest,
-    TokenBucketRateLimiter, load_canonical_target_registry,
-)
-from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure, redact_secrets
-from runtime.evidence.evidence_package import EvidenceVerifier
+from runtime.safety.discovery_gate import ApprovalToken, DiscoveryRequest
+from runtime.evidence.discovery_recorder import EvidenceFailure, redact_secrets
+from runtime.lab import control_support as lab
 from runtime.planners.observed_planner import ObservedStatePlanner
 from runtime.planners.planner_adapter import PlannerStateAdapter
 
-TARGET = "lab-ecommerce"
-ORIGIN = "http://127.0.0.1:18088"
-ACTION = "ACTION-RECON-002"
-SERVICES = (TARGET, "gateway-ecommerce")
-COMPOSE = ROOT / "cyber-range/compose.yaml"
-OUTPUT = Path(__file__).resolve().parent / "demo-output"
 PHASES = ("PRE_ENGAGEMENT", "INTELLIGENCE_GATHERING", "THREAT_MODELING",
           "VULNERABILITY_ANALYSIS", "EXPLOITATION", "POST_EXPLOITATION", "REPORTING")
-
-
-class DemoBlocked(RuntimeError):
-    pass
 
 
 def utc():
@@ -72,163 +42,16 @@ def show(label, value):
     print(f"{label}: {text[:450]}")
 
 
-def docker(*args):
-    try:
-        result = subprocess.run(["docker", *args], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise DemoBlocked("DOCKER_UNAVAILABLE") from exc
-    if result.returncode:
-        # Không dump stderr: Docker có thể in configuration chứa thông tin nhạy cảm.
-        raise DemoBlocked("DOCKER_COMMAND_FAILED")
-    return result.stdout
-
-
-def compose(*args):
-    return docker("compose", "-f", str(COMPOSE), *args)
-
-
-def service_snapshot():
-    rows = []
-    for service in SERVICES:
-        ids = compose("ps", "--all", "--quiet", service).split()
-        if len(ids) > 1:
-            raise DemoBlocked("AMBIGUOUS_SERVICE_OWNERSHIP")
-        if ids:
-            rows.extend(json.loads(docker("inspect", ids[0])))
-    return {row["Config"]["Labels"]["com.docker.compose.service"]: row for row in rows}
-
-
-def inspect_runtime(rows):
-    for service in SERVICES:
-        row = rows.get(service)
-        if not row or not row["State"]["Running"]:
-            raise DemoBlocked("RUNTIME_UNAVAILABLE")
-        if row["Config"]["Labels"].get("com.docker.compose.project") != "cyber-range":
-            raise DemoBlocked("UNEXPECTED_COMPOSE_PROJECT")
-        networks = row["NetworkSettings"]["Networks"]
-        if "cyber-range_lab" not in networks:
-            raise DemoBlocked("LAB_NETWORK_MISSING")
-        if service == TARGET:
-            if set(networks) != {"cyber-range_lab"} or row["HostConfig"].get("PortBindings"):
-                raise DemoBlocked("TARGET_ISOLATION_INVALID")
-            if not any(m.get("Type") == "volume" and m.get("Destination") == "/app/data"
-                       and m.get("Name") == "cyber-range_ecommerce-data" for m in row["Mounts"]):
-                raise DemoBlocked("PERSISTENT_VOLUME_MISSING")
-        else:
-            bindings = row["HostConfig"].get("PortBindings") or {}
-            if bindings != {"8080/tcp": [{"HostIp": "127.0.0.1", "HostPort": "18088"}]}:
-                raise DemoBlocked("GATEWAY_BINDING_INVALID")
-    network = json.loads(docker("network", "inspect", "cyber-range_lab"))[0]
-    if network.get("Internal") is not True:
-        raise DemoBlocked("LAB_NETWORK_NOT_INTERNAL")
-
-
-def start_services(owned):
-    config = json.loads(COMPOSE.read_text(encoding="utf-8"))
-    target = config["services"][TARGET]
-    gateway = config["services"]["gateway-ecommerce"]
-    if (config["networks"]["lab"].get("internal") is not True
-            or target.get("networks") != ["lab"] or target.get("ports")
-            or target.get("volumes") != ["ecommerce-data:/app/data"]
-            or gateway.get("ports") != ["127.0.0.1:18088:8080"]
-            or gateway.get("environment", {}).get("TARGET_HOST") != TARGET):
-        raise DemoBlocked("COMPOSE_SCOPE_INVALID")
-    before = service_snapshot()
-    # ponytail: chỉ hai service cố định; không quản lý toàn bộ Docker project.
-    for service in SERVICES:
-        prior = before.get(service)
-        if prior and prior["State"]["Running"]:
-            continue
-        if prior:
-            compose("start", service)
-        else:
-            image = "cyber-range-lab-ecommerce:latest" if service == TARGET else "cyber-range-gateway:latest"
-            docker("image", "inspect", image)
-            compose("up", "-d", "--no-build", "--pull", "never", "--no-deps", "--no-recreate", service)
-        after = service_snapshot().get(service)
-        if not after or (prior and after["Id"] != prior["Id"]):
-            raise DemoBlocked("SERVICE_IDENTITY_CHANGED")
-        owned[service] = after["Id"]
-
-
-def stop_owned(owned):
-    if not owned:
-        return "NOT_RUN_NO_OWNED_SERVICES"
-    rows = service_snapshot()
-    for service in reversed(SERVICES):
-        if service not in owned:
-            continue
-        row = rows.get(service)
-        if not row or row["Id"] != owned[service]:
-            raise DemoBlocked("CLEANUP_OWNERSHIP_UNRESOLVED")
-        # Stop theo container ID đã xác minh, không down/rm/prune hoặc xóa volume.
-        docker("stop", "--time", "10", owned[service])
-        current = json.loads(docker("inspect", owned[service]))[0]
-        if current["State"]["Running"]:
-            raise DemoBlocked("SERVICE_STOP_UNVERIFIED")
-    docker("volume", "inspect", "cyber-range_ecommerce-data")
-    return "OWNED_SERVICES_STOPPED_VOLUME_PRESERVED"
-
-
-def new_recorder(directory, run_id):
-    return DurableEvidenceRecorder(run_id, base_dir=directory, source="OPERATOR",
-                                   exclusive_creation=True, approved_root=OUTPUT)
-
-
-def make_gate(recorder, origin=ORIGIN, pages=8):
-    registry = load_canonical_target_registry()
-    gate = CentralizedSafetyGate(
-        base_origin=origin, target_registry=registry, target_allowlist={TARGET},
-        action_allowlist={ACTION, "ACTION-RECON-001", "ACTION-SCAN-001", "ACTION-END-001",
-                          "ACTION-END-002", "ACTION-END-003"},
-        recorder=recorder, budget_tracker=BudgetTracker(max_requests=pages, max_pages=pages,
-            max_depth=2, max_retries=0, timeout=3),
-        rate_limiter=TokenBucketRateLimiter(requests_per_second=2.0, burst=1), lab_mode=True,
-    )
-    if TARGET not in gate.effective_targets or ACTION not in gate.effective_actions:
-        raise DemoBlocked("CANONICAL_POLICY_NOT_READY")
-    if TARGET not in registry or registry[TARGET].get("port") != 18088:
-        raise DemoBlocked("TARGET_MANIFEST_MISMATCH")
-    return gate
-
-
 def approval_for(run_id):
     now = time.time()
-    return ApprovalToken("APP-DEMO-" + uuid.uuid4().hex, run_id, TARGET, ACTION, now, now + 180)
-
-
-def verify(recorder):
-    result = EvidenceVerifier.verify_directory(recorder.directory)
-    if not result.passed:
-        reason = "CORE_EVIDENCE_VERIFIER_ORDERING" if not result.ordering_ok else "EVIDENCE_VERIFICATION_FAILED"
-        raise DemoBlocked(reason)
-    return {"passed": result.passed, "records": result.verified_records_count,
-            "verified_files": result.verified_files_count, "hashes": "VERIFIED",
-            "redaction_check_passed": result.secrets_clean, "ordering": result.ordering_ok}
+    return ApprovalToken("APP-DEMO-" + uuid.uuid4().hex, run_id, lab.TARGET, lab.ACTION, now, now + 180)
 
 
 def deny_case(gate, recorder):
-    planner = ObservedStatePlanner(TARGET, effective_targets=gate.effective_targets)
-    permitted_example = {"target_id": TARGET, "action_id": ACTION}
-    permitted = planner.evaluate_proposal_against_gate(permitted_example, gate)
-    recorder.persist_phase_artifact("demo_permitted_proposal_example", {"synthetic": True, "proposal": permitted_example, "evaluation": permitted})
-    section("SAFETY APPROVE — PROPOSAL SYNTHETIC ĐỌC-ONLY")
-    show("Decision", permitted["decision"])
+    result = lab.deny_case(gate, recorder)
+    section("KIỂM TRA ĐỀ XUẤT SYNTHETIC ĐỌC-ONLY")
     show("Network dispatch", 0)
     show("Phạm vi kiểm tra", "target/action/kill/budget; approval/origin/rate NOT_EVALUATED")
-    synthetic = {"target_id": "lab-not-approved", "action_id": ACTION}
-    recorder.persist_phase_artifact("demo_deny_intent", {"synthetic": True, "proposal": synthetic})
-    before = gate.network_dispatch_count
-    response = gate.dispatch(DiscoveryRequest(recorder.run_id, synthetic["target_id"], ACTION,
-                                             gate.base_origin + "/", approval=None))
-    result = {"synthetic": True, "target": synthetic["target_id"], "decision": response.outcome,
-              "reason": response.refusal_reason, "network_dispatch_delta": gate.network_dispatch_count - before,
-              "proposal_evaluation": planner.evaluate_proposal_against_gate(synthetic, gate)}
-    recorder.persist_phase_artifact("demo_deny_decision", result)
-    if result["decision"] != "DENIED" or result["network_dispatch_delta"] != 0:
-        raise DemoBlocked("DENY_INVARIANT_FAILED")
-    recorder.persist_phase_artifact("demo_deny_result", result)
     section("SAFETY DENY — CA SYNTHETIC, KHÔNG GỬI NGOÀI LAB")
     for key in ("target", "decision", "reason", "network_dispatch_delta"):
         show(key, result[key])
@@ -237,7 +60,7 @@ def deny_case(gate, recorder):
 
 def assess(gate, recorder, approval, planner_mode="rule", fallback=False, preview=False, summary=None):
     if approval is None or not approval.is_valid()[0]:
-        raise DemoBlocked("MISSING_OR_INVALID_RUN_APPROVAL")
+        raise lab.DemoBlocked("MISSING_OR_INVALID_RUN_APPROVAL")
     section("DISCOVERY TỪ HTML THỰC TẾ")
     show("Seed", "/")
     show("Approval", "VALID" if approval and approval.is_valid()[0] else "MISSING")
@@ -250,15 +73,15 @@ def assess(gate, recorder, approval, planner_mode="rule", fallback=False, previe
     def checked_dispatch(request):
         response = dispatch(request)
         if not response.durable_confirmed and response.outcome != "DENIED":
-            raise DemoBlocked("EVIDENCE_NOT_DURABLE")
+            raise lab.DemoBlocked("EVIDENCE_NOT_DURABLE")
         if response.outcome in ("ERROR", "FAILURE"):
-            raise DemoBlocked("DISCOVERY_RESPONSE_ERROR")
+            raise lab.DemoBlocked("DISCOVERY_RESPONSE_ERROR")
         return response
 
     # Chỉ propagate lỗi lifecycle; transport và mọi policy check vẫn thuộc core gate.
     gate.dispatch = checked_dispatch
     try:
-        result = ObservationDrivenDiscovery(gate, recorder.run_id, TARGET, approval,
+        result = ObservationDrivenDiscovery(gate, recorder.run_id, lab.TARGET, approval,
                                             state_manager=state).run("/")
     finally:
         gate.dispatch = dispatch
@@ -290,9 +113,9 @@ def assess(gate, recorder, approval, planner_mode="rule", fallback=False, previe
         summary["state_summary"] = {"facts": minimized["fact_count"], "endpoints": len(minimized["discovered_endpoints"]),
                                     "remaining_budget": minimized["remaining_budget"]}
     if result.status not in ("COMPLETED", "COMPLETED_BOUNDED") or not result.durable_confirmed:
-        raise DemoBlocked("DISCOVERY_STOPPED")
-    evidence = verify(recorder)  # Không cho planner tiếp tục khi evidence chưa hợp lệ.
-    planner = ObservedStatePlanner(TARGET, requested_mode="RULE" if planner_mode == "rule" else "LLM",
+        raise lab.DemoBlocked("DISCOVERY_STOPPED")
+    evidence = lab.verify(recorder)  # Không cho planner tiếp tục khi evidence chưa hợp lệ.
+    planner = ObservedStatePlanner(lab.TARGET, requested_mode="RULE" if planner_mode == "rule" else "LLM",
         fallback_allowed=fallback, effective_targets=gate.effective_targets,
         provider_callable=(lambda _system, _user: None) if planner_mode != "rule" else None)
     proposal = planner.propose(minimized)
@@ -311,7 +134,7 @@ def assess(gate, recorder, approval, planner_mode="rule", fallback=False, previe
         show("Fallback", "PROVIDER_UNAVAILABLE — injected, không gọi LLM")
         show("Provider", "PROVIDER_NOT_CALLED_OFFLINE_DEMO")
     if not proposal.is_valid or proposal.mode_provenance.get("actual_mode") == "NONE":
-        raise DemoBlocked("PLANNER_HALTED")
+        raise lab.DemoBlocked("PLANNER_HALTED")
     decision = planner.evaluate_proposal_against_gate(proposal.proposal, gate)
     recorder.persist_phase_artifact("demo_proposal_decision", decision)
     show("Safety proposal evaluation", decision["decision"])
@@ -337,7 +160,7 @@ def file_hashes(directory):
     result = {}
     for path in sorted(directory.rglob("*")):
         if path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()):
-            raise DemoBlocked("RECEIPT_PATH_ESCAPE")
+            raise lab.DemoBlocked("RECEIPT_PATH_ESCAPE")
         if path.is_file():
             result[str(path.relative_to(directory))] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
@@ -347,10 +170,10 @@ def check_files(directory, expected):
     for name, digest in expected.items():
         path = directory / name
         if not path.resolve().is_relative_to(directory.resolve()) or path.is_symlink():
-            raise DemoBlocked("RECEIPT_PATH_ESCAPE")
+            raise lab.DemoBlocked("RECEIPT_PATH_ESCAPE")
         raw = path.read_bytes()  # Thiếu file phải dừng; không lấy receipt cũ thay thế.
         if hashlib.sha256(raw).hexdigest() != digest:
-            raise DemoBlocked("RECEIPT_HASH_CHANGED")
+            raise lab.DemoBlocked("RECEIPT_HASH_CHANGED")
         if path.suffix == ".json":
             json.loads(raw)
 
@@ -358,27 +181,27 @@ def check_files(directory, expected):
 def check_receipt(directory, run_id):
     raw = (directory / "summary.json").read_bytes()
     if hashlib.sha256(raw).hexdigest() != (directory / "summary.sha256").read_text(encoding="ascii"):
-        raise DemoBlocked("SUMMARY_HASH_MISMATCH")
+        raise lab.DemoBlocked("SUMMARY_HASH_MISMATCH")
     summary = json.loads(raw)
     if summary["run_id"] != run_id or directory.name != run_id:
-        raise DemoBlocked("STALE_RECEIPT_REJECTED")
+        raise lab.DemoBlocked("STALE_RECEIPT_REJECTED")
     groups = [(summary.get("evidence_refs", []), run_id)]
     groups.append((summary.get("health", {}).get("evidence_refs", []), run_id + "-HEALTH"))
     for refs, expected_id in groups:
         for ref in refs:
             path = Path(ref["record_path"])
             if path.is_symlink() or not path.resolve().is_relative_to(directory.resolve()):
-                raise DemoBlocked("EVIDENCE_REFERENCE_ESCAPE")
+                raise lab.DemoBlocked("EVIDENCE_REFERENCE_ESCAPE")
             record = json.loads(path.read_bytes())
             if record["run_id"] != expected_id or record["evidence_id"] != ref["evidence_id"]:
-                raise DemoBlocked("STALE_EVIDENCE_REJECTED")
+                raise lab.DemoBlocked("STALE_EVIDENCE_REJECTED")
             artifact = Path(record["path"])
             if not artifact.is_absolute():
-                artifact = ROOT / artifact
+                artifact = lab.ROOT / artifact
             if artifact.is_symlink() or not artifact.resolve().is_relative_to(directory.resolve()):
-                raise DemoBlocked("EVIDENCE_REFERENCE_ESCAPE")
+                raise lab.DemoBlocked("EVIDENCE_REFERENCE_ESCAPE")
             if hashlib.sha256(artifact.read_bytes()).hexdigest() != ref["sha256"] or record["sha256"] != ref["sha256"]:
-                raise DemoBlocked("EVIDENCE_HASH_MISMATCH")
+                raise lab.DemoBlocked("EVIDENCE_HASH_MISMATCH")
             json.loads(artifact.read_bytes())
     return summary
 
@@ -408,7 +231,7 @@ def main(argv=None):
     if args.dry_run and args.start:
         parser().error("--dry-run không được start service")
     run_id = "RUN-DEMO-" + uuid.uuid4().hex
-    directory = OUTPUT / run_id
+    directory = lab.OUTPUT / run_id
     try:
         directory.mkdir(parents=True, exist_ok=False)
     except OSError:
@@ -425,7 +248,7 @@ def main(argv=None):
     except OSError:
         show("Demo", "BLOCKED — SENTINEL_WRITE_FAILED, thư mục incomplete được giữ lại")
         return 2
-    summary = {"run_id": run_id, "target": TARGET, "origin": ORIGIN, "seed": "/", "source": "OPERATOR",
+    summary = {"run_id": run_id, "target": lab.TARGET, "origin": lab.ORIGIN, "seed": "/", "source": "OPERATOR",
                "started_at_utc": utc(), "expected_state": "BOUNDED_DEMO_WITH_LIMITATIONS",
                "observed_state": "NOT_RUN", "demo_outcome": "BLOCKED", "approval": "NOT_GRANTED",
                "coordinator_execution": "NOT_RUN", "ptes_phases": {p: "NOT_RUN" for p in PHASES},
@@ -443,42 +266,42 @@ def main(argv=None):
     owned, recorder, gate, health_rec = {}, None, None, None
     exit_code = 2
     try:
-        recorder = new_recorder(directory / "assessment", run_id)
-        gate = make_gate(recorder, pages=1 if args.preview_one_page else 8)
+        recorder = lab.new_recorder(directory / "assessment", run_id)
+        gate = lab.make_gate(recorder, pages=1 if args.preview_one_page else 8)
         recorder.persist_phase_artifact("demo_scope", {"scope": summary, "approval_requested": args.approve_read_only})
         if args.mode == "deny-demo":
             summary["safety_deny"] = deny_case(gate, recorder)
-            summary["evidence_verification"] = verify(recorder)
+            summary["evidence_verification"] = lab.verify(recorder)
             summary.update(demo_outcome="DENY_DEMO_COMPLETED", observed_state="DENIED_ZERO_DISPATCH")
             exit_code = 0
         else:
             section("SHOPLAB / DEMO PREFLIGHT")
-            docker("version", "--format", "{{.Server.Version}}")
-            docker("image", "inspect", "cyber-range-lab-ecommerce:latest", "cyber-range-gateway:latest")
+            lab.docker("version", "--format", "{{.Server.Version}}")
+            lab.docker("image", "inspect", "cyber-range-lab-ecommerce:latest", "cyber-range-gateway:latest")
             show("Docker và images local", "PASS")
             show("Target/action canonical allowlist", "PASS")
             show("Evidence writable", "PASS — ghi durable scope thành công")
-            show("Gateway", ORIGIN)
+            show("Gateway", lab.ORIGIN)
             show("Safety", "LAB ONLY")
             if args.start:
-                start_services(owned)
-            inspect_runtime(service_snapshot())
+                lab.start_services(owned)
+            lab.inspect_runtime(lab.service_snapshot())
             show("Runtime configuration", "PASS — không chứng minh toàn bộ egress isolation")
             if not args.approve_read_only:
                 show("Health", "NOT_CHECKED — thiếu per-run approval")
-                raise DemoBlocked("MISSING_RUN_APPROVAL")
+                raise lab.DemoBlocked("MISSING_RUN_APPROVAL")
             health_id = run_id + "-HEALTH"
-            health_rec = new_recorder(directory / "health", health_id)
-            health_gate = make_gate(health_rec, pages=1)
+            health_rec = lab.new_recorder(directory / "health", health_id)
+            health_gate = lab.make_gate(health_rec, pages=1)
             health_approval = approval_for(health_id)
-            health = health_gate.dispatch(DiscoveryRequest(health_id, TARGET, ACTION, ORIGIN + "/health", approval=health_approval))
+            health = health_gate.dispatch(DiscoveryRequest(health_id, lab.TARGET, lab.ACTION, lab.ORIGIN + "/health", approval=health_approval))
             summary["health"] = {"status_code": health.status_code, "dispatch_count": health_gate.network_dispatch_count,
                                  "durable_confirmed": health.durable_confirmed}
             if not health.durable_confirmed:
-                raise DemoBlocked("HEALTH_EVIDENCE_FAILURE")
+                raise lab.DemoBlocked("HEALTH_EVIDENCE_FAILURE")
             if health.status_code != 200 or health.outcome != "SUCCESS":
-                raise DemoBlocked("RUNTIME_HEALTH_FAILED")
-            summary["health"]["verification"] = verify(health_rec)
+                raise lab.DemoBlocked("RUNTIME_HEALTH_FAILED")
+            summary["health"]["verification"] = lab.verify(health_rec)
             summary["health"]["evidence_refs"] = [{"evidence_id": a["evidence_id"], "sha256": a["sha256"],
                                                       "record_path": a["record_path"]} for a in health_rec.artifacts]
             show("Health", "PASS — GET qua gate và recorder riêng")
@@ -488,17 +311,17 @@ def main(argv=None):
             else:
                 approval = approval_for(run_id)
                 summary["approval"] = {"approval_id": approval.approval_id, "timestamp_utc": utc(),
-                                       "target": TARGET, "action": ACTION, "expires_at": approval.expires_at}
+                                       "target": lab.TARGET, "action": lab.ACTION, "expires_at": approval.expires_at}
                 recorder.persist_phase_artifact("demo_authorization", summary["approval"])
                 summary.update(assess(gate, recorder, approval, args.planner, args.allow_rule_fallback, args.preview_one_page, summary))
                 # Gate riêng cho ca synthetic: budget assessment hết không làm sai ví dụ approve.
-                summary["safety_deny"] = deny_case(make_gate(recorder), recorder)
+                summary["safety_deny"] = deny_case(lab.make_gate(recorder), recorder)
                 summary.update(demo_outcome="PREVIEW_COMPLETED_WITH_LIMITATIONS" if args.preview_one_page else "DEMO_COMPLETED_WITH_LIMITATIONS",
                                observed_state="BOUNDED_DISCOVERY_PROPOSAL_ONLY")
-            summary["evidence_verification"] = verify(recorder)
+            summary["evidence_verification"] = lab.verify(recorder)
             exit_code = 0
-    except (DemoBlocked, EvidenceFailure, OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
-        reason = str(exc) if isinstance(exc, DemoBlocked) else type(exc).__name__
+    except (lab.DemoBlocked, EvidenceFailure, OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        reason = str(exc) if isinstance(exc, lab.DemoBlocked) else type(exc).__name__
         summary["blockers"].append(reason)
         section("DEMO BLOCKED — DỪNG, KHÔNG GIẢ PASS")
         show("Reason", reason)
@@ -518,14 +341,14 @@ def main(argv=None):
                 "receipt_role": summary["receipt_role"]})
             expected = file_hashes(directory)
             write_json_exclusive(directory / "preservation-before.json", {"run_id": run_id, "file_hashes": expected})
-        except (OSError, ValueError, DemoBlocked) as exc:
+        except (OSError, ValueError, lab.DemoBlocked) as exc:
             summary["blockers"].append("PRE_STOP_SNAPSHOT_FAILED:" + type(exc).__name__)
             exit_code = 2
         if args.stop_owned:
             try:
-                summary["cleanup"] = stop_owned(owned)
-            except (DemoBlocked, OSError, ValueError, KeyError) as exc:
-                summary["blockers"].append(str(exc) if isinstance(exc, DemoBlocked) else type(exc).__name__)
+                summary["cleanup"] = lab.stop_owned(owned)
+            except (lab.DemoBlocked, OSError, ValueError, KeyError) as exc:
+                summary["blockers"].append(str(exc) if isinstance(exc, lab.DemoBlocked) else type(exc).__name__)
                 summary["cleanup"] = "UNRESOLVED"
                 exit_code = 2
         else:
@@ -533,21 +356,21 @@ def main(argv=None):
         summary["receipts_preserved"] = "NO"
         try:
             if expected is None or not expected:
-                raise DemoBlocked("NO_PRESERVATION_BASELINE")
+                raise lab.DemoBlocked("NO_PRESERVATION_BASELINE")
             check_files(directory, expected)
             baseline = json.loads((directory / "preservation-before.json").read_bytes())
             if baseline["run_id"] != run_id or baseline["file_hashes"] != expected:
-                raise DemoBlocked("PRESERVATION_BASELINE_CHANGED")
+                raise lab.DemoBlocked("PRESERVATION_BASELINE_CHANGED")
             summary["sentinel_hash_after"] = hashlib.sha256(sentinel.read_bytes()).hexdigest()
             if summary["sentinel_hash_after"] != summary["sentinel_hash_before"]:
-                raise DemoBlocked("SENTINEL_CHANGED")
+                raise lab.DemoBlocked("SENTINEL_CHANGED")
             # Thực sự re-open/verify canonical evidence sau stop, không tin flags trước đó.
             if exit_code == 0:
-                summary["evidence_verification"] = verify(recorder)
+                summary["evidence_verification"] = lab.verify(recorder)
                 if health_rec:
-                    summary["health"]["verification"] = verify(health_rec)
+                    summary["health"]["verification"] = lab.verify(health_rec)
             summary["receipts_preserved"] = "YES"
-        except (DemoBlocked, EvidenceFailure, OSError, ValueError, KeyError) as exc:
+        except (lab.DemoBlocked, EvidenceFailure, OSError, ValueError, KeyError) as exc:
             summary["blockers"].append("POST_RUN_PRESERVATION_FAILED:" + type(exc).__name__)
             exit_code = 2
         if exit_code != 0:
@@ -569,10 +392,10 @@ def main(argv=None):
             check_files(directory, final_hashes)
             post = json.loads((directory / "post-run-verification.json").read_bytes())
             if post["run_id"] != run_id or post["file_hashes"] != final_hashes:
-                raise DemoBlocked("POST_RUN_RECEIPT_CHANGED")
+                raise lab.DemoBlocked("POST_RUN_RECEIPT_CHANGED")
             receipt_verified = True
             show("Receipt directory", directory)
-        except (OSError, ValueError, KeyError, DemoBlocked) as exc:
+        except (OSError, ValueError, KeyError, lab.DemoBlocked) as exc:
             show("Receipt", "WRITE_FAILED_OR_VERIFICATION_FAILED — BLOCKED: " + type(exc).__name__)
             exit_code = 2
             # Append lỗi, không sửa receipt đã publish hoặc xóa diagnostics.

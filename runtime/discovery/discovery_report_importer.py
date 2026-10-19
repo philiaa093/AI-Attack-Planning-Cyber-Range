@@ -19,7 +19,8 @@ from runtime.safety.discovery_gate import (
     load_canonical_target_registry,
 )
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, redact_secrets
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 MAX_BYTES = 1048576
 MAX_RECORDS = 256
