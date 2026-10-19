@@ -17,7 +17,7 @@ from pathlib import Path
 
 from agent.memory.state.state_manager import StateManager
 from runtime.evidence.discovery_recorder import redact_secrets
-from scripts.validation.validate_scaffold import validate_shape
+from shared.schema_validation import validate_shape
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -288,6 +288,11 @@ class KnowledgeStateStore:
 
     def get_state(self, context):
         return json.loads(self._context(context)["state"])
+
+    def get_belief_state(self, context):
+        """Return projected BeliefState for the given context."""
+        from agent.memory.state.belief_state import BeliefState
+        return BeliefState.from_state(self.get_state(context))
 
     def query_facts(self, context, *, subject=None, fact_type=None,
                     min_confidence=0.0, limit=100, offset=0):

@@ -46,7 +46,9 @@ def _clamp_confidence(c):
 
 def _make_fact_id(fact_type, subject, value):
     """Deterministic fact_id from content hash."""
-    raw = f"{fact_type}:{subject}:{value}"
+    import json
+    val_str = json.dumps(value, sort_keys=True) if isinstance(value, dict) else str(value)
+    raw = f"{fact_type}:{subject}:{val_str}"
     h = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
     return f"FACT-{fact_type[:4]}-{h}"
 
@@ -182,9 +184,11 @@ class ObservationNormalizer:
 
     def _deduplicate(self, facts):
         """Deduplicate facts by (fact_type, subject, value). Keep highest confidence."""
+        import json
         seen = {}
         for fact in facts:
-            key = (fact["fact_type"], fact["subject"], fact["value"])
+            val_key = json.dumps(fact["value"], sort_keys=True) if isinstance(fact.get("value"), dict) else fact.get("value")
+            key = (fact["fact_type"], fact["subject"], val_key)
             if key in seen:
                 if fact["confidence"] > seen[key]["confidence"]:
                     seen[key] = fact
