@@ -30,7 +30,7 @@ Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` c
 | RT-03 | TASK-004, TASK-012, TASK-013 | `IMPLEMENTED` | RT-01, RT-02 | Enterprise Action Model: Hoàn tất cả RT-03A (Generic TTP Action Contract) và RT-03B (Action Constraint Evaluator). Single canonical ActionConstraintEvaluator tại runtime/evaluators/action_evaluator.py. Thống nhất canonical access: NONE < FOOTHOLD < USER < PRIVILEGED < SYSTEM. Quarantined hypotheses. Historical access != active capability. Eligibility != Authorization. Chưa review độc lập / VALIDATED. |
 | RT-04 | TASK-007, TASK-010, TASK-023 | `IMPLEMENTED` | RT-02, RT-03 | Simulation Backend: Hoàn tất cả RT-04A (Hidden Scenario & True-State Model), RT-04B (Transition & Observation Simulator), và RT-04C (Unified Episode Environment & Gymnasium Adapter: canonical EpisodeEnvironment lifecycle loop, Farama Gymnasium adapter, action masking, 16D belief state encoding, replay bit-for-bit determinism, legacy RL coexistence). Chưa review độc lập / VALIDATED. |
 | RT-05 | TASK-020, TASK-021, TASK-022, TASK-027 | `IMPLEMENTED` | RT-04 | Planner Integration: Lớp tích hợp tập hoạch định chuẩn mực (Planner-Neutral Episode Integration Layer). Hoàn tất toàn bộ gói RT-05 gồm RT-05A (Common Planner Episode Interface & Rule Baseline), RT-05A1 (Benchmark Action-Space Normalization: 9 canonical generic benchmark actions), RT-05B (Pure LLM Belief-State Planner Baseline), RT-05C (Hybrid Belief-State Planner — Proposed Method: LLM semantic ranking + deterministic symbolic scoring -> fusion, HYBRID_SCORING_V1, SYMBOLIC_ONLY fallback, ablation readiness), và RT-05D (Benchmark Protocol & Methodology Freeze: đóng băng RULE_POLICY_V1, LLM_ATTACK_PLANNER_PROMPT_V1, HYBRID_SCORING_V1_FROZEN, weights hash, 12 kịch bản held-out H1–H12 độc lập với S1–S4 dev, seed manifest cố định, primary/secondary metrics machine-computable, tests/runtime/test_benchmark_protocol.py 14/14 PASS). Chưa review độc lập / VALIDATED. |
-| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `SPEC_ONLY` | RT-04, RT-05 | Mini Enterprise Live Range: Cyber-range multi-host doanh nghiệp thu nhỏ cô lập (Docker internal networks, segmented VLANs, simulated services, loopback ingress). Dùng chung executor và observation contract với simulator (RT-04). Tích hợp CentralizedSafetyGate kiểm soát phân quyền. |
+| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `IMPLEMENTED` | RT-04, RT-05 | Mini Enterprise Live Range & Docker Wire-Level Validation (RT-06 + RT-06V): Cyber-range multi-host doanh nghiệp thu nhỏ cô lập trên Docker Compose (4 bridge networks, internal: true segmentation, loopback ingress). Dùng chung executor, observation normalizer và belief projection với simulator. Tích hợp CentralizedSafetyGate, KillSwitch, pivot relay. Automated suites tests/runtime/test_live_validation_range.py (21 tests PASS) và tests/runtime/test_enterprise_docker_range.py (9 tests PASS). Chưa review độc lập / VALIDATED. |
 | RT-07 | TASK-028, TASK-029, TASK-030, TASK-031 | `SPEC_ONLY` | RT-05, RT-06 | Experimental Evaluation: Bộ kịch bản đánh giá so sánh (benchmark suite) trên simulator và live range. Chấm điểm planner dựa trên Ground Truth (cô lập trong evaluation). Đo lường metrics: success rate, steps to goal, budget efficiency, belief accuracy vs true state. |
 
 </details>
@@ -1266,6 +1266,45 @@ Tranche `RT-05D`, plan `PLAN-RT05D-BENCHMARK-FREEZE-001`, build `BUILD-RT05D-001
 | `python -B -m pytest tests/runtime/test_benchmark_protocol.py -v` | 0 | 20 tests PASS (BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED confirmed intact) |
 | `python -B -m pytest tests/runtime/ -q` | 0 | 618 passed, 2 skipped, 387 subtests passed in 71.50s (Zero runtime regressions) |
 | `python -B scripts/validation/validate_scaffold.py` | 1 | Validator checks pass; process exit remains 1 due documented pre-existing workspace blockers (`.demo-session.json` PIDs outside task scope) |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-06V — Docker Deployment & Wire-Level Validation
+
+- Triển khai và xác thực toàn diện cụm Docker Compose thực tế (`cyber-range/enterprise_range/compose.enterprise.yaml`, `cyber-range/enterprise_range/Dockerfile`) cho Mini Enterprise Live Range, chuyển đổi từ host loopback harness sang môi trường container độc lập có phân đoạn mạng wire-level thực tế.
+- Bảo toàn tuyệt đối Hard Invariant:
+  - `BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` nguyên vẹn 100%; không thay đổi Rule policy, LLM prompt/schema, Hybrid weights, held-out scenarios, seed manifest, hay metric semantics.
+  - Zero bypass: CentralizedSafetyGate và KillSwitch chặn hoàn toàn mọi lệnh vi phạm lab scope / target allowlist trước khi chạm tới tầng mạng Docker (`zero_docker_dispatch`).
+  - Kiến trúc phân tách mạng vật lý (Wire-Level Physical Segmentation):
+    - `dmz_net` (172.28.10.0/24): Ingress bridge cho DMZ web application và Clean control target, chỉ publish loopback `127.0.0.1:18081` và `127.0.0.1:18085` lên host.
+    - `internal_net` (172.28.20.0/24): Mạng nội bộ với cờ `internal: true`, ngăn chặn hoàn toàn kết nối trực tiếp từ host hoặc internet outbound. Chỉ DMZ và Internal services được gắn kết.
+    - `restricted_net` (172.28.30.0/24): Mạng chứa crown-jewel vault với cờ `internal: true`. Chỉ Internal service được kết nối; DMZ không thể kết nối trực tiếp tới Restricted (thất bại wire-level fail-closed `NETWORK_ISOLATION_BARRIER`).
+    - `decoy_net` (172.28.40.0/24): Mạng honeypot decoy với cờ `internal: true`. DMZ không thể kết nối trực tiếp (thất bại wire-level fail-closed `NETWORK_ISOLATION_BARRIER`).
+- Các cải tiến kỹ thuật chính:
+  - **JSON-Compatible Compose (`cyber-range/enterprise_range/compose.enterprise.yaml`)**: Soạn thảo dưới định dạng JSON-compatible YAML 1.2 tương thích hoàn toàn với trình kiểm tra cấu trúc kho mã `validate_scaffold.py` và Docker Compose v2.
+  - **Tối ưu hóa Container Runtime (`runtime/lab/__init__.py`)**: Sử dụng PEP 562 lazy module `__getattr__` cho các import cấp agent, đảm bảo container chỉ chạy lightweight HTTP server với standard library mà không cần copy module agent vào container.
+  - **Relay Dispatch & Foothold Enforcement (`runtime/lab/enterprise_range/services.py`)**: DMZ và Internal services xử lý `/api/v1/relay` yêu cầu active session (foothold) hợp lệ trước khi cho phép pivot tấn công sang zone tiếp theo, đồng thời cho phép admin lifecycle (`/health`, `/reset`, `/api/v1/admin/block_route`) phục vụ điều phối episode.
+  - **Docker Enterprise Range Harness (`runtime/lab/enterprise_range/harness.py`)**: `DockerEnterpriseRangeHarness` theo dõi trạng thái compromised hosts, thực thi rào chắn mạng logic và vật lý, dispatch qua ingress và pivot relay, hỗ trợ teardown sạch và reset route.
+  - **Integration Test Suite (`tests/runtime/test_enterprise_docker_range.py`)**: 9 integration tests tự động quản lý vòng đời Docker Compose (up/down), xác minh:
+    1. Container health và readiness trên toàn bộ 5 services.
+    2. Wire-level isolation: Host truy cập trực tiếp Internal bị từ chối fail-closed.
+    3. Wire-level isolation: DMZ không thể tiếp cận Restricted trực tiếp.
+    4. Wire-level isolation: DMZ không thể tiếp cận Decoy trực tiếp.
+    5. Live Episode Validation L1 (DMZ -> Internal -> Restricted -> STOP) đạt mục tiêu tối thượng trên Docker.
+    6. Live Episode Validation L2 (WAF route block -> Replan qua backup route) trên Docker.
+    7. Live Episode Validation L3 (Clean control target kiềm chế hành vi) trên Docker.
+    8. Live Episode Validation L4 (Decoy honeypot alert) trên Docker.
+    9. CentralizedSafetyGate và KillSwitch chặn hoàn toàn dispatch xuống Docker.
+- Vòng đời Docker sạch: Sau khi hoàn thành kiểm thử, `docker compose down` dọn dẹp sạch sẽ toàn bộ container và network, không để lại tài nguyên mồ côi (orphan).
+- Trạng thái: RT-06V là `IMPLEMENTED` (Validation pending review).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `docker compose -f cyber-range/enterprise_range/compose.enterprise.yaml config -q` | 0 | Valid Compose configuration; valid JSON-compatible YAML; no host network mode; no Docker socket mount |
+| `python -B -m pytest -p no:cacheprovider -v tests/runtime/test_enterprise_docker_range.py` | 0 | 9 passed in 32.53s (All 9 Docker integration & wire-level isolation tests PASS) |
+| `python -B -m pytest -p no:cacheprovider tests/runtime tests/perception tests/contracts` | 0 | 664 passed, 2 skipped in 99.13s (Zero regressions across 666 test items) |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary` | 0 | 115 passed in 1.80s |
+| `python -B -m pytest -p no:cacheprovider tests/runtime/test_benchmark_protocol.py` | 0 | 20 passed in 0.59s (BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED confirmed intact) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Compose enterprise YAML accepted without error; exit 1 due only to documented pre-existing workspace items (.demo-session.json PIDs and pycache) |
 | `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
 
 ### Oscar — thẩm định nguồn offline
