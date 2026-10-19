@@ -27,23 +27,10 @@ from runtime.safety.discovery_gate import (
     load_canonical_target_allowlist,
 )
 from runtime.evidence.discovery_recorder import redact_secrets
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
-ACTION_CATALOG = {
-    "ACTION-RECON-001": {"name": "DISCOVER_TARGET",      "class": "RECON"},
-    "ACTION-RECON-002": {"name": "DISCOVER_WEB_SURFACE", "class": "RECON"},
-    "ACTION-SCAN-001":  {"name": "PASSIVE_WEB_SCAN",     "class": "SCAN"},
-    "ACTION-SCAN-002":  {"name": "ACTIVE_WEB_SCAN",      "class": "SCAN"},
-    "ACTION-WEB-001":   {"name": "TEST_SQLI_CLASS",      "class": "WEB_TEST"},
-    "ACTION-WEB-002":   {"name": "TEST_XSS_CLASS",       "class": "WEB_TEST"},
-    "ACTION-WEB-003":   {"name": "TEST_PATH_TRAVERSAL",  "class": "WEB_TEST"},
-    "ACTION-PLAN-001":  {"name": "CHANGE_TARGET",        "class": "PLAN"},
-    "ACTION-PLAN-002":  {"name": "CHANGE_HYPOTHESIS",    "class": "PLAN"},
-    "ACTION-PLAN-003":  {"name": "REVISIT_EVIDENCE",     "class": "PLAN"},
-    "ACTION-END-001":   {"name": "STOP_SUCCESS",         "class": "STOP"},
-    "ACTION-END-002":   {"name": "STOP_BUDGET",          "class": "STOP"},
-    "ACTION-END-003":   {"name": "STOP_NO_PROGRESS",     "class": "STOP"},
-}
+from agent.planner.action_catalog import ACTION_CATALOG
 
 
 def _load_env_if_present() -> None:
@@ -205,7 +192,8 @@ class ObservedStatePlanner:
         objective_id: str = "OBJ-001",
         requested_mode: str = "RULE",
         fallback_allowed: bool = True,
-        effective_targets: set[str] | None = None,
+        visible_targets: set[str] | frozenset[str] | None = None,
+        effective_targets: set[str] | frozenset[str] | None = None,
         provider_callable: Callable[[str, str], str | None] | None = None,
         configured_provider: str = "openai-compatible",
         configured_model: str = "gpt-4o-mini",
@@ -217,10 +205,13 @@ class ObservedStatePlanner:
         self.objective_id = objective_id
         self.requested_mode = requested_mode.upper().strip()
         self.fallback_allowed = fallback_allowed
-        self.effective_targets = (
-            set(effective_targets)
-            if effective_targets is not None
-            else load_canonical_target_allowlist()
+        # Zero-knowledge invariant: visible targets are strictly discovery-driven.
+        # Planner never defaults to the full canonical safety target allowlist.
+        initial_targets = visible_targets if visible_targets is not None else effective_targets
+        self.visible_targets: set[str] = (
+            set(initial_targets)
+            if initial_targets is not None
+            else ({self.target_id} if self.target_id else set())
         )
         self.provider_callable = provider_callable
         self.configured_provider = configured_provider
@@ -235,6 +226,19 @@ class ObservedStatePlanner:
         # Load plan schema
         plan_schema_path = ROOT / "agent" / "planner" / "contracts" / "plan.schema.json"
         self._plan_schema = json.loads(plan_schema_path.read_text(encoding="utf-8"))
+
+    @property
+    def effective_targets(self) -> set[str]:
+        """Deprecated alias for visible_targets (retained for backward compatibility)."""
+        return self.visible_targets
+
+    @effective_targets.setter
+    def effective_targets(self, value: set[str] | frozenset[str]) -> None:
+        self.visible_targets = set(value)
+
+    def update_visible_targets(self, targets: set[str] | frozenset[str]) -> None:
+        """Update visible target scope upon discovery of new targets from evidence."""
+        self.visible_targets.update(targets)
 
     def _emit_event(self, event_type: str, payload: dict[str, Any] | None = None) -> None:
         if self.event_hook:
@@ -662,9 +666,9 @@ class ObservedStatePlanner:
         if data.get("action_id") not in ACTION_CATALOG:
             return None, f"UNKNOWN_ACTION_ID_{data.get('action_id')}"
 
-        # Target allowlist check
+        # Target visibility check
         target = data.get("target_id")
-        if target != self.target_id or target not in self.effective_targets:
+        if not target or target not in self.visible_targets:
             return None, f"UNAUTHORIZED_TARGET_{target}"
 
         return data, None
@@ -685,6 +689,7 @@ class ObservedStatePlanner:
                     for f in facts if f.get("fact_type") == "ACTION_OUTCOME"][-64:]
         return (
             f"Target: {self.target_id}\n"
+            f"Visible targets: {', '.join(sorted(self.visible_targets))}\n"
             f"Objective: {state.get('objective_id', self.objective_id)}\n"
             f"Phase: {state.get('phase', 'RECON')}\n"
             f"Remaining actions: {state.get('remaining_budget', {}).get('actions', 0)}\n"

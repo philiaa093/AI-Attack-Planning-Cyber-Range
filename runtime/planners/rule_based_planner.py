@@ -16,6 +16,7 @@ from runtime.planners.planner_interface import (
 
 
 REVIEW_ACTION = "ACTION-PLAN-003"
+RULE_POLICY_VERSION = "RULE_POLICY_V1"
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
 _TARGET = re.compile(r"lab-[a-z0-9-]{1,124}")
 _PLAN = re.compile(r"PLAN-021-[0-9a-f]{64}")
@@ -163,7 +164,7 @@ class RuleBasedPlanner(Planner):
             _identity(fact["source_observation_id"])
             if not _TARGET.fullmatch(fact["subject"]):
                 raise ValueError("candidate must have an explicit lab target subject")
-            if fact["subject"] in request.allowed_target_ids:
+            if fact["subject"] in request.visible_target_ids:
                 candidates.append(fact)
         candidates.sort(key=lambda fact: fact["fact_id"])
         for rule in self.rules:
@@ -194,3 +195,272 @@ class RuleBasedPlanner(Planner):
                 or receipt["source_observation_id"] not in feedback.observation_ids):
             return self._decision(request)
         return self._plan(request)
+
+    def _plan_context(self, context: Any) -> Any:
+        """Execute deterministic rule baseline over PlannerDecisionContext (RT-05A)."""
+        from actions.catalog.action_registry import get_canonical_action_id
+        from runtime.planners.planner_context import PlannerDecision as ContextDecision
+        belief = context.belief_state
+
+        def _get_stop_proposal() -> dict:
+            for p in context.eligible_proposals:
+                if get_canonical_action_id(p.get("action_id", "")) == "ACTION-STOP-001":
+                    return dict(p)
+            return {"action_id": "ACTION-STOP-001"}
+
+        # 1. Authoritative objective achievement check
+        if belief.is_objective_achieved():
+            return ContextDecision(
+                proposal=_get_stop_proposal(),
+                rationale="Objective authoritatively achieved under current belief; terminating engagement.",
+                reason_code="OBJECTIVE_COMPLETE",
+                confidence=1.0,
+            )
+
+        # 2. Budget or step limit bounds
+        if context.remaining_budget <= 1 or context.step_index >= context.max_steps - 1:
+            return ContextDecision(
+                proposal=_get_stop_proposal(),
+                rationale="Operational budget or max step limit reached; terminating cleanly.",
+                reason_code="BUDGET_EXHAUSTED",
+                confidence=1.0,
+            )
+
+        # 3. Aggregate observable history to prevent cycles and track failed paths
+        attempted_proposals: set[tuple[str, str, str, str]] = set()
+        failed_proposals: set[tuple[str, str, str, str]] = set()
+        attempted_action_targets: set[tuple[str, str]] = set()
+        attempted_recon_hosts: set[str] = set()
+        attempted_scan_hosts: set[str] = set()
+        attempted_harvest_hosts: set[str] = set()
+        attempted_hostrecon_hosts: set[str] = set()
+        failed_pivot_edges: set[tuple[str, str]] = set()
+
+        history_items = list(getattr(context, "action_history", None) or [])
+        if context.previous_outcome:
+            history_items.append(context.previous_outcome)
+
+        for h in history_items:
+            if not isinstance(h, dict):
+                continue
+            raw_act = str(h.get("action_id") or "")
+            can_act = get_canonical_action_id(raw_act)
+            tgt = str(h.get("target_id") or "")
+            src = str(h.get("from_node_id") or h.get("from_host") or "")
+            cid = str(h.get("credential_id") or "")
+            succ = bool(h.get("success", True))
+
+            prop_key = (can_act, tgt, src, cid)
+            attempted_proposals.add(prop_key)
+            if can_act and tgt:
+                attempted_action_targets.add((can_act, tgt))
+                tgt_host = tgt.split(":")[0]
+                attempted_action_targets.add((can_act, tgt_host))
+
+                if can_act == "ACTION-DISCOVERY-001":
+                    attempted_recon_hosts.add(tgt_host)
+                elif can_act in ("ACTION-SCAN-001", "ACTION-SCAN-002"):
+                    attempted_scan_hosts.add(tgt_host)
+                elif can_act == "ACTION-CREDS-001":
+                    attempted_harvest_hosts.add(tgt_host)
+                elif can_act == "ACTION-HOSTRECON-001":
+                    attempted_hostrecon_hosts.add(tgt_host)
+
+            if not succ:
+                failed_proposals.add(prop_key)
+                if can_act == "ACTION-PIVOT-001" and src and tgt:
+                    failed_pivot_edges.add((src, tgt))
+
+        def _get_prop_key(p: dict) -> tuple[str, str, str, str]:
+            return (
+                get_canonical_action_id(str(p.get("action_id") or "")),
+                str(p.get("target_id") or ""),
+                str(p.get("from_node_id") or p.get("from_host") or ""),
+                str(p.get("credential_id") or ""),
+            )
+
+        def is_failed(p: dict) -> bool:
+            k = _get_prop_key(p)
+            if k in failed_proposals:
+                return True
+            can_act = get_canonical_action_id(p.get("action_id", ""))
+            src = str(p.get("from_node_id") or p.get("from_host") or "")
+            tgt = str(p.get("target_id") or "")
+            if can_act == "ACTION-PIVOT-001" and src and tgt:
+                if (src, tgt) in failed_pivot_edges:
+                    return True
+            return False
+
+        # 4. Semantic category priorities (canonical benchmark action vocabulary)
+        category_specs = [
+            (
+                ("ACTION-DISCOVERY-001", "ACTION-RECON-001"),
+                "NETWORK_RECON",
+                "Discovering network services on visible target.",
+            ),
+            (
+                ("ACTION-SCAN-001",),
+                "SERVICE_SCAN",
+                "Scanning discovered services for confirmed vulnerabilities.",
+            ),
+            (
+                ("ACTION-FOOTHOLD-001", "ACTION-WEB-001"),
+                "INITIAL_ACCESS_FOOTHOLD",
+                "Exploiting remote service for initial foothold session.",
+            ),
+            (
+                ("ACTION-HOSTRECON-001",),
+                "HOST_RECON",
+                "Enumerating host internal configuration from active session.",
+            ),
+            (
+                ("ACTION-CREDS-001", "ACTION-AUTH-001"),
+                "CREDENTIAL_DISCOVERY",
+                "Harvesting credentials from compromised host memory.",
+            ),
+            (
+                ("ACTION-PIVOT-001", "ACTION-FLOW-001"),
+                "LATERAL_PIVOT",
+                "Pivoting laterally to observed reachable internal host.",
+            ),
+            (
+                ("ACTION-PRIVESC-001",),
+                "PRIVILEGE_ESCALATION",
+                "Escalating privileges on active host session.",
+            ),
+            (
+                ("ACTION-OBJECTIVE-001", "ACTION-FLOW-002"),
+                "PURSUING_MISSION_OBJECTIVE",
+                "Accessing mission crown jewel objective.",
+            ),
+        ]
+
+        active_hosts = {
+            s.get("target_id") if isinstance(s, dict) else getattr(s, "target_id", None)
+            for s in belief.active_sessions
+        }
+        compromised_hosts = {
+            h for h, lvl in belief.access_state.items()
+            if lvl in ("FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM")
+        } | active_hosts
+
+        confirmed_findings = getattr(belief, "confirmed_findings", None) or []
+        confirmed_hosts = {
+            f.get("target") for f in confirmed_findings if isinstance(f, dict)
+        }
+        known_services = getattr(belief, "known_services", None) or []
+        known_hosts_with_svc = {
+            s.get("host") for s in known_services if isinstance(s, dict)
+        }
+
+        def is_useful(p: dict) -> bool:
+            act = p.get("action_id", "")
+            can_act = get_canonical_action_id(act)
+            tgt = p.get("target_id", "")
+            tgt_host = tgt.split(":")[0] if tgt else ""
+
+            if can_act == "ACTION-DISCOVERY-001":
+                return (
+                    tgt not in known_hosts_with_svc
+                    and tgt_host not in known_hosts_with_svc
+                    and tgt_host not in attempted_recon_hosts
+                )
+
+            if can_act == "ACTION-SCAN-001":
+                return (
+                    (tgt in known_hosts_with_svc or tgt_host in known_hosts_with_svc)
+                    and tgt_host not in attempted_scan_hosts
+                    and (tgt not in confirmed_hosts and tgt_host not in confirmed_hosts)
+                )
+
+            if can_act == "ACTION-FOOTHOLD-001":
+                return (
+                    tgt not in compromised_hosts
+                    and tgt_host not in compromised_hosts
+                    and (can_act, tgt) not in attempted_action_targets
+                )
+
+            if can_act == "ACTION-CREDS-001":
+                return (
+                    (tgt in compromised_hosts or tgt_host in compromised_hosts)
+                    and tgt_host not in attempted_harvest_hosts
+                )
+
+            if can_act == "ACTION-HOSTRECON-001":
+                return (
+                    (tgt in active_hosts or tgt_host in active_hosts)
+                    and tgt_host not in attempted_hostrecon_hosts
+                )
+
+            if can_act == "ACTION-PIVOT-001":
+                return tgt not in compromised_hosts and tgt_host not in compromised_hosts
+
+            if can_act == "ACTION-OBJECTIVE-001":
+                return not is_failed(p)
+
+            return True
+
+        # Scan categories in priority order
+        for action_ids, reason_code, rationale_prefix in category_specs:
+            candidates = [
+                p for p in context.eligible_proposals
+                if (p.get("action_id") in action_ids or get_canonical_action_id(p.get("action_id", "")) in action_ids)
+                and is_useful(p)
+                and not is_failed(p)
+            ]
+            if not candidates:
+                continue
+
+            # Deterministic stable sort: target_id, from_node_id, 0 if credential_id else 1, credential_id, action_id
+            candidates.sort(
+                key=lambda p: (
+                    p.get("target_id") or "",
+                    p.get("from_node_id") or "",
+                    0 if p.get("credential_id") else 1,
+                    p.get("credential_id") or "",
+                    p.get("action_id") or "",
+                )
+            )
+
+            top = candidates[0]
+            tgt = top.get("target_id", "environment")
+            return ContextDecision(
+                proposal=dict(top),
+                rationale=f"{rationale_prefix} Target: {tgt}.",
+                reason_code=reason_code,
+                confidence=0.9,
+            )
+
+        # Fallback to any unfailed non-stop eligible proposal
+        other_candidates = [
+            p for p in context.eligible_proposals
+            if get_canonical_action_id(p.get("action_id", "")) != "ACTION-STOP-001"
+            and not is_failed(p)
+            and is_useful(p)
+        ]
+        if other_candidates:
+            other_candidates.sort(
+                key=lambda p: (
+                    p.get("action_id") or "",
+                    p.get("target_id") or "",
+                )
+            )
+            top = other_candidates[0]
+            return ContextDecision(
+                proposal=dict(top),
+                rationale=f"Executing fallback eligible action {top.get('action_id')}.",
+                reason_code="FALLBACK_PROGRESS_ACTION",
+                confidence=0.7,
+            )
+
+        # 5. No eligible progress action remaining -> Clean STOP
+        return ContextDecision(
+            proposal=_get_stop_proposal(),
+            rationale="No meaningful eligible progress action remains; terminating engagement.",
+            reason_code="NO_VALID_CANDIDATE",
+            confidence=1.0,
+        )
+
+    def plan_decision(self, context: Any) -> Any:
+        """Public entry point for enterprise episode planning under PlannerDecisionContext."""
+        return self.plan(context)

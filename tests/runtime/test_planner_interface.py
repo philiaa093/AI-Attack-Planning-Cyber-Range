@@ -117,6 +117,7 @@ class PlannerInterfaceTests(unittest.TestCase):
         actions.clear()
         targets.clear()
         self.assertEqual(req.allowed_action_ids, frozenset({ACTION}))
+        self.assertEqual(req.visible_target_ids, frozenset({TARGET}))
         self.assertEqual(req.allowed_target_ids, frozenset({TARGET}))
 
     def test_state_schema_unknown_fields_and_invalid_budgets_rejected(self):
@@ -253,6 +254,7 @@ class PlannerInterfaceTests(unittest.TestCase):
         terminal = state()
         terminal["phase"] = "TERMINAL"
         for req in (replace(req, allowed_action_ids=frozenset()),
+                    replace(req, visible_target_ids=frozenset()),
                     replace(req, allowed_target_ids=frozenset()), request(terminal)):
             planner = FixturePlanner()
             self.assertEqual(planner.plan(req).stop_reason, "NO_VALID_CANDIDATE")

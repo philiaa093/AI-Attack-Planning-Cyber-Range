@@ -70,7 +70,9 @@ from runtime.planners.observed_planner import (
 from runtime.planners.planner_adapter import (
     PlannerStateAdapter,
 )
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from runtime.planners.planner_interface import project_visible_targets
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 
 def _utc_now_iso() -> str:
@@ -194,13 +196,17 @@ class AutonomousRunner:
         self.state_adapter = PlannerStateAdapter(self.state_manager)
         self.normalizer = ObservationNormalizer()
 
+        # Zero-knowledge invariant: planner visibility is strictly discovery-driven
+        # Safety gate knows full allowlist; planner starts with entry target seed only.
+        self.visible_targets: set[str] = {self.target_id} if self.target_id else set()
+
         # Planner
         self.planner = ObservedStatePlanner(
             target_id=self.target_id,
             objective_id=self.objective_id,
             requested_mode=self.requested_planner_mode,
             fallback_allowed=self.planner_fallback_allowed,
-            effective_targets=self.gate.effective_targets,
+            visible_targets=self.visible_targets,
             provider_callable=self.planner_provider_callable,
             provider_config=planner_provider_config,
             effective_actions={action for action in self.gate.effective_actions
@@ -241,6 +247,35 @@ class AutonomousRunner:
         ev_type = ev.get("type", "")
         payload = ev.get("payload", {})
         self._emit_event(ev_type, payload=payload)
+
+    def _ingest_and_update_visibility(self, obs: dict[str, Any]) -> bool:
+        """Ingest observation into state adapter and project any newly discovered targets into planner visibility."""
+        applied = self.state_adapter.ingest_observation(obs)
+        if applied:
+            if obs.get("source_kind") == "PLANNER_INFERENCE":
+                # Invariant 10: Inferred hypotheses must never unlock target visibility
+                return applied
+            for fact in obs.get("new_facts", []):
+                if not isinstance(fact, dict):
+                    continue
+                ft = fact.get("fact_type")
+                val = fact.get("value")
+                subj = fact.get("subject")
+                target_id = fact.get("target_id")
+                if ft in ("TARGET", "TARGET_DISCOVERED", "HOST"):
+                    if isinstance(val, str) and val.startswith("lab-"):
+                        self.visible_targets.add(val)
+                    if isinstance(subj, str) and subj.startswith("lab-"):
+                        self.visible_targets.add(subj)
+                elif ft in ("SERVICE", "ENDPOINT"):
+                    if isinstance(subj, str):
+                        h = subj.split(":")[0]
+                        if h.startswith("lab-"):
+                            self.visible_targets.add(h)
+                if isinstance(target_id, str) and target_id.startswith("lab-"):
+                    self.visible_targets.add(target_id)
+            self.planner.update_visible_targets(self.visible_targets)
+        return applied
 
     def request_pause(self) -> bool:
         """Cooperatively request pause before next safe boundary."""
@@ -523,8 +558,8 @@ class AutonomousRunner:
         obs_art = self.recorder.persist_phase_artifact("refusal_obs", obs)
         self.evidence_refs.append(obs_art["evidence_id"])
 
-        # Ingest into state manager via adapter (updates state with refusal fact)
-        self.state_adapter.ingest_observation(obs)
+        # Ingest into state manager via adapter (updates state with refusal fact and projects visibility)
+        self._ingest_and_update_visibility(obs)
 
         # Emit structured events for safety denial, recorded evidence, refusal observation, and state update
         self._emit_event(
@@ -656,7 +691,7 @@ class AutonomousRunner:
                 ],
                 "evidence_refs": [result_art_id] if result_art_id else [],
             }
-            self.state_adapter.ingest_observation(obs)
+            self._ingest_and_update_visibility(obs)
 
             return DecisionTrace(
                 iteration=iteration,
@@ -693,7 +728,7 @@ class AutonomousRunner:
             obs_ids = []
             for obs in run_res.normalized_observations:
                 obs_ids.append(obs.get("observation_id", ""))
-                self.state_adapter.ingest_observation(obs)
+                self._ingest_and_update_visibility(obs)
 
             # Persist summary
             summary_art = self.recorder.persist_phase_artifact(
@@ -753,7 +788,7 @@ class AutonomousRunner:
                 }
                 if cap_res.result_evidence_id:
                     self.evidence_refs.append(cap_res.result_evidence_id)
-                self.state_adapter.ingest_observation(obs)
+                self._ingest_and_update_visibility(obs)
 
                 return DecisionTrace(
                     iteration=iteration,
@@ -806,7 +841,7 @@ class AutonomousRunner:
                 obs_art = self.recorder.persist_phase_artifact("passive_scan_obs", obs)
                 self.evidence_refs.append(obs_art["evidence_id"])
                 obs["evidence_refs"] = [obs_art["evidence_id"]]
-                self.state_adapter.ingest_observation(obs)
+                self._ingest_and_update_visibility(obs)
 
                 return DecisionTrace(
                     iteration=iteration,
@@ -849,7 +884,7 @@ class AutonomousRunner:
                 }
                 obs_art = self.recorder.persist_phase_artifact("executor_unavailable_obs", obs)
                 self.evidence_refs.append(obs_art["evidence_id"])
-                self.state_adapter.ingest_observation(obs)
+                self._ingest_and_update_visibility(obs)
 
                 return DecisionTrace(
                     iteration=iteration,
@@ -905,7 +940,7 @@ class AutonomousRunner:
                 "new_facts": cap_res.new_facts,
                 "evidence_refs": [cap_res.result_evidence_id] if cap_res.result_evidence_id else [],
             }
-            self.state_adapter.ingest_observation(obs)
+            self._ingest_and_update_visibility(obs)
 
             return DecisionTrace(
                 iteration=iteration,
@@ -947,7 +982,7 @@ class AutonomousRunner:
             }
             obs_art = self.recorder.persist_phase_artifact("plan_action_obs", obs)
             self.evidence_refs.append(obs_art["evidence_id"])
-            self.state_adapter.ingest_observation(obs)
+            self._ingest_and_update_visibility(obs)
 
             return DecisionTrace(
                 iteration=iteration,
@@ -989,7 +1024,7 @@ class AutonomousRunner:
             }
             obs_art = self.recorder.persist_phase_artifact("executor_unavailable_obs", obs)
             self.evidence_refs.append(obs_art["evidence_id"])
-            self.state_adapter.ingest_observation(obs)
+            self._ingest_and_update_visibility(obs)
 
             return DecisionTrace(
                 iteration=iteration,
@@ -1084,6 +1119,11 @@ class AutonomousRunner:
                 self._emit_event("RUN_RESUMED", iteration=iteration, payload={"run_id": self.run_id})
 
             planner_state = self.state_adapter.get_minimized_planner_state()
+            # Fog of War invariant: planner visibility is strictly projected from verified state + entry seed
+            projected = project_visible_targets(planner_state, initial_seed=self.target_id)
+            self.visible_targets.update(projected)
+            self.planner.update_visible_targets(self.visible_targets)
+
             remaining_actions = planner_state.get("remaining_budget", {}).get("actions", 0)
             if remaining_actions <= 0:
                 stop_reason = "BUDGET_EXHAUSTED"
