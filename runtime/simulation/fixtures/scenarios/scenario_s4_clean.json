@@ -1,0 +1,186 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-SIM-004",
+  "name": "S4 Clean Control Target",
+  "description": "Hardened baseline enterprise scenario with zero exploitable vulnerabilities and no valid progression path to objective",
+  "random_seed": 101,
+  "entry_seed": "lab-dmz-entry",
+  "hidden_nodes": [
+    {
+      "node_id": "lab-dmz-entry",
+      "node_kind": "ENTRY",
+      "network_zone": "DMZ",
+      "ip": "10.0.1.10",
+      "hostname": "hardened-dmz.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-https-443",
+          "port": 443,
+          "protocol": "HTTPS",
+          "service_type": "HTTP",
+          "capabilities": ["TLS_SECURED_PORTAL"]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": []
+    },
+    {
+      "node_id": "lab-internal-isolated",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL_SECURE",
+      "ip": "10.0.2.100",
+      "hostname": "isolated-internal.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [],
+      "vulnerabilities": [],
+      "credentials_present": []
+    }
+  ],
+  "hidden_topology": {
+    "edges": [
+      {
+        "edge_id": "edge-dmz-to-isolated-blocked",
+        "source": "lab-dmz-entry",
+        "target": "lab-internal-isolated",
+        "protocol": "TCP",
+        "port": 443,
+        "bidirectional": false,
+        "is_blocked": true
+      }
+    ]
+  },
+  "hidden_credentials": [],
+  "objective": {
+    "objective_id": "OBJ-CLEAN-BASELINE-001",
+    "target_node_id": "lab-internal-isolated",
+    "target_artifact": "sealed_audit_report.pdf",
+    "required_access_level": "SYSTEM",
+    "completion_condition": "ACCESS",
+    "description": "Clean control objective: no unpatched or exploitable progression path exists"
+  },
+  "detection_model": {
+    "noise_threshold": 15.0,
+    "alert_threshold": 25.0,
+    "containment_threshold": 35.0,
+    "initial_detection_state": "QUIET"
+  },
+  "transitions": [
+    {
+      "transition_id": "TRANS-RECON-CLEAN-004",
+      "action_id": "ACTION-RECON-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.2,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "SERVICE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.98,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry:443",
+            "value_template": {"port": 443, "protocol": "HTTPS", "service_type": "HTTP"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 0.2},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCAN-CLEAN-004",
+      "action_id": "ACTION-SCAN-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "ACTION_OUTCOME",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"outcome": "SUCCESS", "findings_count": 0}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 0.5},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-EXPLOIT-FAIL-CLEAN-004",
+      "action_id": "ACTION-WEB-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_vulnerability": "ANY_VULNERABILITY"
+      },
+      "success_probability": 0.0,
+      "noise_delta": 3.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": []
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 3.0},
+        "observations": [
+          {
+            "fact_type": "ACTION_OUTCOME",
+            "emit_on": "FAILURE",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"outcome": "FAILURE", "reason": "TARGET_HARDENED_NO_EXPLOIT"}
+          }
+        ]
+      }
+    },
+    {
+      "transition_id": "TRANS-STOP-004",
+      "action_id": "ACTION-END-001",
+      "match_conditions": {
+        "target_node_id": null
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONTROL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "SIMULATOR",
+            "value_template": {"operation": "STOP", "session_state": "CLOSED"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    }
+  ]
+}

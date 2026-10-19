@@ -1,0 +1,441 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-SIM-001",
+  "name": "S1 Straight Enterprise Attack Path",
+  "description": "Linear 3-tier enterprise progression: DMZ Entry foothold -> Internal App pivot -> Crown Jewel Database objective",
+  "random_seed": 42,
+  "entry_seed": "lab-dmz-entry",
+  "hidden_nodes": [
+    {
+      "node_id": "lab-dmz-entry",
+      "node_kind": "ENTRY",
+      "network_zone": "DMZ",
+      "ip": "10.0.1.10",
+      "hostname": "web-dmz-01.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-http-80",
+          "port": 80,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": ["WEB_HOSTING", "REST_API"]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SQLI-001",
+          "vulnerability_family": "SQLI",
+          "severity": "HIGH",
+          "target_service_id": "svc-http-80"
+        }
+      ],
+      "credentials_present": ["cred-app-svc"]
+    },
+    {
+      "node_id": "lab-internal-app",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL",
+      "ip": "10.0.2.20",
+      "hostname": "app-internal-01.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-ssh-22",
+          "port": 22,
+          "protocol": "SSH",
+          "service_type": "SSH",
+          "capabilities": ["REMOTE_SHELL", "PIVOT"]
+        },
+        {
+          "service_id": "svc-app-8080",
+          "port": 8080,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": ["BACKEND_API"]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-MISCONFIG-001",
+          "vulnerability_family": "MISCONFIGURATION",
+          "severity": "MEDIUM",
+          "target_service_id": "svc-app-8080"
+        }
+      ],
+      "credentials_present": ["cred-db-admin"]
+    },
+    {
+      "node_id": "lab-db-crown",
+      "node_kind": "DATABASE",
+      "network_zone": "SECURE_DATA",
+      "ip": "10.0.3.30",
+      "hostname": "db-prod-01.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-pg-5432",
+          "port": 5432,
+          "protocol": "TCP",
+          "service_type": "DATABASE",
+          "capabilities": ["DATA_STORAGE", "FINANCIAL_RECORDS"]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": []
+    }
+  ],
+  "hidden_topology": {
+    "edges": [
+      {
+        "edge_id": "edge-dmz-to-app",
+        "source": "lab-dmz-entry",
+        "target": "lab-internal-app",
+        "protocol": "TCP",
+        "port": 22,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-app-to-db",
+        "source": "lab-internal-app",
+        "target": "lab-db-crown",
+        "protocol": "TCP",
+        "port": 5432,
+        "bidirectional": false,
+        "is_blocked": false
+      }
+    ]
+  },
+  "hidden_credentials": [
+    {
+      "credential_id": "cred-app-svc",
+      "principal": "app_svc",
+      "credential_kind": "SSH_KEY",
+      "valid_nodes": ["lab-internal-app"],
+      "granted_access_level": "USER",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-db-admin",
+      "principal": "dbadmin",
+      "credential_kind": "PASSWORD",
+      "valid_nodes": ["lab-db-crown"],
+      "granted_access_level": "PRIVILEGED",
+      "validity_state": "VALID",
+      "is_decoy": false
+    }
+  ],
+  "objective": {
+    "objective_id": "OBJ-FINANCIAL-CROWN-001",
+    "target_node_id": "lab-db-crown",
+    "target_artifact": "financial_records.enc",
+    "required_access_level": "PRIVILEGED",
+    "completion_condition": "ACCESS",
+    "description": "Locate and access sensitive financial database on crown jewel node"
+  },
+  "detection_model": {
+    "noise_threshold": 10.0,
+    "alert_threshold": 20.0,
+    "containment_threshold": 30.0,
+    "initial_detection_state": "QUIET"
+  },
+  "transitions": [
+    {
+      "transition_id": "TRANS-RECON-ENTRY-001",
+      "action_id": "ACTION-RECON-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "SERVICE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry:80",
+            "value_template": {"port": 80, "protocol": "HTTP", "service_type": "HTTP"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 0.5},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-SCAN-ENTRY-001",
+      "action_id": "ACTION-SCAN-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONFIRMED_FINDING",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"finding_id": "FIND-SQLI-01", "vulnerability_id": "VULN-SQLI-001"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 1.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-FOOTHOLD-ENTRY-001",
+      "action_id": "ACTION-WEB-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false,
+        "require_vulnerability": "VULN-SQLI-001"
+      },
+      "success_probability": 0.95,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "FOOTHOLD",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"access_level": "FOOTHOLD"}
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-dmz-01",
+            "value_template": {"node_id": "lab-dmz-entry", "session_state": "ACTIVE"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.5},
+        "observations": [
+          {
+            "fact_type": "ACTION_OUTCOME",
+            "emit_on": "FAILURE",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"outcome": "FAILURE"}
+          }
+        ]
+      }
+    },
+    {
+      "transition_id": "TRANS-CREDS-ENTRY-001",
+      "action_id": "ACTION-AUTH-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": true,
+        "required_access_level": "FOOTHOLD"
+      },
+      "success_probability": 0.9,
+      "noise_delta": 1.5,
+      "success_outcome": {
+        "mutations": {
+          "reveal_credentials": ["cred-app-svc"]
+        },
+        "observations": [
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-app-svc",
+            "value_template": {
+              "credential_id": "cred-app-svc",
+              "principal": "app_svc",
+              "credential_kind": "SSH_KEY",
+              "observed_scope": "lab-internal-app",
+              "validity_state": "VALID"
+            }
+          },
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry->lab-internal-app",
+            "value_template": {
+              "source": "lab-dmz-entry",
+              "target": "lab-internal-app",
+              "from_host": "lab-dmz-entry",
+              "to_host": "lab-internal-app",
+              "protocol": "TCP"
+            }
+          }
+        ]
+
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 1.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-PIVOT-APP-001",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "lab-internal-app",
+        "from_node_id": "lab-dmz-entry",
+        "require_active_session": true,
+        "require_reachability": true,
+        "require_credential": "cred-app-svc"
+      },
+      "success_probability": 0.9,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER",
+          "create_session": true,
+          "reveal_credentials": ["cred-db-admin"]
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-internal-app",
+            "value_template": {"access_level": "USER"}
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-internal-01",
+            "value_template": {"node_id": "lab-internal-app", "session_state": "ACTIVE"}
+          },
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-db-admin",
+            "value_template": {
+              "credential_id": "cred-db-admin",
+              "principal": "dbadmin",
+              "credential_kind": "PASSWORD",
+              "observed_scope": "lab-db-crown",
+              "validity_state": "VALID"
+            }
+          },
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-internal-app->lab-db-crown",
+            "value_template": {"source": "lab-internal-app", "target": "lab-db-crown", "protocol": "TCP"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-OBJECTIVE-DB-001",
+      "action_id": "ACTION-FLOW-002",
+      "match_conditions": {
+        "target_node_id": "lab-db-crown",
+        "from_node_id": "lab-internal-app",
+        "require_active_session": true,
+        "require_reachability": true,
+        "require_credential": "cred-db-admin"
+      },
+      "success_probability": 0.95,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "PRIVILEGED",
+          "set_objective_achieved": true
+        },
+        "observations": [
+          {
+            "fact_type": "OBJECTIVE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "OBJ-FINANCIAL-CROWN-001",
+            "value_template": {"objective_id": "OBJ-FINANCIAL-CROWN-001", "objective_state": "ACHIEVED"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-STOP-001",
+      "action_id": "ACTION-END-001",
+      "match_conditions": {
+        "target_node_id": null
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONTROL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "SIMULATOR",
+            "value_template": {"operation": "STOP", "session_state": "CLOSED"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    }
+  ]
+}
