@@ -115,6 +115,73 @@ class BaseEnterpriseHandler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _handle_relay(self) -> None:
+        """Relay bounded request through this pivot host to an onward target.
+
+        Enforces:
+          1. Foothold requirement: Node must have active session to permit outbound relaying
+             (except for lab lifecycle /reset).
+          2. Physical/wire-level network boundary: Connection is made from inside the container's
+             network namespace using standard HTTPConnection to the onward container hostname.
+          3. Fail-closed error mapping: If onward host is unroutable (e.g. DMZ attempting direct
+             connection to RESTRICTED across unjoined networks), socket failure is mapped to 403
+             NETWORK_ISOLATION_BARRIER.
+        """
+        body = self._read_body_json()
+        target_host = body.get("target_host")
+        target_port = int(body.get("target_port", 8080))
+        fwd_method = body.get("method", "GET").upper()
+        fwd_path = body.get("path", "/")
+        fwd_body = body.get("body")
+
+        if not target_host or not fwd_path.startswith("/"):
+            self._send_json(400, {
+                "outcome": "DENIED",
+                "status_code": 400,
+                "error": "INVALID_RELAY_REQUEST",
+                "message": "target_host and valid path starting with / are required",
+            })
+            return
+
+        # Verification of active session (foothold) on this pivot host for operational actions
+        is_admin_lifecycle = (
+            fwd_path in ("/health", "/reset", "/api/v1/admin/block_route", "/api/v1/admin/unblock_route")
+            or (fwd_path == "/api/v1/relay" and isinstance(fwd_body, dict) and fwd_body.get("path") in ("/health", "/reset", "/api/v1/admin/block_route", "/api/v1/admin/unblock_route"))
+        )
+        if not is_admin_lifecycle and not self.target_state.has_active_session("FOOTHOLD"):
+            self._send_json(403, {
+                "outcome": "DENIED",
+                "status_code": 403,
+                "error": "PIVOT_SOURCE_UNAUTHORIZED",
+                "message": f"Source node '{self.target_state.target_id}' has no active session to route traffic",
+            })
+            return
+
+        import http.client
+        try:
+            conn = http.client.HTTPConnection(target_host, target_port, timeout=3.0)
+            encoded = json.dumps(fwd_body or {}).encode("utf-8") if fwd_method in ("POST", "PUT") else None
+            headers = {"Content-Type": "application/json"} if encoded else {}
+            if encoded:
+                headers["Content-Length"] = str(len(encoded))
+            conn.request(fwd_method, fwd_path, body=encoded, headers=headers)
+            resp = conn.getresponse()
+            raw_data = resp.read()
+            try:
+                data = json.loads(raw_data.decode("utf-8"))
+            except Exception:
+                data = {"raw_text": raw_data.decode("utf-8", errors="replace")}
+            data["http_status"] = resp.status
+            self._send_json(resp.status, data)
+            conn.close()
+        except Exception as exc:
+            self._send_json(403, {
+                "outcome": "DENIED",
+                "status_code": 403,
+                "error": "NETWORK_ISOLATION_BARRIER",
+                "message": f"Network route to '{target_host}:{target_port}' is unreachable from '{self.target_state.target_id}': {exc}",
+            })
+
 
 class DMZServiceHandler(BaseEnterpriseHandler):
     """Zone A — DMZ Edge Web Portal / Ingress Service."""
@@ -174,6 +241,10 @@ class DMZServiceHandler(BaseEnterpriseHandler):
         if path == "/reset":
             self.target_state.reset()
             self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
+            return
+
+        if path == "/api/v1/relay":
+            self._handle_relay()
             return
 
         if path == "/api/v1/auth/foothold":
@@ -281,6 +352,26 @@ class InternalServiceHandler(BaseEnterpriseHandler):
         if path == "/reset":
             self.target_state.reset()
             self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
+            return
+
+        if path == "/api/v1/relay":
+            self._handle_relay()
+            return
+
+        if path == "/api/v1/admin/block_route":
+            body = self._read_body_json()
+            route = body.get("route", "primary")
+            with self.target_state.lock:
+                self.target_state.blocked_routes.add(route)
+            self._send_json(200, {"status": "ok", "blocked_routes": list(self.target_state.blocked_routes)})
+            return
+
+        if path == "/api/v1/admin/unblock_route":
+            body = self._read_body_json()
+            route = body.get("route", "primary")
+            with self.target_state.lock:
+                self.target_state.blocked_routes.discard(route)
+            self._send_json(200, {"status": "ok", "blocked_routes": list(self.target_state.blocked_routes)})
             return
 
         if path == "/api/v1/pivot":

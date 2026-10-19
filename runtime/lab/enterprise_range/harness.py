@@ -232,3 +232,297 @@ class EnterpriseLiveRangeHarness:
             }
         finally:
             conn.close()
+
+
+class DockerEnterpriseRangeHarness:
+    """Manages communication with the real Docker Compose deployment of the enterprise cyber range.
+
+    Enforces wire-level network isolation by routing requests through valid ingress and pivot paths:
+      - DMZ (lab-enterprise-dmz): Direct ingress via published loopback port (127.0.0.1:18081).
+      - Clean (lab-enterprise-clean): Direct ingress via published loopback port (127.0.0.1:18085).
+      - Internal (lab-enterprise-internal): Routed via DMZ pivot relay (dmz_net -> internal_net).
+      - Restricted (lab-enterprise-restricted): Routed via DMZ -> Internal pivot relay (internal_net -> restricted_net).
+      - Decoy (lab-enterprise-decoy): Routed via DMZ -> Internal pivot relay (internal_net -> decoy_net).
+
+    Direct access to internal/restricted/decoy nodes from the host is physically blocked
+    by Docker network isolation (no published host ports, internal: true).
+    Direct access from DMZ to Restricted or Decoy is physically blocked by Docker network segmentation.
+    """
+
+    def __init__(
+        self,
+        dmz_host: str = "127.0.0.1",
+        dmz_port: int = 18081,
+        clean_port: int = 18085,
+    ) -> None:
+        self.dmz_host = dmz_host
+        self.dmz_port = dmz_port
+        self.clean_port = clean_port
+        self.endpoints = {
+            "lab-enterprise-dmz": f"http://{dmz_host}:{dmz_port}",
+            "lab-enterprise-clean": f"http://{dmz_host}:{clean_port}",
+        }
+        self.compromised_hosts: set[str] = set()
+        self._running = False
+
+    def start(self) -> dict[str, str]:
+        """Verify that the Docker containers are reachable on their ingress endpoints."""
+        self._running = True
+        return dict(self.endpoints)
+
+    def stop(self) -> None:
+        """Mark harness stopped."""
+        self._running = False
+
+    def reset_all(self) -> None:
+        """Reset state across all running Docker containers in innermost-first order."""
+        self.compromised_hosts.clear()
+        # Reset restricted vault
+        self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/api/v1/relay",
+                "body": {
+                    "target_host": "restricted-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/reset",
+                },
+            },
+        )
+        # Reset decoy honeypot
+        self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/api/v1/relay",
+                "body": {
+                    "target_host": "decoy-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/reset",
+                },
+            },
+        )
+        # Reset internal app
+        self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/reset",
+            },
+        )
+        # Reset DMZ
+        self._dispatch_http_raw(self.dmz_host, self.dmz_port, "POST", "/reset")
+        # Reset Clean control
+        self._dispatch_http_raw(self.dmz_host, self.clean_port, "POST", "/reset")
+
+    def health_check_all(self) -> dict[str, bool]:
+        """Perform health checks across all Docker containers."""
+        results: dict[str, bool] = {}
+        # DMZ
+        r_dmz = self._dispatch_http_raw(self.dmz_host, self.dmz_port, "GET", "/health")
+        results["lab-enterprise-dmz"] = (r_dmz.get("http_status") == 200)
+
+        # Clean
+        r_clean = self._dispatch_http_raw(self.dmz_host, self.clean_port, "GET", "/health")
+        results["lab-enterprise-clean"] = (r_clean.get("http_status") == 200)
+
+        # Internal (via DMZ relay)
+        r_int = self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={"target_host": "internal-service", "target_port": 8080, "method": "GET", "path": "/health"},
+        )
+        results["lab-enterprise-internal"] = (r_int.get("http_status") == 200)
+
+        # Restricted (via nested relay)
+        r_restr = self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/api/v1/relay",
+                "body": {"target_host": "restricted-service", "target_port": 8080, "method": "GET", "path": "/health"},
+            },
+        )
+        results["lab-enterprise-restricted"] = (r_restr.get("http_status") == 200)
+
+        # Decoy (via nested relay)
+        r_decoy = self._dispatch_http_raw(
+            self.dmz_host,
+            self.dmz_port,
+            "POST",
+            "/api/v1/relay",
+            body={
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/api/v1/relay",
+                "body": {"target_host": "decoy-service", "target_port": 8080, "method": "GET", "path": "/health"},
+            },
+        )
+        results["lab-enterprise-decoy"] = (r_decoy.get("http_status") == 200)
+
+        return results
+
+    def block_route(self, target_id: str, route_name: str = "primary") -> None:
+        """Block a route on an internal Docker target via admin control."""
+        if target_id == "lab-enterprise-internal":
+            self._dispatch_http_raw(
+                self.dmz_host,
+                self.dmz_port,
+                "POST",
+                "/api/v1/relay",
+                body={
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/api/v1/admin/block_route",
+                    "body": {"route": route_name},
+                },
+            )
+
+    def unblock_route(self, target_id: str, route_name: str = "primary") -> None:
+        """Unblock a route on an internal Docker target via admin control."""
+        if target_id == "lab-enterprise-internal":
+            self._dispatch_http_raw(
+                self.dmz_host,
+                self.dmz_port,
+                "POST",
+                "/api/v1/relay",
+                body={
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/api/v1/admin/unblock_route",
+                    "body": {"route": route_name},
+                },
+            )
+
+    def _dispatch_http_raw(
+        self,
+        host: str,
+        port: int,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        encoded = json.dumps(body or {}).encode("utf-8") if method in ("POST", "PUT") else None
+        headers = {"Content-Type": "application/json"} if encoded else {}
+        if encoded:
+            headers["Content-Length"] = str(len(encoded))
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            conn.request(method, path, body=encoded, headers=headers)
+            resp = conn.getresponse()
+            raw_data = resp.read()
+            try:
+                data = json.loads(raw_data.decode("utf-8"))
+            except Exception:
+                data = {"raw_text": raw_data.decode("utf-8", errors="replace")}
+            data["http_status"] = resp.status
+            return data
+        except Exception as exc:
+            return {"outcome": "ERROR", "status_code": 500, "error": "NETWORK_ERROR", "message": str(exc), "http_status": 500}
+        finally:
+            conn.close()
+
+    def dispatch_bounded_request(
+        self,
+        target_id: str,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        from_target_id: str | None = None,
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        """Dispatch bounded HTTP request through wire-level Docker network topology."""
+        eff_from = from_target_id or (body.get("from_node_id") if isinstance(body, dict) else None)
+        is_host_local = target_id in self.compromised_hosts and path != "/api/v1/pivot"
+
+        if not is_host_local:
+            permitted, reason = validate_network_transition(eff_from, target_id)
+            if not permitted:
+                return {
+                    "outcome": "DENIED",
+                    "status_code": 403,
+                    "error": "NETWORK_ISOLATION_BARRIER",
+                    "message": reason,
+                }
+            if eff_from is not None and not is_direct_ingress_allowed(target_id):
+                if eff_from not in self.compromised_hosts:
+                    return {
+                        "outcome": "DENIED",
+                        "status_code": 403,
+                        "error": "PIVOT_SOURCE_UNAUTHORIZED",
+                        "message": f"Source node '{eff_from}' has no active session to route traffic to '{target_id}'",
+                    }
+
+        if target_id == "lab-enterprise-dmz":
+            res = self._dispatch_http_raw(self.dmz_host, self.dmz_port, method, path, body=body, timeout=timeout)
+        elif target_id == "lab-enterprise-clean":
+            res = self._dispatch_http_raw(self.dmz_host, self.clean_port, method, path, body=body, timeout=timeout)
+        elif target_id == "lab-enterprise-internal":
+            # Dispatched via DMZ relay
+            relay_body = {
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": method,
+                "path": path,
+                "body": body,
+            }
+            res = self._dispatch_http_raw(self.dmz_host, self.dmz_port, "POST", "/api/v1/relay", body=relay_body, timeout=timeout)
+        elif target_id in ("lab-enterprise-restricted", "lab-enterprise-decoy"):
+            dest_host = "restricted-service" if target_id == "lab-enterprise-restricted" else "decoy-service"
+            # Nested relay: DMZ -> Internal -> target
+            nested_relay_body = {
+                "target_host": "internal-service",
+                "target_port": 8080,
+                "method": "POST",
+                "path": "/api/v1/relay",
+                "body": {
+                    "target_host": dest_host,
+                    "target_port": 8080,
+                    "method": method,
+                    "path": path,
+                    "body": body,
+                },
+            }
+            res = self._dispatch_http_raw(self.dmz_host, self.dmz_port, "POST", "/api/v1/relay", body=nested_relay_body, timeout=timeout)
+        else:
+            return {
+                "outcome": "DENIED",
+                "status_code": 404,
+                "error": "UNKNOWN_TARGET",
+                "message": f"Target '{target_id}' not found in live range",
+            }
+
+        # Track successfully compromised hosts
+        if res.get("status") == "ok" and res.get("outcome") == "SUCCESS" and "session" in res:
+            self.compromised_hosts.add(target_id)
+
+        return res
