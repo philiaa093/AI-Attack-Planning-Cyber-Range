@@ -1307,6 +1307,276 @@ Tranche `RT-05D`, plan `PLAN-RT05D-BENCHMARK-FREEZE-001`, build `BUILD-RT05D-001
 | `python -B scripts/validation/validate_scaffold.py` | 1 | Compose enterprise YAML accepted without error; exit 1 due only to documented pre-existing workspace items (.demo-session.json PIDs and pycache) |
 | `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
 
+### RT-07A — Reproducible Benchmark Runner & Experimental Preflight
+
+- Triển khai toàn diện bộ thực thi benchmark tái lập (`evaluation/experiments/run_benchmark.py`), bộ tiền kiểm và kiểm toán an toàn đa lớp (`evaluation/experiments/benchmark_preflight.py`), và manifest snapshot nguồn mã học thuật (`evaluation/experiments/source_snapshot.py`).
+- Bảo toàn tuyệt đối Hard Invariant:
+  - `BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` nguyên vẹn 100%; không thay đổi Rule policy, LLM prompt/schema, Hybrid scoring weights, 12 kịch bản held-out H01–H12, seed manifest (R01–R05), hay ngữ nghĩa metrics (GCR/DERR/CCR).
+  - Không tune Rule/LLM/Hybrid; không sửa prompt hoặc scoring weights.
+  - Không Cartesian-expand seed (giữ nguyên 420 planned episode identities).
+  - Tuyệt đối KHÔNG chạy 420 held-out episodes trong RT-07A.
+  - RT-07B và RT-07C giữ nguyên trạng thái `NOT_STARTED` / `SPEC_ONLY`.
+- Các cấu phần kỹ thuật chính đã triển khai:
+  - **Deterministic Source Snapshot (`evaluation/experiments/source_snapshot.py`)**:
+    - Quét và tính mã băm SHA-256 độc lập cho toàn bộ 47 tệp nguồn mã thực thi cốt lõi (contracts, catalogs, planners, simulators, scenarios, metrics).
+    - Tạo `source_tree_digest` chuẩn mực đại diện cho toàn bộ cây mã nguồn.
+    - Phát hiện và kiểm toán trạng thái dirty worktree và mã băm của các tệp untracked; fail-closed `BLOCKED` nếu phát hiện sửa đổi trên các tệp benchmark cốt lõi.
+  - **Comprehensive Preflight Checker (`evaluation/experiments/benchmark_preflight.py`)**:
+    - Thẩm định tính toàn vẹn của 12 kịch bản held-out (khớp 100% SHA-256 byte digest và hợp lệ schema contract).
+    - Thẩm định ma trận benchmark: đúng 420 planned episodes duy nhất, 5 paired replicates (`R01..R05`), hạt giống simulator `[1001..1005]` ghép đôi hạt giống provider `[42..46]`.
+    - Kiểm soát suy luận: kiểm tra `CONTROLLED_INFERENCE_CONFIG_V1` (temperature=0.0, top_p=1.0, max_tokens=512, provider_seed_supported=false).
+    - Chặn đứng fake provider: chặn fail-closed `REAL_LLM_BENCHMARK_BLOCKED` nếu thiếu cấu hình real provider cho comparative mode; cấm dùng fake provider thay thế kết quả headline.
+    - Kiểm toán an toàn RT-06 Cyber Range: ghi nhận phát hiện FINDING-RT06-RELAY-01 (/api/v1/relay thiếu destination whitelist) và FINDING-RT06-ADMIN-02 (/reset và admin route chưa tách riêng control plane); khẳng định bất biến INVARIANT-RT07-SIM-ONLY (held-out benchmark chỉ chạy trên simulator, cấm dispatch xuống Docker).
+  - **Common Thin Benchmark Runner (`evaluation/experiments/run_benchmark.py`)**:
+    - Sử dụng chung chu trình `PlannerEpisodeRunner(env, planner)` cho cả 3 baseline chính (`RULE`, `LLM`, `HYBRID_FULL`) và 4 diagnostic ablations (`HYBRID_NO_NOISE`, `HYBRID_NO_PENALTIES`, `HYBRID_SEMANTIC_ONLY`, `HYBRID_SYMBOLIC_ONLY`).
+    - Phân biệt minh bạch các trạng thái dừng: `OBJECTIVE_ACHIEVED`, `PLANNER_STOP`, `MAX_STEPS`, `BUDGET_EXHAUSTED`, `CONTAINED`, `SAFETY_KILL_SWITCH`, `INVALID_LLM_DECISION`, `PROVIDER_ERROR`, `INTERNAL_ERROR`.
+    - Hỗ trợ `--validate-only`, `--dry-run` (chỉ chạy trên S1–S4 dev scenarios), `--scenario`, và resume bất biến.
+    - Cơ chế an toàn chủ động: từ chối chạy comparative benchmark trên H01–H12 nếu chưa được cấp phép trong RT-07B.
+  - **Formal Result Schema (`evaluation/results/result.schema.json`) & Sample (`sample_episode_result.json`)**:
+    - Chuẩn hóa schema kết quả JSON Draft 2020-12 theo Đặc tả Mục 13, ghi nhận đầy đủ provenance, latencies, tokens, invalid decisions, fallbacks, và ground-truth recovery status evaluator-side.
+  - **Automated Test Suites**:
+    - `tests/runtime/test_benchmark_preflight.py` (8/8 tests PASS: Invariants A-G, X).
+    - `tests/runtime/test_benchmark_runner.py` (16/16 tests PASS: Invariants H-W).
+- Trạng thái: RT-07A là `IMPLEMENTED` (Validation pending review). RT-07 giữ `SPEC_ONLY`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B evaluation/experiments/source_snapshot.py` | 0 | Deterministic source snapshot generated; 47 relevant files hashed; tree digest verified |
+| `python -B evaluation/experiments/benchmark_preflight.py` | 0 | All preflight checks passed; readiness status = `DEVELOPMENT_DRY_RUN_ONLY` |
+| `python -B evaluation/experiments/benchmark_preflight.py --require-real-provider` | 1 | Fail-closed blocker `REAL_LLM_BENCHMARK_BLOCKED` correctly enforced |
+| `python -B evaluation/experiments/run_benchmark.py --validate-only` | 0 | Preflight validation passed via runner interface |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S1 --planner RULE` | 0 | S1 linear attack path completed; `OBJECTIVE_ACHIEVED` in 12 steps |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S4 --planner RULE` | 0 | S4 clean control restraint completed; `PLANNER_STOP` in 4 steps; restraint success |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S1 --planner HYBRID_FULL` | 0 | S1 executed with fake hybrid provider; completed via `BUDGET_EXHAUSTED` in 20 steps |
+| `python -B evaluation/experiments/run_benchmark.py` | 1 | Safety guard blocked held-out execution during RT-07A |
+| `python -B -m pytest -p no:cacheprovider -v tests/runtime/test_benchmark_preflight.py tests/runtime/test_benchmark_runner.py` | 0 | 24 passed in 2.93s (All 24 preflight and runner invariant tests PASS) |
+| `python -B -m pytest -p no:cacheprovider -v tests/runtime/test_benchmark_protocol.py` | 0 | 20 passed in 0.51s (BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED confirmed intact) |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary -q` | 0 | 115 passed, 59 subtests passed in 2.22s |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime tests/perception tests/contracts -q` | 0 | 688 passed, 2 skipped, 535 subtests passed (Full runtime regression suite PASS) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` PIDs và pycache ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-07A1 — Research Freeze Consistency & Benchmark Execution Readiness
+
+- **Đối soát mã băm Prompt đông lạnh (Critical Frozen Prompt Hash Reconciliation)**:
+  - Khảo sát nguồn gốc và thuật toán băm SHA-256 đối với hai cặp mã băm:
+    - Cặp mã băm chuẩn tắc trong giao thức V1 (`BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` tại `protocol_freeze.json`, `docs/evaluation/benchmark-protocol.md`, `tests/runtime/test_benchmark_protocol.py`, `TASKS.md` dòng 1217–1218, và `source_snapshot.py`):
+      - LLM: `1d35855b6167b0ce151f400c4fb2b292d3e57779689da4a0273fed8a51ac3533`
+      - Hybrid: `d1280d0b3329c261344f8206fb2a9f61218b55262b0bf9d121c511d83a9e6ec1`
+    - Cặp mã băm nêu trong metadata kiểm toán bên ngoài:
+      - LLM: `64a7c06d88ae53835f8d95e3474f63c87e6fa54cf6801048b30efea6ff2d603a`
+      - Hybrid: `a937a09804e1c25838d7c49f50e93b6e7fe9e8633767cb447c22a7620dd47e3a`
+  - Thẩm định toàn bộ lịch sử Git (`git log -S`, `git rev-list --objects --all`): Xác nhận hai mã băm ngoài `64a7c06d...` và `a937a098...` chưa từng tồn tại trong bất kỳ commit, blob, hay tệp nào của repository; đây là metadata kiểm toán ngoại lai không chính thức.
+  - Chứng minh bảo toàn byte chuẩn tắc: Chuỗi byte của `ATTACK_PLANNER_SYSTEM_PROMPT` và `HYBRID_PLANNER_SYSTEM_PROMPT` (UTF-8, LF line endings chuẩn) hoàn toàn bất biến ($0$ byte khác biệt) từ commit khởi tạo `22c20fc`, qua commit đóng băng giao thức `706ac2d`, cho đến `HEAD` hiện tại (`4229049`).
+  - Kết luận: Tính toàn vẹn freeze được bảo toàn 100%, không xảy ra biến đổi sau freeze, không bị `FREEZE_INTEGRITY_BLOCKED`.
+- **Hoàn thiện Source Snapshot Manifest (`evaluation/experiments/source_snapshot.py`)**:
+  - Mở rộng danh mục tệp nguồn chuẩn mực (`RELEVANT_SOURCE_FILES`) từ 47 lên chính xác 51 tệp thực thi ảnh hưởng trực tiếp đến kết quả benchmark, bổ sung:
+    - `evaluation/experiments/run_benchmark.py`
+    - `evaluation/experiments/benchmark_preflight.py`
+    - `evaluation/experiments/source_snapshot.py`
+    - `evaluation/results/result.schema.json`
+  - Tính toán `source_tree_digest` chuẩn tắc mới: `44e53febc61234c6a4c89da3ac8da3775d2152aa4ff6b30093919a6f2385c326`.
+  - Cơ chế fail-closed làm việc đúng thiết kế: Do các tệp benchmark mới đang ở trạng thái untracked trong git working tree, `source_snapshot` phát hiện và ghi nhận blocker `DIRTY_RELEVANT_FILES_PRESENT`, trạng thái provenance được gán chính xác là `BLOCKED`, tuyệt đối không tự ý gán `CLEAN_REPRODUCIBLE` khi mã nguồn chưa được commit hoặc đóng gói bất biến.
+- **Cơ chế cấp phép thực thi RT-07B (`--execute-heldout` & `--authorize-rt07b`)**:
+  - Bổ sung cờ lệnh `--execute-heldout` (mặc định tắt `False`), `--authorize-rt07b` (token xác nhận độc lập bắt buộc), và `--resume` vào `evaluation/experiments/run_benchmark.py`.
+  - Cài đặt phương thức bảo vệ `check_held_out_execution_authorization(...)`:
+    1. Yêu cầu token ủy quyền độc lập `--authorize-rt07b` (chặn bằng `BenchmarkAuthorizationError`).
+    2. Cưỡng chế thực thi strictly simulator-based POMDP (`is_simulator_only=True`), cấm live Docker dispatch xuống range (chặn bằng `BenchmarkExecutionError`).
+    3. Kiểm tra preflight toàn diện: yêu cầu 100% checks PASS và 0 blockers.
+    4. Yêu cầu danh tính giao thức chuẩn xác `BENCHMARK_PROTOCOL_FREEZE_V1`.
+    5. Cấm tuyệt đối fake/scripted providers cho đánh giá so sánh chính thức (`require_real_provider=True`, chặn bằng `REAL_LLM_BENCHMARK_BLOCKED`).
+    6. Kiểm tra source provenance hoàn chỉnh, không có tệp relevant bị thiếu hay sửa đổi bẩn.
+    7. Tuyệt đối không cho phép `--resume` bỏ qua bất kỳ bước kiểm tra preflight nào.
+- **Bảo toàn bất biến kết quả thực nghiệm (Result Immutability)**:
+  - Cập nhật `save_episode_result` trong `run_benchmark.py`: Ngăn chặn việc ghi đè âm thầm lên kết quả thử nghiệm đã `COMPLETED`. Nếu phát hiện tệp kết quả đã tồn tại với nội dung thực nghiệm khác biệt, hệ thống lập tức ngắt với `FileExistsError`.
+- **Kiểm chứng tự động (Automated Verification Suites)**:
+  - `tests/runtime/test_benchmark_runner.py`: Mở rộng từ 16 lên 21 tests (bổ sung Invariants X, Y, Z, AA, AB), bao phủ toàn bộ cơ chế authorization, simulator-only guard, fake-provider rejection, non-overwriting result integrity, và prompt reconciliation.
+  - `tests/runtime/test_benchmark_preflight.py`: Thẩm định đầy đủ 51 tệp relevant source manifest.
+  - Bộ kiểm thử benchmark protocol, preflight, và runner: 49/49 tests PASS ($100\%$).
+- Trạng thái: RT-07A1 là `IMPLEMENTED` (Benchmark Execution Framework sẵn sàng cho RT-07B khi có lệnh cấp phép chính thức). RT-07B giữ nguyên `NOT_STARTED` / `BLOCKED`.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B evaluation/experiments/run_benchmark.py --validate-only` | 1 | Preflight phát hiện blocker hợp thức `DIRTY_RELEVANT_FILES_PRESENT` do 4 tệp benchmark mới chưa commit |
+| `python -B evaluation/experiments/run_benchmark.py` | 1 | Safety guard kích hoạt thành công, từ chối chạy 420 held-out episodes trong RT-07A/A1 |
+| `python -B evaluation/experiments/run_benchmark.py --execute-heldout` | 1 | Bị chặn fail-closed do thiếu token ủy quyền bắt buộc `--authorize-rt07b` |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S1 --planner RULE` | 0 | Dry-run trên kịch bản dev S1 hoàn tất; `OBJECTIVE_ACHIEVED` trong 12 bước, noise 14.0 |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S4 --planner RULE` | 0 | Dry-run trên kịch bản dev S4 (clean control) hoàn tất; `PLANNER_STOP` trong 4 bước, kiềm chế thành công |
+| `python -B evaluation/experiments/run_benchmark.py --dry-run --scenario S1 --planner HYBRID_FULL` | 0 | Dry-run S1 với Hybrid completed qua `BUDGET_EXHAUSTED` trong 20 bước |
+| `python -B -m pytest -p no:cacheprovider tests/runtime/test_benchmark_protocol.py tests/runtime/test_benchmark_preflight.py tests/runtime/test_benchmark_runner.py -v` | 0 | 49 passed in 4.93s (100% benchmark protocol, preflight, runner invariants A-AB PASS) |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary -q` | 0 | 115 passed, 59 subtests passed in 2.07s |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime -q` | 0 | 656 passed, 2 skipped, 387 subtests passed (Full runtime regression suite PASS) |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` PIDs và pycache ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-07B0 — Real Provider Integration & Reproducibility Readiness
+
+- **Đóng kín phụ thuộc nguồn thực thi (Transitive Dependency Closure)**:
+  - Khảo sát và truy vết toàn diện đồ thị import cục bộ bắt đầu từ 10 gốc thực thi benchmark.
+  - Mở rộng danh mục tệp nguồn chuẩn tắc (`RELEVANT_SOURCE_FILES`) từ 51 lên chính xác 62 tệp, bổ sung các module ảnh hưởng trực tiếp:
+    - Module chuẩn hóa và lưu trữ trạng thái: `agent/perception/normalizers/enterprise_normalizer.py`, `runtime/state/knowledge_state_store.py`.
+    - Module kế toán token và chi phí: `runtime/evaluation/usage_costs.py`.
+    - Module an toàn và ghi nhận bằng chứng: `runtime/evidence/discovery_recorder.py`, `runtime/lab/workflow_policy.py`.
+    - Hợp đồng schema JSON tham chiếu trực tiếp: `action.schema.json`, `observation.schema.json`, `state.schema.json`, `evidence.schema.json`.
+    - Tiện ích kiểm định schema dùng chung: `shared/schema_validation.py`.
+    - Adapter provider thực tế: `runtime/planners/real_provider_adapter.py`.
+  - Tính toán `source_tree_digest` chuẩn tắc mới: `2c8f889bca272a8292295515638c7d5023045b720839a3f7b23c1d19d2a9e948`.
+  - Loại trừ tường minh các thành phần không liên quan: `dashboards/**` (UI), `runtime/lab/enterprise_range/**` (live Docker range tách biệt), `tests/**` (kiểm thử), và root governance docs.
+- **Tích hợp Real Provider Adapter (`runtime/planners/real_provider_adapter.py`)**:
+  - Cài đặt `RealLLMProviderConfig` và `RealLLMProviderAdapter` tuân thủ giao thức `LLMProvider` (`complete(prompt) -> MeteredReviewResponse`).
+  - Phục vụ đồng thời cả Pure LLM (`LLMPlanner`) và đề xuất lai (`HybridPlanner`) mà không sửa đổi logic quyết định của planner.
+  - Cưỡng chế nghiêm ngặt chính sách suy luận đông lạnh `CONTROLLED_INFERENCE_CONFIG_V1`:
+    - `temperature = 0.0` (greedy decoding), `top_p = 1.0`, `max_output_tokens = 512`, `timeout_seconds = 30.0`, `max_retries = 2`, `backoff_factor = 1.5`. Mọi sai lệch tham số đều bị chặn bằng `RealProviderIncompatibleConfigError`.
+  - An toàn bí mật và chống rò rỉ khóa: nạp API key từ biến môi trường (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `LLM_API_KEY`); tuyệt đối không ghi nhận plaintext API key trong exceptions, log, telemetry, hay kết quả. Áp dụng `redact_secrets` cho toàn bộ thông điệp lỗi.
+  - Công bố trung thực về seed provider: `provider_seed_supported = False` mặc định; không tự nhận suy luận tất định tuyệt đối chỉ từ `temperature=0.0`.
+  - Kế toán token chính xác: trích xuất token thật vào `TokenUsage` qua `UsageExtractor`. Bổ sung thuộc tính `total_tokens` an toàn trên dataclass `TokenUsage`.
+- **Đính chính kiểm toán lịch sử mã băm Prompt (Prompt Hash Erratum)**:
+  - Bổ sung `test_o2_system_prompt_bytes_fail_closed_on_mutation_and_audit_errata` trong `tests/runtime/test_benchmark_protocol.py`.
+  - Xác nhận chuỗi byte của hệ thống prompt khớp chuẩn xác với mã băm niêm phong trong `protocol_freeze.json` (`1d35855b...` và `d1280d0b...`), đồng thời ghi nhận rõ hai mã băm ngoại lai `64a7c06d...` và `a937a098...` là erratum kiểm toán ngoài luồng.
+- **Tiền thẩm định Ngân sách & Giới hạn Tỷ lệ (Cost & Rate-Limit Preflight)**:
+  - Báo cáo phân bổ cho 420 episodes:
+    - Cấu hình không gọi LLM: `RULE` (60 episodes) và `HYBRID_SYMBOLIC_ONLY` (60 episodes) $\rightarrow 0$ provider calls.
+    - Cấu hình gọi LLM: `LLM` (60), `HYBRID_FULL` (60), `HYBRID_NO_NOISE` (60), `HYBRID_NO_PENALTIES` (60), `HYBRID_SEMANTIC_ONLY` (60) $\rightarrow$ 300 episodes.
+    - Với `max_budget=20` và `max_steps=50`, số bước trung bình quan sát trong dev là 4–8 bước.
+    - Dự toán provider calls trung bình: $300 \times 6 \approx 1,800$ calls ($\approx 1.17$M tokens).
+    - Giới hạn cứng ngắt mạch (Circuit-Breakers): tối đa 6,000 calls, tối đa 6,000,000 tokens, concurrency = 1 (tuần tự), rate limit = 60 req/min, dừng khẩn cấp nếu gặp 5 lỗi provider liên tiếp hoặc 20 lỗi toàn cục.
+- **Bộ kiểm thử Tích hợp & Bất biến Toàn diện (Development Integration Tests A–R)**:
+  - Cài đặt `tests/runtime/test_real_provider_adapter.py` gồm 18 bài test kiểm chứng chặt chẽ các yêu cầu A–R: bao phủ dependency closure, provenance digest, fail-closed khi dirty/untracked, tính bất biến của prompt/weights, interface adapter, loại bỏ fake provider, xác thực ứng viên, fallback tường minh, chống rò rỉ secret, hạch toán token/latency, bảo vệ của `--resume`, biên simulator-only, 420 experiment IDs không đổi, và 0 held-out episode bị chạy.
+  - Toàn bộ 18/18 tests PASS ($100\%$).
+- **Trạng thái sẵn sàng**:
+  - Trạng thái kỹ thuật: `IMPLEMENTED`.
+  - Trạng thái phân loại: `BLOCKED` với 2 nguyên nhân rõ ràng:
+    1. `SOURCE_PROVENANCE_BLOCKED`: Các tệp mã nguồn benchmark chưa được commit vào Git (chờ phê duyệt của người dùng).
+    2. `REAL_LLM_BENCHMARK_BLOCKED`: Chưa cấp phép thực hiện cuộc gọi API tốn phí ra nhà cung cấp bên ngoài.
+  - Số lượng held-out episodes đã chạy: **0** (Tuyệt đối tuân thủ Invariant RT-07B).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B evaluation/experiments/source_snapshot.py` | 1 | Snapshot phát hiện 62 relevant files; digest `2c8f889bca272a8292295515638c7d5023045b720839a3f7b23c1d19d2a9e948`; fail-closed `BLOCKED` do uncommitted relevant files |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_real_provider_adapter.py -v` | 0 | 18 passed in 8.36s (100% Invariants A–R PASS) |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_benchmark_protocol.py tests/runtime/test_benchmark_preflight.py tests/runtime/test_benchmark_runner.py tests/runtime/test_real_provider_adapter.py -q` | 0 | 68 passed in 10.52s (All 68 benchmark invariant tests PASS) |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary -q` | 0 | 115 passed, 59 subtests passed in 1.66s |
+| `python -B -m pytest -p no:cacheprovider tests/perception tests/contracts -q` | 0 | 37 passed, 148 subtests passed in 0.26s |
+| `python -B -m pytest -p no:cacheprovider tests/runtime/test_live_validation_range.py -q` | 0 | 21 passed, 6 subtests passed in 2.65s |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` PIDs và pycache ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-07B0A — Provider Wiring & Final Benchmark Readiness Gate
+
+- **Cấu hình Model & Provider do người dùng tự nhập (User-Configurable Model & Provider)**:
+  - Tái sử dụng triệt để cơ chế cấu hình hiện có của repository: `dashboards/app/backend/model_profiles.py` (`ProfileStore`, `ProviderConfig`, file `.env` qua `DASHBOARD_MODEL_PROFILE`), biến môi trường (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_BASE`, `LLM_API_KEY`), và các tham số CLI (`--provider-type`, `--model-id`, `--base-url`). Không tạo cơ chế cấu hình song song.
+  - Tuyệt đối không hard-code OpenAI, Anthropic, Sonnet, GPT, hoặc bất kỳ model mặc định nào thành yêu cầu bắt buộc. Nếu model chưa được cấu hình, adapter fail-closed với `RealProviderNotConfiguredError` (`REAL_LLM_BENCHMARK_BLOCKED`).
+  - Hỗ trợ giao diện adapter thống nhất (`openai-compatible`, `anthropic`). Hỗ trợ custom endpoint URL (vLLM, Ollama, LocalAI, Azure gateway, v.v.).
+  - Cưỡng chế nghiêm ngặt chính sách suy luận đông lạnh `CONTROLLED_INFERENCE_CONFIG_V1` (temp=0.0, top_p=1.0, max_tokens=512, timeout=30.0s, max_retries=2, backoff=1.5). Nếu vi phạm, báo lỗi `RealProviderIncompatibleConfigError` (`MODEL_CONFIG_INCOMPATIBLE`), không âm thầm thay đổi phương pháp luận.
+  - Bảo mật thông tin xác thực: API key được đánh dấu `repr=False` trên dataclass và lọc qua `redact_secrets`; không ghi API key vào Git, log, trace, telemetry hay kết quả benchmark.
+  - Khóa cấu hình suy luận tại thời điểm khởi tạo `BenchmarkRunner`: cả Pure LLM và Hybrid trong cùng một thí nghiệm so sánh đều dùng chung instance / cấu hình provider.
+  - Cấu hình `RULE` và `HYBRID_SYMBOLIC_ONLY` được đảm bảo thực hiện chính xác 0 cuộc gọi HTTP ra ngoài.
+- **Hệ thống Ngân sách & Ngắt mạch Đa tầng (Provider Budget Guard & Circuit Breaker)**:
+  - Cài đặt `ProviderBudgetGuard` theo dõi đầy đủ 7 chỉ số kế toán cốt lõi: `planner_decisions`, `logical_provider_calls`, `http_attempts`, `retry_attempts`, `input_tokens`, `output_tokens`, `consecutive_errors`, `cumulative_errors`.
+  - Giới hạn cứng ngắt mạch (Circuit-Breaker Limits):
+    - `max_decisions`: 10,000; `max_logical_calls`: 6,000.
+    - `max_http_attempts`: 12,000 (chặn đứng hiện tượng retry amplification làm vượt ngân sách khi API lỗi).
+    - `max_retry_attempts`: 6,000; `max_input_tokens`: 10,000,000; `max_output_tokens`: 2,000,000.
+    - `max_requests_per_minute`: 60 (giới hạn tốc độ sliding window).
+    - Ngắt mạch khẩn cấp khi gặp 5 lỗi liên tiếp (`CONSECUTIVE_ERRORS_EXCEEDED`) hoặc 20 lỗi toàn cục (`CUMULATIVE_ERRORS_EXCEEDED`).
+  - Bảo toàn kết quả khi ngắt mạch: Khi circuit-breaker kích hoạt, episode hiện tại được ghi nhận `FAILED` (`PROVIDER_ERROR`), và toàn bộ các tệp kết quả của các episode đã hoàn thành trước đó được bảo toàn nguyên vẹn trên đĩa, không bị mất mát hay ghi đè.
+- **Hạch toán Token & Lưu trữ Kết quả Chuẩn tắc**:
+  - `BenchmarkEpisodeResult` và `run_benchmark.py` trích xuất chính xác `input_tokens`, `output_tokens`, và `retry_count` từ provider / planner metrics.
+  - Mọi kết quả tuân thủ nghiêm ngặt schema JSON `evaluation/results/result.schema.json` (`additionalProperties: false`).
+- **Bộ kiểm thử Bất biến Toàn diện Section 11 (Invariants A–T)**:
+  - Mở rộng `tests/runtime/test_real_provider_adapter.py` kiểm chứng toàn bộ 20 yêu cầu A–T:
+    A. LLM benchmark dùng real adapter khi bật.
+    B. Hybrid benchmark dùng cùng cấu hình provider với LLM.
+    C. Rule và Symbolic-only thực hiện đúng 0 API calls.
+    D. Fake provider bị từ chối trong chế độ benchmark chính thức.
+    E. Pure LLM phản hồi có cấu trúc và xác thực ứng viên hợp lệ.
+    F. Hybrid xếp hạng ngữ nghĩa và hợp nhất tính điểm đông lạnh chuẩn xác.
+    G. Ứng viên lạ (unknown candidate) fail-closed.
+    H. Pure LLM không âm thầm fallback sang Rule.
+    I. Lỗi Hybrid provider fallback tường minh sang SYMBOLIC_ONLY.
+    J. Input/output tokens lưu trữ đúng schema kết quả.
+    K. Số lần retry tính vào rate limit và request limit.
+    L. Trần chi phí (spending ceiling) không thể bị vượt qua bởi retries.
+    M. Circuit breaker dừng an toàn không làm mất bản ghi đã hoàn thành.
+    N. Source provenance bao phủ toàn bộ 62 tệp phụ thuộc.
+    O. Tệp chưa commit chặn trạng thái sẵn sàng cuối cùng.
+    P. Mã băm prompt và weights giữ nguyên đông lạnh.
+    Q. Mã băm 12 kịch bản held-out H01–H12 giữ nguyên tuyệt đối.
+    R. Số lượng held-out episodes đã chạy: 0.
+    S. Cấu hình provider/model linh hoạt và fail-closed khi thiếu.
+    T. Tham số suy luận kiểm soát và che giấu bí mật an toàn.
+  - Kết quả kiểm thử: 20/20 PASS ($100\%$).
+- **Trạng thái sẵn sàng**:
+  - Trạng thái kỹ thuật: `IMPLEMENTED`.
+  - Trạng thái phân loại: `BLOCKED` với 2 blockers rõ ràng:
+    1. `SOURCE_PROVENANCE_BLOCKED`: Các tệp mã nguồn benchmark chưa commit vào Git (cần người dùng phê duyệt commit).
+    2. `REAL_PROVIDER_LIVE_SMOKE_PENDING_AUTHORIZATION`: Chưa có lệnh cấp phép gọi API thật ra nhà cung cấp bên ngoài.
+  - Số lượng held-out episodes đã chạy: **0** (Tuyệt đối tuân thủ Invariant RT-07B).
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_real_provider_adapter.py -v` | 0 | 20 passed in 9.60s (100% Invariants A–T PASS) |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_benchmark_protocol.py tests/runtime/test_benchmark_preflight.py tests/runtime/test_benchmark_runner.py tests/runtime/test_real_provider_adapter.py -v` | 0 | 70 passed in 13.49s (All 70 benchmark invariant tests PASS) |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime tests/perception tests/contracts -q` | 0 | 714 passed, 2 skipped, 535 subtests passed in 110.65s |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary -q` | 0 | 115 passed, 59 subtests passed in 1.75s |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Expected exit 1 duy nhất do pre-existing untracked `.demo-session.json` PIDs và pycache ngoài scope |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-07B — Final Pre-Execution Closure (NO HELD-OUT EXECUTION)
+
+- **Mục tiêu:** Xác minh các điểm consistency cuối cùng và chuẩn bị khung benchmark sẵn sàng chạy mà **tuyệt đối không chạy bất kỳ episode nào trên held-out H01–H12**.
+- **Kết quả điều tra 9 hạng mục:**
+  1. **Freeze Integrity**:
+     - `HybridScoringConfig().weights_hash()` = `68e55385e064cb2867d07207022b665a9660b87938318efa355488d67bc2c799` (input: `HybridScoringConfig().to_dict()`, `version="HYBRID_SCORING_V1"`, sha256).
+     - `HybridScoringConfig.frozen().weights_hash()` = `0e595f7294af58a8f635376e8beedb6688cee6784479ae2eb39c21f5c7213aa8` (input: `HybridScoringConfig.frozen().to_dict()`, `version="HYBRID_SCORING_V1_FROZEN"`, sha256).
+     - Toàn bộ 10 trọng số số học và hệ số scale giữ nguyên 100%, không bị sửa đổi.
+     - Chuỗi `d601d293...` được xác định là erratum trong phần text summary phiên trước, không tồn tại trong code hay commit history.
+  2. **User-Configurable Provider / Model & Local Endpoint Safety**:
+     - Phân định chặt chẽ loopback cục bộ: chỉ IPv4 loopback (`127.0.0.0/8`), IPv6 loopback (`::1`), `localhost`, và `.localhost` được công nhận là local endpoint tin cậy không cần API key.
+     - Địa chỉ wildcard `0.0.0.0`, hostname Docker (`host.docker.internal`), LAN IP và remote URLs bị loại trừ khỏi diện miễn trừ tự động; bắt buộc có API key hoặc chính sách tường minh (`allow_keyless=True`).
+     - Thứ tự ưu tiên cấu hình nghiêm ngặt: CLI (`--provider-type`, `--model-id`, `--base-url`) > `ProfileStore` (`.env` `DASHBOARD_MODEL_PROFILE`) > Biến môi trường (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_BASE`, `LLM_API_KEY`).
+     - Tạo bản ghi provenance bất biến qua `RealLLMProviderConfig.to_provenance_record()`, redact 100% API key.
+  3. **Source Provenance Coverage**:
+     - Mở rộng transitive closure bao phủ toàn bộ runtime resolution: bổ sung `dashboards/app/backend/model_profiles.py`, `runtime/planners/observed_planner.py`, `scripts/validation/validate_scaffold.py`, và `evaluation/results/result.schema.json`.
+     - Tổng số tệp trong `RELEVANT_SOURCE_FILES`: đúng **65** tệp.
+  4. **Budget Guard Semantics**:
+     - Phân định rõ 7 chỉ số kế toán: `planner_decisions`, `logical_provider_calls`, `http_attempts`, `retry_attempts`, `input_tokens`, `output_tokens`, `cumulative_errors` (cùng `consecutive_errors`).
+     - Đánh dấu tường minh `monetary_cap_status = "MONETARY_CAP_NOT_ENFORCED"` do các model tùy chỉnh không có bảng giá cố định; chi tiêu được kiểm soát bởi trần token và trần HTTP attempts (12.000).
+  5. **Real Inference Readiness**:
+     - Đánh dấu chính thức: `REAL_PROVIDER_LIVE_SMOKE_PENDING_AUTHORIZATION`.
+     - Tài liệu hướng dẫn độc lập tại `docs/evaluation/live-smoke-protocol.md`: chỉ trên scenario phát triển S1, tối đa 5 bước lập kế hoạch, giới hạn trần 1.000 tokens, không sửa prompt, kết quả lưu riêng biệt trong `evaluation/results/smoke/`.
+  6. **Reproducibility Closure**:
+     - `source_tree_digest`: `770e2f8c25b7c109ab90a8a756230176ef8c3b62c7a813da4c83d0634142021b`.
+     - Git HEAD: `42290497982dd544f1693062a9503d7cbef51e40`.
+     - Trạng thái provenance: `BLOCKED` do các tệp triển khai mới chưa được commit vào Git.
+  7. **Held-out Protection**:
+     - Số lượng held-out episodes đã chạy: đúng **0**.
+     - Số lượng tệp `SCN-HELD*` trong `evaluation/results/`: **0**.
+     - Toàn bộ 12 tệp kịch bản held-out khớp mã băm SHA-256 đã niêm phong trong manifest.
+     - Các safety guards từ chối thực thi held-out khi thiếu cờ ủy quyền chính thức.
+  8. **Final Verification**:
+     - Benchmark suite: 72/72 tests PASS (22 real provider + 50 benchmark protocol/preflight/runner).
+     - Full regression: 715 passed, 2 skipped, 535 subtests passed (runtime, perception, contracts).
+     - Simulation & boundary: 115 passed, 59 subtests passed.
+     - `git diff --check`: 0 lỗi.
+  9. **Readiness Report**:
+     - Trạng thái kỹ thuật: `IMPLEMENTED`.
+     - Trạng thái phân loại: **`READY_FOR_COMMITTED_PROVENANCE`** (Đã hoàn thành authorized live smoke test 2-call).
+     - Live smoke kết quả trên S1 Straight (seed 1001, step 0):
+       - Episode A (Pure LLM): row 43482, latency 15.6s, chọn hợp lệ `CAND-001` (`ACTION-DISCOVERY-001` trên `lab-dmz-entry`), simulator step thành công, tiêu thụ 1.274 prompt + 67 completion (298 reasoning) = 1.341 tokens ($0.005766).
+       - Episode B (Hybrid Full): row 43483, upstream hoàn thành ở ~34s với 3.771 reasoning tokens ($0.044590), client frozen timeout 30.0s kích hoạt circuit breaker chặn retry amplification (ceiled at 2 attempts), HybridPlanner degrade fail-closed sang symbolic fallback chọn `ACTION-DISCOVERY-001` trên `lab-dmz-entry`, simulator step thành công.
+       - Tổng inference attempts: đúng 2 HTTP calls đến 9router, 0 retry, độc lập môi trường và BeliefState.
+       - Tổng tokens tiêu thụ: 2.649 tokens, tổng chi phí $0.050356. Không ô nhiễm kịch bản held-out H01–H12.
+
+| Command / Check kiểm chứng thực tế | Exit code | Observed result |
+|---|---|---|
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_real_provider_adapter.py -v` | 0 | 35 passed in 14.26s (100% Invariants A–V + operational limits PASS) |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime/test_benchmark_protocol.py tests/runtime/test_benchmark_preflight.py tests/runtime/test_benchmark_runner.py tests/runtime/test_real_provider_adapter.py -q` | 0 | 85 passed in 19.87s (100% benchmark invariant tests PASS) |
+| `python -B -m pytest -p no:cacheprovider -o pythonpath=". tests/runtime" tests/runtime tests/perception tests/contracts -q` | 0 | 729 passed, 2 skipped, 59 warnings, 535 subtests passed in 135.26s |
+| `python -B -m pytest -p no:cacheprovider tests/simulation tests/boundary -q` | 0 | 115 passed, 59 subtests passed in 3.29s |
+| `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+| `python -B evaluation/experiments/benchmark_preflight.py` | 1 | Expected pre-commit fail-closed: BLOCKED on DIRTY_RELEVANT_FILES_PRESENT |
+
 ### Oscar — thẩm định nguồn offline
 
 Tranche `OSCAR-ADOPTION-001`, plan `PLAN-OSCAR-ADOPTION-001`, build `BUILD-OSCAR-ADOPTION-001`: candidate **HANDOFF_BLOCKED**, chưa là target đã cấu hình/test. Người dùng chọn tái sử dụng open-source để tập trung discovery, safety, observations, planner và evidence. Giữ ShopLab/source/tests và lịch sử SL-01–03; không sửa compose/gateway/registry hoặc chuyển validation cũ sang Oscar.

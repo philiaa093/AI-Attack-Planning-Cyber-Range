@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cyber-range.local/evaluation/results/result.schema.json",
+  "title": "BenchmarkEpisodeResult",
+  "type": "object",
+  "required": [
+    "experiment_id",
+    "protocol_version",
+    "source_commit",
+    "source_tree_digest",
+    "scenario_id",
+    "scenario_sha256",
+    "replicate_id",
+    "simulator_seed",
+    "requested_provider_seed",
+    "actual_provider_seed_supported",
+    "planner_id",
+    "planner_version",
+    "prompt_hash",
+    "weights_hash",
+    "start_time_utc",
+    "finish_time_utc",
+    "episode_status",
+    "termination_reason",
+    "objective_completed",
+    "is_clean_control",
+    "clean_restraint_success",
+    "steps_executed",
+    "canonical_action_sequence",
+    "total_operational_noise",
+    "invalid_decisions",
+    "observable_failed_progressions",
+    "provider_errors",
+    "retry_count",
+    "symbolic_fallback_count",
+    "planning_latencies_ms"
+  ],
+  "properties": {
+    "experiment_id": {
+      "type": "string",
+      "description": "Deterministic identifier linkable to protocol and matrix."
+    },
+    "protocol_version": {
+      "type": "string",
+      "enum": ["BENCHMARK_PROTOCOL_FREEZE_V1"]
+    },
+    "source_commit": {
+      "type": "string"
+    },
+    "source_tree_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "scenario_id": {
+      "type": "string"
+    },
+    "scenario_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "replicate_id": {
+      "type": "string"
+    },
+    "simulator_seed": {
+      "type": "integer"
+    },
+    "requested_provider_seed": {
+      "type": "integer"
+    },
+    "actual_provider_seed_supported": {
+      "type": "boolean"
+    },
+    "planner_id": {
+      "type": "string",
+      "enum": [
+        "RULE",
+        "LLM",
+        "HYBRID_FULL",
+        "HYBRID_NO_NOISE",
+        "HYBRID_NO_PENALTIES",
+        "HYBRID_SEMANTIC_ONLY",
+        "HYBRID_SYMBOLIC_ONLY"
+      ]
+    },
+    "planner_version": {
+      "type": "string"
+    },
+    "model_provider_id": {
+      "type": "string"
+    },
+    "prompt_hash": {
+      "type": "string"
+    },
+    "weights_hash": {
+      "type": "string"
+    },
+    "start_time_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finish_time_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "episode_status": {
+      "type": "string",
+      "enum": ["COMPLETED", "FAILED", "ERROR"]
+    },
+    "termination_reason": {
+      "type": "string",
+      "enum": [
+        "OBJECTIVE_ACHIEVED",
+        "PLANNER_STOP",
+        "MAX_STEPS",
+        "BUDGET_EXHAUSTED",
+        "CONTAINED",
+        "SAFETY_KILL_SWITCH",
+        "INVALID_LLM_DECISION",
+        "PROVIDER_ERROR",
+        "INFRASTRUCTURE_ERROR",
+        "INTERNAL_ERROR",
+        "UNKNOWN"
+      ]
+    },
+    "objective_completed": {
+      "type": "boolean"
+    },
+    "is_clean_control": {
+      "type": "boolean"
+    },
+    "clean_restraint_success": {
+      "type": "boolean"
+    },
+    "encountered_dead_end": {
+      "type": "boolean"
+    },
+    "recovered_from_dead_end": {
+      "type": "boolean"
+    },
+    "recovery_opportunity_exists": {
+      "type": "boolean"
+    },
+    "steps_executed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "canonical_action_sequence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "total_operational_noise": {
+      "type": "number",
+      "minimum": 0.0
+    },
+    "invalid_decisions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observable_failed_progressions": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "provider_errors": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "symbolic_fallback_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "planning_latencies_ms": {
+      "type": "array",
+      "items": {
+        "type": "number",
+        "minimum": 0.0
+      }
+    },
+    "error_details": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

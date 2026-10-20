@@ -428,6 +428,35 @@ class TestBenchmarkProtocolFreeze(unittest.TestCase):
 
         self.assertEqual(RULE_POLICY_VERSION, "RULE_POLICY_V1")
 
+    def test_o2_system_prompt_bytes_fail_closed_on_mutation_and_audit_errata(self) -> None:
+        """Requirement L2: Authoritative prompt bytes must match protocol_freeze.json exactly.
+
+        Documents historical audit erratum: external notes cited '64a7c06d...' and 'a937a098...',
+        which were untracked audit metadata never committed to git history.
+        The authoritative frozen identifiers are 1d35855b... and d1280d0b...
+        """
+        freeze_path = EXPERIMENTS_DIR / "protocol_freeze.json"
+        freeze = json.loads(freeze_path.read_text(encoding="utf-8"))
+        frozen_llm_hash = freeze["frozen_planners"]["llm"]["prompt_hash"]
+        frozen_hybrid_hash = freeze["frozen_planners"]["hybrid"]["prompt_hash"]
+
+        actual_llm_hash = hashlib.sha256(ATTACK_PLANNER_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+        actual_hybrid_hash = hashlib.sha256(HYBRID_PLANNER_SYSTEM_PROMPT.encode("utf-8")).hexdigest()
+
+        self.assertEqual(actual_llm_hash, frozen_llm_hash, "LLM prompt bytes must match protocol_freeze.json")
+        self.assertEqual(actual_hybrid_hash, frozen_hybrid_hash, "Hybrid prompt bytes must match protocol_freeze.json")
+
+        # Fails closed if prompt bytes are altered by even a single byte
+        mutated_prompt = ATTACK_PLANNER_SYSTEM_PROMPT + " "
+        mutated_hash = hashlib.sha256(mutated_prompt.encode("utf-8")).hexdigest()
+        self.assertNotEqual(mutated_hash, frozen_llm_hash, "Mutated prompt must fail closed against sealed hash")
+
+        # Confirm historical phantom hashes do not match actual prompts
+        phantom_llm = "64a7c06d88ae53835f8d95e3474f63c87e6fa54cf6801048b30efea6ff2d603a"
+        phantom_hybrid = "a937a09804e1c25838d7c49f50e93b6e7fe9e8633767cb447c22a7620dd47e3a"
+        self.assertNotEqual(actual_llm_hash, phantom_llm)
+        self.assertNotEqual(actual_hybrid_hash, phantom_hybrid)
+
     def test_p_req_m_deterministic_experiment_id_and_provenance(self) -> None:
         """Requirement M: Deterministic experiment_id generation and complete provenance contract."""
         exp_id = compute_experiment_id(

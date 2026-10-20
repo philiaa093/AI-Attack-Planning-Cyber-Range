@@ -114,6 +114,11 @@ class TokenUsage:
         if self.reasoning_tokens > self.output_tokens:
             raise ValueError("reasoning tokens must be included in output total")
 
+    @property
+    def total_tokens(self) -> int:
+        """Total tokens across input, cache, and output buckets."""
+        return self.input_uncached + self.cached_read + self.cache_write + self.output_tokens
+
 
 class UsageExtractor:
     @staticmethod
