@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/simulation/true-state.schema.json",
+  "title": "TrueState",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scenario_id",
+    "run_id",
+    "current_step",
+    "random_seed",
+    "node_states",
+    "active_sessions",
+    "credentials_truth",
+    "reachability_truth",
+    "objective_truth",
+    "defender_state"
+  ],
+  "properties": {
+    "scenario_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "current_step": {"type": "integer", "minimum": 0},
+    "random_seed": {"type": "integer"},
+    "node_states": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "access_level",
+          "compromised",
+          "foothold_established",
+          "active_session_ids"
+        ],
+        "properties": {
+          "node_id": {"type": "string", "minLength": 1},
+          "access_level": {
+            "type": "string",
+            "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+          },
+          "compromised": {"type": "boolean"},
+          "foothold_established": {"type": "boolean"},
+          "active_session_ids": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "active_sessions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "session_id",
+          "node_id",
+          "access_level",
+          "established_at_step",
+          "session_state"
+        ],
+        "properties": {
+          "session_id": {"type": "string", "minLength": 1},
+          "node_id": {"type": "string", "minLength": 1},
+          "access_level": {
+            "type": "string",
+            "enum": ["FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+          },
+          "established_at_step": {"type": "integer", "minimum": 0},
+          "session_state": {
+            "type": "string",
+            "enum": ["ACTIVE", "CLOSED", "TERMINATED"]
+          }
+        }
+      }
+    },
+    "credentials_truth": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "credential_id",
+          "principal",
+          "validity_state",
+          "discovered",
+          "used_count"
+        ],
+        "properties": {
+          "credential_id": {"type": "string", "minLength": 1},
+          "principal": {"type": "string", "minLength": 1},
+          "validity_state": {
+            "type": "string",
+            "enum": ["VALID", "INVALID", "REVOKED", "HONEY_TOKEN"]
+          },
+          "discovered": {"type": "boolean"},
+          "used_count": {"type": "integer", "minimum": 0}
+        }
+      }
+    },
+    "reachability_truth": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "target", "protocol", "is_blocked"],
+        "properties": {
+          "source": {"type": "string", "minLength": 1},
+          "target": {"type": "string", "minLength": 1},
+          "protocol": {"type": "string"},
+          "port": {"type": ["integer", "null"], "minimum": 0, "maximum": 65535},
+          "is_blocked": {"type": "boolean"}
+        }
+      }
+    },
+    "objective_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective_id", "target_node_id", "is_achieved", "achieved_at_step"],
+      "properties": {
+        "objective_id": {"type": "string", "minLength": 1},
+        "target_node_id": {"type": "string", "minLength": 1},
+        "is_achieved": {"type": "boolean"},
+        "achieved_at_step": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "defender_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "accumulated_noise",
+        "detection_state",
+        "alerts_triggered",
+        "contained_nodes"
+      ],
+      "properties": {
+        "accumulated_noise": {"type": "number", "minimum": 0},
+        "detection_state": {
+          "type": "string",
+          "enum": ["QUIET", "MONITORING", "ALERTED", "CONTAINED"]
+        },
+        "alerts_triggered": {"type": "integer", "minimum": 0},
+        "contained_nodes": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "action_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["step", "action_id", "success", "noise_delta", "timestamp_utc"],
+        "properties": {
+          "step": {"type": "integer", "minimum": 0},
+          "action_id": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"},
+          "target_node_id": {"type": ["string", "null"]},
+          "success": {"type": "boolean"},
+          "noise_delta": {"type": "number", "minimum": 0},
+          "timestamp_utc": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

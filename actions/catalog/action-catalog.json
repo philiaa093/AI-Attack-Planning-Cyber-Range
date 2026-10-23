@@ -1,19 +1,555 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "catalog_id": "ACTION-CATALOG-001",
   "actions": [
-    {"action_id": "ACTION-RECON-001", "name": "DISCOVER_TARGET", "action_class": "RECON"},
-    {"action_id": "ACTION-RECON-002", "name": "DISCOVER_WEB_SURFACE", "action_class": "RECON"},
-    {"action_id": "ACTION-SCAN-001", "name": "PASSIVE_WEB_SCAN", "action_class": "SCAN"},
-    {"action_id": "ACTION-SCAN-002", "name": "ACTIVE_WEB_SCAN_ALLOWED", "action_class": "SCAN"},
-    {"action_id": "ACTION-WEB-001", "name": "TEST_SQLI_CLASS", "action_class": "WEB_TEST"},
-    {"action_id": "ACTION-WEB-002", "name": "TEST_XSS_CLASS", "action_class": "WEB_TEST"},
-    {"action_id": "ACTION-WEB-003", "name": "TEST_PATH_TRAVERSAL_CLASS", "action_class": "WEB_TEST"},
-    {"action_id": "ACTION-PLAN-001", "name": "CHANGE_TARGET", "action_class": "PLAN"},
-    {"action_id": "ACTION-PLAN-002", "name": "CHANGE_HYPOTHESIS", "action_class": "PLAN"},
-    {"action_id": "ACTION-PLAN-003", "name": "REVISIT_EVIDENCE", "action_class": "PLAN"},
-    {"action_id": "ACTION-END-001", "name": "STOP_SUCCESS", "action_class": "STOP"},
-    {"action_id": "ACTION-END-002", "name": "STOP_BUDGET", "action_class": "STOP"},
-    {"action_id": "ACTION-END-003", "name": "STOP_NO_PROGRESS", "action_class": "STOP"}
+    {
+      "action_id": "ACTION-RECON-001",
+      "name": "DISCOVER_TARGET",
+      "action_class": "RECON",
+      "description": "Probe initial target endpoint for reachability and HTTP service availability",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true
+      },
+
+      "expected_effects": {
+        "potential_facts": ["TARGET", "SERVICE", "ACTION_OUTCOME"],
+        "description": "Establish target presence and initial HTTP service observation"
+      },
+      "step_cost": 1,
+      "noise_cost": 1.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Reconnaissance",
+        "technique_id": "T1595.002",
+        "technique_name": "Vulnerability Scanning"
+      }
+    },
+    {
+      "action_id": "ACTION-RECON-002",
+      "name": "DISCOVER_WEB_SURFACE",
+      "action_class": "RECON",
+      "description": "Crawl reachable web target to discover links, forms, endpoints, and input parameters",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["ENDPOINT", "PARAMETER", "ACTION_OUTCOME"],
+        "description": "Populate web application surface inventory"
+      },
+      "step_cost": 1,
+      "noise_cost": 2.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Discovery",
+        "technique_id": "T1083",
+        "technique_name": "File and Directory Discovery"
+      }
+    },
+    {
+      "action_id": "ACTION-SCAN-001",
+      "name": "PASSIVE_WEB_SCAN",
+      "action_class": "SCAN",
+      "description": "Perform offline analysis of observed endpoints and headers without new network traffic",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CANDIDATE_FINDING", "ACTION_OUTCOME"],
+        "description": "Generate candidate vulnerability hypotheses from passive observation"
+      },
+      "step_cost": 1,
+      "noise_cost": 0.0,
+      "required_capability": "INERT_PROBE",
+      "mitre_attack": {
+        "tactic": "Discovery",
+        "technique_id": "T1046",
+        "technique_name": "Network Service Discovery"
+      }
+    },
+    {
+      "action_id": "ACTION-SCAN-002",
+      "name": "ACTIVE_WEB_SCAN_ALLOWED",
+      "action_class": "SCAN",
+      "description": "Dispatch bounded automated scanner against identified web surfaces within request budget",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CANDIDATE_FINDING", "ACTION_OUTCOME"],
+        "description": "Discover candidate findings via automated scanning tools"
+      },
+      "step_cost": 3,
+      "noise_cost": 8.0,
+      "required_capability": "BOUNDED_SCANNER",
+      "mitre_attack": {
+        "tactic": "Discovery",
+        "technique_id": "T1595.002",
+        "technique_name": "Vulnerability Scanning"
+      }
+    },
+    {
+      "action_id": "ACTION-WEB-001",
+      "name": "TEST_SQLI_CLASS",
+      "action_class": "WEB_TEST",
+      "description": "Execute bounded SQL injection verification test against observed input parameter",
+      "target_kind": "ENDPOINT",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CONFIRMED_FINDING", "ACTION_OUTCOME"],
+        "description": "Confirm or refute SQL injection vulnerability hypothesis"
+      },
+      "step_cost": 2,
+      "noise_cost": 5.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Initial Access",
+        "technique_id": "T1190",
+        "technique_name": "Exploit Public-Facing Application"
+      }
+    },
+    {
+      "action_id": "ACTION-WEB-002",
+      "name": "TEST_XSS_CLASS",
+      "action_class": "WEB_TEST",
+      "description": "Execute bounded cross-site scripting verification test using inert marker reflection",
+      "target_kind": "ENDPOINT",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CONFIRMED_FINDING", "ACTION_OUTCOME"],
+        "description": "Confirm or refute script injection vulnerability hypothesis"
+      },
+      "step_cost": 2,
+      "noise_cost": 4.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Initial Access",
+        "technique_id": "T1190",
+        "technique_name": "Exploit Public-Facing Application"
+      }
+    },
+    {
+      "action_id": "ACTION-WEB-003",
+      "name": "TEST_PATH_TRAVERSAL_CLASS",
+      "action_class": "WEB_TEST",
+      "description": "Execute bounded path traversal verification test using safe lab sentinel fixture",
+      "target_kind": "ENDPOINT",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CONFIRMED_FINDING", "ACTION_OUTCOME"],
+        "description": "Confirm or refute path traversal vulnerability hypothesis"
+      },
+      "step_cost": 2,
+      "noise_cost": 4.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Initial Access",
+        "technique_id": "T1190",
+        "technique_name": "Exploit Public-Facing Application"
+      }
+    },
+    {
+      "action_id": "ACTION-AUTH-001",
+      "name": "ISOLATED_LAB_SESSION",
+      "action_class": "WEB_TEST",
+      "description": "Establish authenticated user session in isolated lab range without credentials persistence",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["ACCESS", "SESSION", "ACTION_OUTCOME"],
+        "potential_access_level": "USER",
+        "potential_session_transition": "OPEN_SESSION",
+        "description": "Establish authenticated session state for workflow testing"
+      },
+      "step_cost": 1,
+      "noise_cost": 2.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Initial Access",
+        "technique_id": "T1078",
+        "technique_name": "Valid Accounts"
+      }
+    },
+    {
+      "action_id": "ACTION-FLOW-001",
+      "name": "SIMULATED_CART_CHECKOUT",
+      "action_class": "WEB_TEST",
+      "description": "Execute simulated business flow verification to assess transaction integrity",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "require_active_session": true
+      },
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME", "OBJECTIVE"],
+        "description": "Verify checkout transaction completion"
+      },
+      "step_cost": 2,
+      "noise_cost": 3.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Collection",
+        "technique_id": "T1565",
+        "technique_name": "Data Manipulation"
+      }
+    },
+    {
+      "action_id": "ACTION-FLOW-002",
+      "name": "RUN_OWNED_AUTHORIZATION_CHECK",
+      "action_class": "WEB_TEST",
+      "description": "Perform cross-tenant authorization check against owned lab test resources",
+      "target_kind": "TARGET",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "require_active_session": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CONFIRMED_FINDING", "ACTION_OUTCOME"],
+        "description": "Detect authorization bypass or privilege elevation flaw"
+      },
+      "step_cost": 2,
+      "noise_cost": 3.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Privilege Escalation",
+        "technique_id": "T1068",
+        "technique_name": "Exploitation for Privilege Escalation"
+      }
+    },
+    {
+      "action_id": "ACTION-PLAN-001",
+      "name": "CHANGE_TARGET",
+      "action_class": "PLAN",
+      "description": "Internal planner action to shift focus to an alternative observed target in visible scope",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {
+        "target_visible": true
+      },
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Shift active planner focus"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    },
+    {
+      "action_id": "ACTION-PLAN-002",
+      "name": "CHANGE_HYPOTHESIS",
+      "action_class": "PLAN",
+      "description": "Internal planner action to revise current vulnerability hypothesis based on observations",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Update planner internal hypothesis ranking"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    },
+    {
+      "action_id": "ACTION-PLAN-003",
+      "name": "REVISIT_EVIDENCE",
+      "action_class": "PLAN",
+      "description": "Internal planner action to re-analyze historical evidence records for missed signals",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Re-evaluate observed fact records"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    },
+    {
+      "action_id": "ACTION-END-001",
+      "name": "STOP_SUCCESS",
+      "action_class": "STOP",
+      "description": "Conclude pentest operation upon successful achievement of all target objectives",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Terminal successful stop"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    },
+    {
+      "action_id": "ACTION-END-002",
+      "name": "STOP_BUDGET",
+      "action_class": "STOP",
+      "description": "Terminate pentest operation due to exhaustion of action, request, or time budget",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Terminal budget exhaustion stop"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    },
+    {
+      "action_id": "ACTION-END-003",
+      "name": "STOP_NO_PROGRESS",
+      "action_class": "STOP",
+      "description": "Terminate pentest operation when no productive candidate action can be found or kill switch triggers",
+      "target_kind": "TARGET",
+      "classification": "PLANNER_INTERNAL",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "description": "Terminal halt stop"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    }
+  ],
+  "enterprise_actions": [
+    {
+      "action_id": "ACTION-DISCOVERY-001",
+      "name": "NETWORK_SERVICE_DISCOVERY",
+      "action_class": "RECON",
+      "description": "Discover live reachable hosts and exposed services on network segment",
+      "target_kind": "SUBNET",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "require_reachability": true
+      },
+      "expected_effects": {
+        "potential_facts": ["HOST", "SERVICE", "REACHABILITY"],
+        "description": "Observe new live hosts and network services"
+      },
+      "step_cost": 1,
+      "noise_cost": 2.0,
+      "required_capability": "NETWORK_CLIENT",
+      "mitre_attack": {
+        "tactic": "Discovery",
+        "technique_id": "T1018",
+        "technique_name": "Remote System Discovery"
+      }
+    },
+    {
+      "action_id": "ACTION-FOOTHOLD-001",
+      "name": "INITIAL_SERVICE_FOOTHOLD",
+      "action_class": "INITIAL_ACCESS",
+      "description": "Acquire unprivileged initial foothold session on target via confirmed service exposure",
+      "target_kind": "SERVICE",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "host_observed": true,
+        "service_observed": true,
+        "require_reachability": true,
+        "min_access_level": "NONE"
+      },
+      "expected_effects": {
+        "potential_facts": ["ACCESS", "SESSION"],
+        "potential_access_level": "USER",
+        "potential_session_transition": "OPEN_SESSION",
+        "description": "Establish unprivileged active session on target"
+      },
+      "step_cost": 2,
+      "noise_cost": 5.0,
+      "required_capability": "REMOTE_SERVICE",
+      "mitre_attack": {
+        "tactic": "Initial Access",
+        "technique_id": "T1190",
+        "technique_name": "Exploit Public-Facing Application"
+      }
+    },
+    {
+      "action_id": "ACTION-HOSTRECON-001",
+      "name": "HOST_CONFIGURATION_RECON",
+      "action_class": "HOST_RECON",
+      "description": "Enumerate host operating system configuration, user accounts, and local network interfaces",
+      "target_kind": "HOST",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "host_observed": true,
+        "require_active_session": true,
+        "min_access_level": "USER"
+      },
+      "expected_effects": {
+        "potential_facts": ["HOST", "REACHABILITY"],
+        "potential_lateral_reachability": true,
+        "description": "Discover internal interfaces and local configuration"
+      },
+      "step_cost": 1,
+      "noise_cost": 1.0,
+      "required_capability": "ACTIVE_SESSION",
+      "mitre_attack": {
+        "tactic": "Discovery",
+        "technique_id": "T1082",
+        "technique_name": "System Information Discovery"
+      }
+    },
+    {
+      "action_id": "ACTION-CREDS-001",
+      "name": "LOCAL_CREDENTIAL_DISCOVERY",
+      "action_class": "CREDENTIAL_ACCESS",
+      "description": "Harvest stored credential handles and access tokens from local host storage or memory",
+      "target_kind": "HOST",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "host_observed": true,
+        "require_active_session": true,
+        "min_access_level": "FOOTHOLD"
+      },
+      "expected_effects": {
+        "potential_facts": ["CREDENTIAL"],
+        "potential_credential_discovery": true,
+        "description": "Extract redacted credential handles with valid state"
+      },
+      "step_cost": 2,
+      "noise_cost": 4.0,
+      "required_capability": "ACTIVE_SESSION",
+      "mitre_attack": {
+        "tactic": "Credential Access",
+        "technique_id": "T1552",
+        "technique_name": "Unsecured Credentials"
+      }
+    },
+    {
+      "action_id": "ACTION-PIVOT-001",
+      "name": "LATERAL_HOST_PIVOT",
+      "action_class": "LATERAL_MOVEMENT",
+      "description": "Establish an authenticated remote session on a reachable internal host using valid credentials",
+      "target_kind": "HOST",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "host_observed": true,
+        "require_reachability": true,
+        "require_valid_credential": true
+      },
+      "expected_effects": {
+        "potential_facts": ["ACCESS", "SESSION"],
+        "potential_access_level": "USER",
+        "potential_session_transition": "OPEN_SESSION",
+        "description": "Open new active session on target pivot host"
+      },
+      "step_cost": 3,
+      "noise_cost": 6.0,
+      "required_capability": "NETWORK_CLIENT",
+      "mitre_attack": {
+        "tactic": "Lateral Movement",
+        "technique_id": "T1021",
+        "technique_name": "Remote Services"
+      }
+    },
+    {
+      "action_id": "ACTION-PRIVESC-001",
+      "name": "HOST_PRIVILEGE_ESCALATION",
+      "action_class": "PRIVILEGE_ESCALATION",
+      "description": "Elevate local execution privileges from unprivileged to privileged on target host",
+      "target_kind": "HOST",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "host_observed": true,
+        "require_active_session": true,
+        "min_access_level": "USER"
+      },
+      "expected_effects": {
+        "potential_facts": ["ACCESS"],
+        "potential_access_level": "PRIVILEGED",
+        "description": "Transition proven access level to PRIVILEGED on target"
+      },
+      "step_cost": 3,
+      "noise_cost": 7.0,
+      "required_capability": "ACTIVE_SESSION",
+      "mitre_attack": {
+        "tactic": "Privilege Escalation",
+        "technique_id": "T1068",
+        "technique_name": "Exploitation for Privilege Escalation"
+      }
+    },
+    {
+      "action_id": "ACTION-OBJECTIVE-001",
+      "name": "ACCESS_MISSION_OBJECTIVE",
+      "action_class": "OBJECTIVE_ACCESS",
+      "description": "Access and verify designated crown-jewel objective asset with privileged host session",
+      "target_kind": "OBJECTIVE",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {
+        "target_visible": true,
+        "require_active_session": true,
+        "require_reachability": true,
+        "require_valid_credential": true,
+        "objective_not_achieved": true
+      },
+      "expected_effects": {
+        "potential_facts": ["OBJECTIVE"],
+        "potential_objective_completion": true,
+        "description": "Record evidence-backed objective completion fact"
+      },
+      "step_cost": 2,
+      "noise_cost": 3.0,
+      "required_capability": "ACTIVE_SESSION",
+      "mitre_attack": {
+        "tactic": "Collection",
+        "technique_id": "T1005",
+        "technique_name": "Data from Local System"
+      }
+    },
+    {
+      "action_id": "ACTION-STOP-001",
+      "name": "TERMINATE_OPERATION",
+      "action_class": "STOP",
+      "description": "Cleanly terminate planning operation upon objective achievement or budget exhaustion",
+      "target_kind": "ENVIRONMENT",
+      "classification": "ENTERPRISE_TTP",
+      "preconditions": {},
+      "expected_effects": {
+        "potential_facts": ["ACTION_OUTCOME"],
+        "potential_session_transition": "CLOSE_SESSION",
+        "description": "Signal planner termination"
+      },
+      "step_cost": 0,
+      "noise_cost": 0.0,
+      "required_capability": "PLANNER_INTERNAL"
+    }
   ]
 }

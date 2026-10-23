@@ -1,4 +1,4 @@
 {
-  "ground_truth_schema": "agent/planner/contracts/ground-truth.schema.json",
+  "ground_truth_schema": "evaluation/ground_truth/ground-truth.schema.json",
   "runtime_consumers": []
 }

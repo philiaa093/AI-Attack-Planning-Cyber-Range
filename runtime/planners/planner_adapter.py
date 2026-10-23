@@ -18,7 +18,8 @@ from typing import Any
 from agent.memory.state.state_manager import StateManager
 from agent.perception.normalizers.observation_normalizer import ObservationNormalizer
 from runtime.evidence.discovery_recorder import redact_secrets
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 
 def _canonical_json(data: Any) -> str:
@@ -41,6 +42,9 @@ class PlannerStateAdapter:
         self.state_manager = state_manager
         self.normalizer = normalizer or ObservationNormalizer()
         self.seen_observations: dict[str, str] = {}  # obs_id -> sha256 fingerprint
+        if hasattr(state_manager, "_observations"):
+            for oid, odict in state_manager._observations.items():
+                self.seen_observations[oid] = _hash_observation(odict)
 
         # Load observation schema for validation
         obs_schema_path = ROOT / "agent" / "planner" / "contracts" / "observation.schema.json"
@@ -85,6 +89,10 @@ class PlannerStateAdapter:
         self.state_manager.apply_observation(observation)
         return True
 
+    def get_belief_state(self):
+        """Return the current BeliefState projection from the underlying StateManager."""
+        return self.state_manager.get_belief_state()
+
     def get_minimized_planner_state(self) -> dict[str, Any]:
         """Return a minimized, redacted planner state containing only necessary context."""
         raw_state = self.state_manager.get_state()
@@ -113,4 +121,5 @@ class PlannerStateAdapter:
             "observed_facts": observed_facts,
             "discovered_endpoints": endpoints,
             "discovered_services": services,
+            "belief_state": copy.deepcopy(redacted_state.get("belief_state", {})),
         }

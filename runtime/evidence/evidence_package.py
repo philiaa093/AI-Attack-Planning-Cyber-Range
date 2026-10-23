@@ -38,7 +38,8 @@ from runtime.planners.observed_planner import (
     ObservedStatePlanner,
     PlannerResult,
 )
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 
 class EvidencePackageError(Exception):

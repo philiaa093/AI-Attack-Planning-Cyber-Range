@@ -194,8 +194,70 @@ class ValidatorTests(unittest.TestCase):
     def test_exact_runbook_manifest(self):
         self.assertEqual(len(validate_scaffold.RUNBOOKS), 10)
 
-    def test_exact_adr_manifest(self):
-        self.assertEqual(len(validate_scaffold.ADRS), 13)
+    def test_adr_filename_pattern(self):
+        pattern = validate_scaffold.ADR_FILENAME_PATTERN
+        self.assertTrue(pattern.match("ADR-001-planner-centered-scope.md"))
+        self.assertTrue(pattern.match("ADR-014-enterprise-red-team-belief-state.md"))
+        self.assertIsNone(pattern.match("ADR-1-short.md"))
+        self.assertIsNone(pattern.match("ADR-001.md"))
+        self.assertIsNone(pattern.match("ADR-001-.md"))
+        self.assertIsNone(pattern.match("ADR-001--bad.md"))
+        self.assertIsNone(pattern.match("ADR-001-UPPER.md"))
+        self.assertIsNone(pattern.match("index.md"))
+
+    def test_adr_invariants_contiguous_and_unique(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr_dir = root / "docs/adr"
+            adr_dir.mkdir(parents=True)
+            headings = "\n".join(f"## {h}\nContent" for h in validate_scaffold.ADR_HEADINGS)
+            (adr_dir / "ADR-001-first.md").write_text(f"# First\n\n{headings}\n", encoding="utf-8")
+            (adr_dir / "ADR-002-second.md").write_text(f"# Second\n\n{headings}\n", encoding="utf-8")
+            (adr_dir / "index.md").write_text("# Index\n", encoding="utf-8")
+            with mock.patch.object(validate_scaffold, "ROOT", root):
+                errors = []
+                validate_scaffold.validate_ids_and_status(errors)
+                self.assertEqual([e for e in errors if "ADR" in e], [])
+
+    def test_adr_invariants_detect_duplicates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr_dir = root / "docs/adr"
+            adr_dir.mkdir(parents=True)
+            headings = "\n".join(f"## {h}\nContent" for h in validate_scaffold.ADR_HEADINGS)
+            (adr_dir / "ADR-001-first.md").write_text(f"# First\n\n{headings}\n", encoding="utf-8")
+            (adr_dir / "ADR-001-duplicate.md").write_text(f"# Duplicate\n\n{headings}\n", encoding="utf-8")
+            with mock.patch.object(validate_scaffold, "ROOT", root):
+                errors = []
+                validate_scaffold.validate_ids_and_status(errors)
+                self.assertTrue(any("duplicate ADR IDs: ADR-001" in e for e in errors))
+
+    def test_adr_invariants_detect_missing_sequence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr_dir = root / "docs/adr"
+            adr_dir.mkdir(parents=True)
+            headings = "\n".join(f"## {h}\nContent" for h in validate_scaffold.ADR_HEADINGS)
+            (adr_dir / "ADR-001-first.md").write_text(f"# First\n\n{headings}\n", encoding="utf-8")
+            (adr_dir / "ADR-003-third.md").write_text(f"# Third\n\n{headings}\n", encoding="utf-8")
+            with mock.patch.object(validate_scaffold, "ROOT", root):
+                errors = []
+                validate_scaffold.validate_ids_and_status(errors)
+                self.assertTrue(any("missing ADR IDs in sequence: ADR-002" in e for e in errors))
+
+    def test_adr_invariants_detect_malformed_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adr_dir = root / "docs/adr"
+            adr_dir.mkdir(parents=True)
+            (adr_dir / "ADR-1-short.md").write_text("# Short\n", encoding="utf-8")
+            (adr_dir / "ADR-001.md").write_text("# No slug\n", encoding="utf-8")
+            (adr_dir / "notes.txt").write_text("notes", encoding="utf-8")
+            with mock.patch.object(validate_scaffold, "ROOT", root):
+                errors = []
+                validate_scaffold.validate_documents(errors)
+                malformed = [e for e in errors if "malformed ADR filename" in e]
+                self.assertEqual(len(malformed), 3)
 
     def test_exact_report_manifests(self):
         self.assertEqual(len(validate_scaffold.CHAPTERS), 11)

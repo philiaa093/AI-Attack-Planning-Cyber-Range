@@ -74,8 +74,10 @@ class ScannerRelay:
         self.origin = "http://" + target_id
         self.paths = {}
         self.seed_urls = set()
+        self.options_truncated = False
         self.refusals = 0
         self.executed_urls = set()
+        self.successful_urls = set()
         for item in inventory.items.values():
             parsed = urllib.parse.urlsplit(item.canonical_url)
             canon = gate.canonicalizer.canonicalize(item.canonical_url)
@@ -98,17 +100,21 @@ class ScannerRelay:
                     self.paths[path].update(i["name"] for i in form.get("inputs", []) if i.get("name"))
                     query = urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True)
                     defaults = list(query)
+                    choices = {}
                     for field in form.get("inputs", []):
                         if field.get("type") != "select" or not field.get("name"):
                             continue
                         options = field.get("options", [])
                         if type(options) is not list:
                             continue
+                        self.options_truncated |= field.get("options_truncated") is True or len(options) > 16
                         values = [option for option in options[:16] if type(option) is dict
-                                  and type(option.get("value")) is str and 0 < len(option["value"]) <= 128
+                                  and type(option.get("value")) is str and len(option["value"]) <= 128
                                   and not any(ord(c) < 32 or ord(c) == 127 for c in option["value"])]
+                        choices[field["name"]] = values
                         if values and field["name"] not in {key for key, _ in defaults}:
-                            chosen = next((option for option in values if option.get("selected") is True), values[0])
+                            chosen = next((option for option in values if option.get("selected") is True),
+                                          next((option for option in values if option["value"]), values[0]))
                             defaults.append((field["name"], chosen["value"]))
                     if defaults != query:
                         candidate = self.origin + path + "?" + urllib.parse.urlencode(defaults)
@@ -123,6 +129,18 @@ class ScannerRelay:
                             checked = gate.canonicalizer.canonicalize(gate.base_origin + path + "?" + urllib.parse.urlencode(query))
                             if checked.is_valid and not checked.redacted:
                                 self.seed_urls.add(self.origin + path + "?" + urllib.parse.urlencode(query))
+                    # ponytail: cover each observed option, not the Cartesian product of multiple selects.
+                    for name, options in choices.items():
+                        for option in options:
+                            variant = [(key, value) for key, value in defaults if key != name]
+                            variant.append((name, option["value"]))
+                            for field in form.get("inputs", []):
+                                if (field.get("name") and field.get("type", "text").lower() in ("text", "search")
+                                        and field["name"] not in {key for key, _ in variant}):
+                                    variant.append((field["name"], ""))
+                            checked = gate.canonicalizer.canonicalize(gate.base_origin + path + "?" + urllib.parse.urlencode(variant))
+                            if checked.is_valid and not checked.redacted:
+                                self.seed_urls.add(self.origin + path + "?" + urllib.parse.urlencode(variant))
 
     def check(self):
         if self.cancelled() or self.gate.kill_switch.is_active():
@@ -147,6 +165,14 @@ class ScannerRelay:
 
     def urls(self):
         return sorted(self.seed_urls)[:100]
+
+    def seed_coverage(self):
+        selected = set(self.urls())
+        return {"observed_seed_count": len(self.seed_urls), "selected_seed_count": len(selected),
+                "requested_seed_count": len(selected & self.executed_urls),
+                "successful_seed_count": len(selected & self.successful_urls),
+                "not_requested_seed_count": len(self.seed_urls - self.executed_urls),
+                "options_truncated": self.options_truncated}
 
     def dispatch(self, message):
         self.check()
@@ -186,6 +212,8 @@ class ScannerRelay:
                for key, value in response.headers.items()):
             raise RuntimeError("SCANNER_COMPRESSED_RESPONSE_UNSUPPORTED")
         self.executed_urls.add(self.origin + parsed.path + ("?" + parsed.query if parsed.query else ""))
+        if 200 <= response.status_code < 300:
+            self.successful_urls.add(self.origin + parsed.path + ("?" + parsed.query if parsed.query else ""))
         headers = {}
         for key, value in response.headers.items():
             if key.lower() in ("content-type", "location", "x-content-type-options", "content-security-policy",
@@ -393,6 +421,10 @@ class ExternalScannerExecutor:
                 summary["reason"] = str(exc) if str(exc).startswith("SCANNER_") else type(exc).__name__
                 summary["coverage"] = "INCOMPLETE"
                 candidates = []
+            summary["seed_coverage"] = relay.seed_coverage()
+            if summary.get("coverage") == "BOUNDED" and (relay.options_truncated or
+                    summary["seed_coverage"]["successful_seed_count"] < len(relay.seed_urls)):
+                summary["coverage"] = "PARTIAL"
             artifact = recorder.persist_phase_artifact("scanner_result", summary)
             summary["evidence_id"] = artifact["evidence_id"]
             result_ids.append(artifact["evidence_id"])

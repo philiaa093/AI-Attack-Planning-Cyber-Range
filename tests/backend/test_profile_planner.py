@@ -45,7 +45,7 @@ class ProfilePlannerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             manager = RunManager(Path(directory), model_profiles=self.store)
             config = self.store.snapshot()
-            with patch("dashboards.app.backend.run_manager.demo.new_recorder"), \
+            with patch("dashboards.app.backend.run_manager.lab.new_recorder"), \
                  patch("dashboards.app.backend.run_manager.AutonomousRunner") as runner:
                 # Stop before report persistence; no target/provider dispatch occurs.
                 runner.return_value.run.side_effect = RuntimeError("fixture stop")

@@ -11,7 +11,8 @@ from unittest.mock import patch
 from runtime.safety.discovery_gate import ApprovalToken, KillSwitch
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure
 from runtime.discovery import discovery_report_importer as importer
-from scripts.validation.validate_scaffold import ROOT, validate_shape
+from scripts.validation.validate_scaffold import ROOT
+from shared.schema_validation import validate_shape
 
 
 class DiscoveryReportImporterTests(unittest.TestCase):
@@ -694,7 +695,8 @@ class DiscoveryReportImporterTests(unittest.TestCase):
         modules.update(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names)
         self.assertEqual(modules, {"__future__", "hashlib", "json", "math", "os", "re", "stat", "time",
                                  "urllib.parse", "uuid", "datetime", "pathlib", "runtime.safety.discovery_gate",
-                                 "runtime.evidence.discovery_recorder", "scripts.validation.validate_scaffold"})
+                                 "runtime.evidence.discovery_recorder", "scripts.validation.validate_scaffold",
+                                 "shared.schema_validation"})
 
     def test_fsync_failure_preserves_existing_records(self):
         self.write()

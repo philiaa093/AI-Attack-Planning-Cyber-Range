@@ -1,13 +1,15 @@
 """State manager — aggregate observations into planner state.
 
 Builds state.schema.json from sequential observations.
-Tracks: run_id, scenario_id, phase, remaining_budget, observed_facts, previous_actions.
+Tracks: run_id, scenario_id, phase, remaining_budget, observed_facts, previous_actions, belief_state.
 Supports deterministic reconstruction from history log.
 
 Isolation: no expected-data references.
 """
 
 import copy
+
+from agent.memory.state.belief_state import BeliefState
 
 
 _VALID_PHASES = ("RECON", "DISCOVERY", "ANALYSIS", "TESTING", "REPLAN", "TERMINAL")
@@ -35,6 +37,7 @@ class StateManager:
         self._phase = "RECON"
         self._budget = copy.deepcopy(budget or _DEFAULT_BUDGET)
         self._facts = {}  # fact_id → fact dict (with source_observation_id)
+        self._observations = {}  # obs_id → observation dict
         self._previous_actions = []
 
     @property
@@ -55,6 +58,11 @@ class StateManager:
         """
         obs_id = observation.get("observation_id", "")
         action_id = observation.get("action_id", "")
+        source_kind = observation.get("source_kind", "DISCOVERY")
+
+        # Track observation
+        if obs_id:
+            self._observations[obs_id] = copy.deepcopy(observation)
 
         # Track action
         if action_id and action_id not in self._previous_actions:
@@ -67,6 +75,8 @@ class StateManager:
         for fact in observation.get("new_facts", []):
             state_fact = dict(fact)
             state_fact["source_observation_id"] = obs_id
+            if "source_kind" not in state_fact and source_kind:
+                state_fact["source_kind"] = source_kind
             fact_id = state_fact["fact_id"]
 
             # Keep higher confidence on collision
@@ -84,9 +94,16 @@ class StateManager:
         """Decrement time budget by s seconds."""
         self._budget["seconds"] = max(0.0, self._budget["seconds"] - s)
 
-    def get_state(self):
+    def get_belief_state(self) -> BeliefState:
+        """Project current belief state from observed facts and observations."""
+        return BeliefState.from_facts(
+            list(self._facts.values()),
+            observations=list(self._observations.values()),
+        )
+
+    def get_state(self, *, include_belief: bool = False):
         """Build state dict conforming to state.schema.json."""
-        return {
+        state = {
             "schema_version": "1.0",
             "run_id": self._run_id,
             "scenario_id": self._scenario_id,
@@ -96,6 +113,9 @@ class StateManager:
             "observed_facts": list(self._facts.values()),
             "previous_actions": list(self._previous_actions),
         }
+        if include_belief:
+            state["belief_state"] = self.get_belief_state().to_dict()
+        return state
 
     def get_fact_count(self):
         """Return number of observed facts."""

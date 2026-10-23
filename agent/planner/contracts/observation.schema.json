@@ -11,9 +11,28 @@
       "required": ["fact_id", "fact_type", "subject", "value", "confidence"],
       "properties": {
         "fact_id": {"type": "string", "minLength": 1},
-        "fact_type": {"type": "string", "enum": ["TARGET", "SERVICE", "ENDPOINT", "PARAMETER", "CANDIDATE_FINDING", "CONFIRMED_FINDING", "ACTION_OUTCOME", "CONTROL"]},
+        "fact_type": {
+          "type": "string",
+          "enum": [
+            "TARGET",
+            "HOST",
+            "SERVICE",
+            "ENDPOINT",
+            "PARAMETER",
+            "CANDIDATE_FINDING",
+            "CONFIRMED_FINDING",
+            "ACCESS",
+            "CREDENTIAL",
+            "SESSION",
+            "REACHABILITY",
+            "ACTION_OUTCOME",
+            "DETECTION_SIGNAL",
+            "OBJECTIVE",
+            "CONTROL"
+          ]
+        },
         "subject": {"type": "string", "minLength": 1},
-        "value": {"type": ["string", "number", "integer", "boolean", "null"]},
+        "value": {"type": ["string", "number", "integer", "boolean", "null", "object"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1}
       }
     }
@@ -26,6 +45,25 @@
     "timestamp_utc": {"type": "string", "format": "date-time"},
     "outcome": {"type": "string", "enum": ["SUCCESS", "FAILURE", "PARTIAL", "DENIED", "ERROR"]},
     "new_facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
-    "evidence_refs": {"type": "array", "items": {"type": "string"}}
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "TOOL_ADAPTER",
+        "SCANNER",
+        "DISCOVERY",
+        "EXECUTOR",
+        "AGENT_PROBE",
+        "MANUAL",
+        "SIMULATED",
+        "PLANNER_INFERENCE",
+        "ENV_PROBE"
+      ]
+    },
+    "source_target": {"type": "string"},
+    "source_session": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "sequence_num": {"type": "integer", "minimum": 0},
+    "source": {"type": "string"}
   }
 }

@@ -8,14 +8,15 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, final
+from typing import Any, Literal, Protocol, final
 
 from runtime.evidence.discovery_recorder import redact_secrets
 from runtime.state.knowledge_state_store import StoreContext
-from scripts.validation.validate_scaffold import validate_shape
+from shared.schema_validation import validate_shape
 
 Mode = Literal["RULE", "LLM", "RL", "HYBRID"]
 StopReason = Literal["OBJECTIVE_COMPLETE", "BUDGET_EXHAUSTED", "NO_VALID_CANDIDATE"]
@@ -121,6 +122,11 @@ class StateSnapshot:
         """A detached copy, including detached facts and budget."""
         return json.loads(self.state_json)
 
+    def get_belief_state(self):
+        """Deterministically project BeliefState from snapshot's observed facts."""
+        from agent.memory.state.belief_state import BeliefState
+        return BeliefState.from_facts(self.to_dict().get("observed_facts", []))
+
     @property
     def revision(self) -> str:
         # Include session/episode: identical state in another context is distinct.
@@ -153,24 +159,46 @@ class PlanProposal:
         return json.loads(self.plan_json)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class PlanningInput:
     state: StateSnapshot
     allowed_action_ids: frozenset[str]
-    allowed_target_ids: frozenset[str]
+    visible_target_ids: frozenset[str]
     fallback_allowed: bool = False
 
-    def __post_init__(self):
-        if type(self.state) is not StateSnapshot or type(self.fallback_allowed) is not bool:
+    def __init__(
+        self,
+        state: StateSnapshot,
+        allowed_action_ids: set[str] | frozenset[str],
+        visible_target_ids: set[str] | frozenset[str] | None = None,
+        fallback_allowed: bool = False,
+        *,
+        allowed_target_ids: set[str] | frozenset[str] | None = None,
+    ):
+        target_ids = allowed_target_ids if allowed_target_ids is not None else visible_target_ids
+        if target_ids is None:
+            raise ValueError("candidate scope must be a set")
+        if type(state) is not StateSnapshot or type(fallback_allowed) is not bool:
             raise ValueError("invalid planning input")
-        for field, pattern in (("allowed_action_ids", _ACTION),
-                               ("allowed_target_ids", _TARGET)):
-            values = getattr(self, field)
+        for field, values, pattern in (("allowed_action_ids", allowed_action_ids, _ACTION),
+                               ("visible_target_ids", target_ids, _TARGET)):
             if type(values) not in (set, frozenset):
                 raise ValueError("candidate scope must be a set")
             for value in values:
                 _identifier(value, pattern)
             object.__setattr__(self, field, frozenset(values))
+        object.__setattr__(self, "state", state)
+        object.__setattr__(self, "fallback_allowed", fallback_allowed)
+
+    @property
+    def allowed_target_ids(self) -> frozenset[str]:
+        """Deprecated alias for visible_target_ids; returns current visible scope."""
+        warnings.warn(
+            "PlanningInput.allowed_target_ids is deprecated; use visible_target_ids",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.visible_target_ids
 
 
 @dataclass(frozen=True)
@@ -260,7 +288,7 @@ class Planner(ABC):
             reason = "NO_VALID_CANDIDATE"  # Terminal does not prove success.
         elif any(value == 0 for value in state["remaining_budget"].values()):
             reason = "BUDGET_EXHAUSTED"
-        elif not request.allowed_action_ids or not request.allowed_target_ids:
+        elif not request.allowed_action_ids or not request.visible_target_ids:
             reason = "NO_VALID_CANDIDATE"
         if reason:
             return PlanningDecision(request.state.context, request.state.revision,
@@ -283,12 +311,46 @@ class Planner(ABC):
             if plan["objective_id"] != request.state.to_dict()["objective_id"]:
                 raise ValueError("proposal objective mismatch")
             if (plan["action_id"] not in request.allowed_action_ids or
-                    plan["target_id"] not in request.allowed_target_ids):
+                    plan["target_id"] not in request.visible_target_ids):
                 raise ValueError("proposal outside candidate scope")
         return decision
 
+    def _plan_context(self, context: Any) -> Any:
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement _plan_context")
+
+    def _validate_context_decision(self, context: Any, decision: Any) -> Any:
+        from runtime.planners.planner_context import PlannerDecision
+        if not isinstance(decision, PlannerDecision):
+            raise ValueError(f"Planner must return a PlannerDecision instance, got {type(decision)}")
+        if decision.proposal is not None:
+            prop = decision.proposal
+            act_id = prop.get("action_id")
+            if not act_id:
+                raise ValueError("Planner proposal missing action_id")
+            tgt_id = prop.get("target_id")
+            if tgt_id is not None and tgt_id not in context.visible_target_ids:
+                raise ValueError(
+                    f"Planner proposal target {tgt_id!r} is not in visible_target_ids {sorted(context.visible_target_ids)}"
+                )
+            is_stop = act_id in ("ACTION-STOP-001", "ACTION-END-001")
+            if not is_stop:
+                matches = [
+                    ep for ep in context.eligible_proposals
+                    if ep.get("action_id") == act_id
+                    and (tgt_id is None or ep.get("target_id") == tgt_id)
+                ]
+                if not matches:
+                    raise ValueError(
+                        f"Planner chosen proposal {prop} is not among eligible_proposals"
+                    )
+        return decision
+
     @final
-    def plan(self, request: PlanningInput) -> PlanningDecision:
+    def plan(self, request: Any) -> Any:
+        from runtime.planners.planner_context import PlannerDecisionContext
+        if isinstance(request, PlannerDecisionContext):
+            decision = self._plan_context(request)
+            return self._validate_context_decision(request, decision)
         stop = self._preflight(request)
         return stop if stop is not None else self._validate_result(request, self._plan(request))
 
@@ -307,3 +369,60 @@ class Planner(ABC):
             raise ValueError("feedback action mismatch")
         return stop if stop is not None else self._validate_result(
             request, self._replan(request, previous=previous, feedback=feedback))
+
+
+def project_visible_targets(
+    state: StateSnapshot | dict[str, Any],
+    initial_seed: str | set[str] | frozenset[str],
+) -> frozenset[str]:
+    """Project planner-visible target IDs from initial seed and canonical observed facts.
+
+    Zero-knowledge invariant:
+    Planner visibility is strictly discovery-driven. Full safety allowlists or
+    scenarios are never consulted. Targets only enter visible scope if they are
+    the initial entry seed or observed as facts (e.g. TARGET, SERVICE, ENDPOINT)
+    in the verified state.
+    """
+    targets: set[str] = set()
+    if isinstance(initial_seed, str):
+        if initial_seed:
+            targets.add(initial_seed)
+    elif isinstance(initial_seed, (set, frozenset, list, tuple)):
+        for item in initial_seed:
+            if isinstance(item, str) and item:
+                targets.add(item)
+    else:
+        raise ValueError("initial_seed must be a string or iterable of strings")
+
+    state_dict = state.to_dict() if isinstance(state, StateSnapshot) else state
+    if not isinstance(state_dict, dict):
+        raise ValueError("state must be a StateSnapshot or dict")
+
+    for fact in state_dict.get("observed_facts", []):
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("source_kind") == "PLANNER_INFERENCE":
+            continue
+        ft = fact.get("fact_type")
+        val = fact.get("value")
+        subj = fact.get("subject")
+        target_id = fact.get("target_id")
+
+        if ft in ("TARGET", "TARGET_DISCOVERED", "HOST"):
+            if isinstance(val, str) and _TARGET.fullmatch(val):
+                targets.add(val)
+            if isinstance(subj, str) and _TARGET.fullmatch(subj):
+                targets.add(subj)
+        elif ft in ("SERVICE", "ENDPOINT"):
+            if isinstance(subj, str):
+                host_part = subj.split(":")[0]
+                if _TARGET.fullmatch(host_part):
+                    targets.add(host_part)
+        if isinstance(target_id, str) and _TARGET.fullmatch(target_id):
+            targets.add(target_id)
+
+    # Validate all discovered targets adhere to target naming convention
+    for t in targets:
+        _identifier(t, _TARGET)
+
+    return frozenset(targets)

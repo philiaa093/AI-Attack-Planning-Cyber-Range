@@ -239,6 +239,16 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
       </div>
 
       {/* Interactive Replay Player Bar */}
+      {timeline.filter(event => event.type === 'WORKFLOW_COMPLETED').map(event => (
+        <section key={event.event_id} className="rounded-lg border border-amber-800 p-4 text-sm text-slate-200">
+          <h3>{lang === 'vi' ? 'Workflow đăng nhập và nghiệp vụ (cố định)' : 'Authenticated business workflow (fixed)'}</h3>
+          <p>{String(event.payload.status)} · {lang === 'vi' ? 'Kiểm tra không đạt: ' : 'Failed checks: '}{String(event.payload.failed_checks)}</p>
+          <p>{lang === 'vi' ? 'Đã khôi phục volume gốc: ' : 'Original volume restored: '}{String(event.payload.original_volume_restored === true)}</p>
+          {Array.isArray(event.payload.checks) && event.payload.checks.map((check: Record<string, unknown>, index: number) => (
+            <p key={index}>{String(check.check)}: {String(check.status)}</p>
+          ))}
+        </section>
+      ))}
       {timeline.some(event => event.type === 'SCANNER_COMPLETED') && (
         <section className="rounded-lg border border-slate-700 bg-[#111724] p-4 space-y-2" aria-label="Scanner results">
           <h3 className="text-sm font-semibold text-slate-200">{lang === 'vi' ? 'Kết quả scanner' : 'Scanner results'}</h3>
@@ -247,6 +257,11 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
               {String(event.payload.tool)}: {displayValue(String(event.payload.status), lang)}
               {' · '}{String(event.payload.coverage ?? '')}
               {event.payload.candidate_count !== undefined ? ` · ${String(event.payload.candidate_count)} candidates` : ''}
+              {Boolean(event.payload.seed_coverage) && <span>
+                {lang === 'vi' ? ' · URL đầu vào đã gửi / tổng số: ' : ' · Seed URLs requested / total: '}
+                {String((event.payload.seed_coverage as Record<string, unknown>).requested_seed_count)} / {String((event.payload.seed_coverage as Record<string, unknown>).observed_seed_count)}
+                {(event.payload.seed_coverage as Record<string, unknown>).options_truncated === true && (lang === 'vi' ? ' · Danh sách option bị giới hạn' : ' · Option list truncated')}
+              </span>}
               {event.payload.reason ? ` · ${String(event.payload.reason)}` : ''}
             </p>
           ))}

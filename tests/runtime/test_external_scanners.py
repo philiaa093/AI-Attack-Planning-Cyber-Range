@@ -72,10 +72,16 @@ class ExternalScannerTests(unittest.TestCase):
             self.inventory, self.approval, "ACTION-SCAN-002", lambda: False)
         seed = "http://lab-ecommerce/products?category=3&q="
         self.assertIn(seed, relay.urls())
+        for value in ("", "2", "3"):
+            self.assertIn("http://lab-ecommerce/products?category=" + value + "&q=", relay.urls())
+        self.assertEqual(relay.seed_coverage()["requested_seed_count"], 0)
         response = SimpleNamespace(status_code=200, durable_confirmed=True, truncated=False, body="fixture", headers={})
         with patch.object(self.gate, "dispatch", return_value=response) as dispatch:
             self.assertEqual(relay.dispatch({"url": seed, "method": "GET"})["status"], 200)
         self.assertEqual(dispatch.call_args.args[0].url, self.gate.base_origin + "/products?category=3&q=")
+        self.assertEqual(relay.seed_coverage()["requested_seed_count"], 1)
+        self.assertEqual(relay.seed_coverage()["successful_seed_count"], 1)
+        self.assertEqual(relay.seed_coverage()["not_requested_seed_count"], len(relay.seed_urls) - 1)
 
     def test_select_metadata_is_bounded_and_excludes_sensitive_or_unsupported_values(self):
         parser = HTMLMetadataParser(self.gate.base_origin)
@@ -89,10 +95,18 @@ class ExternalScannerTests(unittest.TestCase):
                     '<form method="POST"><select name="post"><option value="x">X</option></select></form>')
         fields = parser.forms[0].inputs
         self.assertEqual(len(fields[0]["options"]), 16)
+        self.assertTrue(fields[0]["options_truncated"])
         for field in fields[1:4]:
             self.assertNotIn("options", field)
         self.assertEqual(fields[4]["options"], [])
         self.assertNotIn("options", parser.forms[1].inputs[0])
+
+    def test_seed_cap_is_reported_as_unrequested_coverage(self):
+        self.relay.seed_urls = {"http://lab-ecommerce/products?q=" + str(i) for i in range(105)}
+        self.assertEqual(len(self.relay.urls()), 100)
+        self.relay.executed_urls.update(self.relay.urls())
+        self.assertEqual(self.relay.seed_coverage()["not_requested_seed_count"], 5)
+        self.assertEqual(self.relay.seed_coverage()["successful_seed_count"], 0)
 
     def test_scope_validation_before_dispatch(self):
         bad = [None, [], {}, {"url": "http://lab-ecommerce/products", "method": "POST"},
@@ -271,10 +285,12 @@ class ExternalScannerTests(unittest.TestCase):
             self.gate.base_origin = origin
             self.gate.target_registry["lab-ecommerce"]["port"] = server.server_port
             self.gate.canonicalizer = type(self.gate.canonicalizer)(origin)
+            self.gate.budget_tracker.max_requests = 300
             self.inventory.items["/products"].canonical_url = origin + "/products"
             parser = HTMLMetadataParser(origin + "/products")
             parser.feed('<form action="/products"><input name="q" type="search">'
-                        '<select name="category"><option value="2">Two</option></select></form>')
+                        '<select name="category"><option value="2">Two</option>'
+                        '<option value="3">Three</option></select></form>')
             self.inventory.items["/products"].forms = [asdict(form) for form in parser.forms]
             tool = os.environ.get("SCANNER_TEST_TOOL", "nuclei")
             result = self.execute(ExternalScannerExecutor([tool]))
@@ -282,6 +298,8 @@ class ExternalScannerTests(unittest.TestCase):
             self.assertGreater(result.network_dispatch_count, 0)
             self.assertTrue(any(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query,
                                 keep_blank_values=True) == {"category": ["2"], "q": [""]} for url in received))
+            self.assertTrue(any(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query,
+                                keep_blank_values=True) == {"category": ["3"], "q": [""]} for url in received))
             self.assertTrue(all(f.classification == "CANDIDATE" for f in result.findings))
         finally:
             server.shutdown()

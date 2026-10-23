@@ -23,6 +23,12 @@ nonempty observed option, and retain these values alongside text/search fields.
 Disabled options/groups, sensitive values and POST form values are excluded.
 Option labels without a value attribute and multi-select controls are unsupported.
 An observed value is a starting input, not proof that the server accepts it.
+Every retained select option now receives a seed URL, including the empty option,
+with other controls held at their observed defaults. This varies one select at a
+time, not all combinations. The 16-option and 100-seed limits remain explicit:
+overflow and unrequested seeds prevent a complete-coverage claim. ZAP accesses
+all queued seeds before active probes. Results include seed_coverage counts for
+observed, selected, requested, successful (HTTP 2xx) and unrequested seeds.
 The LLM can still stop before proposing it; such selections are NOT_RUN, not clean.
 Assisted/manual mode retains the existing per-proposal approval step.
 
@@ -190,3 +196,45 @@ Independent review, provider-to-dashboard end-to-end assessment, target restore
 validation and a real Docker deadline-expiry test remain unverified. Timeout
 failure handling has simulated coverage. No research status is promoted by
 these checks and no real-target assessment is claimed.
+
+## Authenticated workflow scope pending catalog approval
+
+The operator has authorized disposable lab accounts, simulated carts/orders and
+restoration on lab-ecommerce. That authorization is retained; it is not a request
+to reset existing data. The current gate still rejects POST and the canonical
+catalog has no authentication or business-workflow action. Proposed additions:
+
+- ACTION-AUTH-001: create disposable lab accounts and establish separate sessions
+  using observed registration/login forms; cookies, passwords and CSRF stay in
+  the executor, never planner prompts or raw evidence.
+- ACTION-FLOW-001: bounded cart updates and simulated checkout using observed
+  forms, fixed allowed fields and quantities, and per-run write approval.
+- ACTION-FLOW-002: compare ownership/role enforcement and permitted order-state
+  transitions using only objects created by that run and approved lab roles.
+
+These require explicit edit scope for actions/catalog/action-catalog.json and
+configs/safety/action-allowlist.yaml, plus associated canonical safety/contract
+documentation and focused validation tests if affected. Existing SQLi/XSS/path
+traversal action IDs must not be repurposed. The proposed IDs are not enabled.
+
+Before writes: capture and verify a consistent database/invoice snapshot under
+exclusive lab ownership. After the run, restore that snapshot and verify it;
+retain the snapshot on any failure. The existing restore_baseline deletes the
+database and invoices before recreating seed data, so it is not suitable for
+preserving the state that existed before this assessment. Restore must be owned
+by the run coordinator and must not become an arbitrary planner command.
+
+This category-coverage change touches runtime/discovery/discovery_engine.py,
+runtime/lab/external_scanners.py, tools/scanners/zap_worker.py,
+dashboards/app/frontend/src/components/activity/CurrentActivity.tsx,
+dashboards/app/frontend/src/pages/RunDetailPage.tsx,
+tests/runtime/test_external_scanners.py and this README. No files deleted.
+Focused receipts: `python -B -m unittest discover -s tests/runtime -p
+test_external_scanners.py -v` passed 19 tests with 2 Docker skips; with
+SCANNER_DOCKER_TESTS=1 and SCANNER_TEST_TOOL=zap-active, 18 passed and the isolation
+test was skipped (exit 0). The fixture observed both category options over HTTP.
+`python -B -m unittest discover -s tests/runtime -p test_discovery_safety.py -v`
+passed 9 tests. In dashboards/app/frontend, `npm test -- ExternalScanners.test.tsx`
+passed 2 tests and `npm run build` passed. These checks do not validate lab restore.
+Pending handoff: category coverage review and a new lab run; approval of the
+catalog/safety edit scope before implementing authenticated writes and restore.

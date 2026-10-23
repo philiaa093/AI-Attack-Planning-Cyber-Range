@@ -1,0 +1,474 @@
+{
+  "schema_version": "1.0.0",
+  "scenario_id": "SCN-SIM-002",
+  "name": "S2 Decoy Enterprise Attack Path",
+  "description": "Enterprise path with deceptive honeypot branch: DMZ Entry -> Internal App -> Crown DB, plus high-noise Decoy Honeypot trap",
+  "random_seed": 1337,
+  "entry_seed": "lab-dmz-entry",
+  "hidden_nodes": [
+    {
+      "node_id": "lab-dmz-entry",
+      "node_kind": "ENTRY",
+      "network_zone": "DMZ",
+      "ip": "10.0.1.10",
+      "hostname": "web-dmz-02.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-http-80",
+          "port": 80,
+          "protocol": "HTTP",
+          "service_type": "HTTP",
+          "capabilities": ["WEB_HOSTING"]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-SQLI-002",
+          "vulnerability_family": "SQLI",
+          "severity": "HIGH",
+          "target_service_id": "svc-http-80"
+        }
+      ],
+      "credentials_present": ["cred-app-svc"]
+    },
+    {
+      "node_id": "lab-internal-app",
+      "node_kind": "INTERNAL_HOST",
+      "network_zone": "INTERNAL",
+      "ip": "10.0.2.20",
+      "hostname": "app-internal-02.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-ssh-22",
+          "port": 22,
+          "protocol": "SSH",
+          "service_type": "SSH",
+          "capabilities": ["REMOTE_SHELL", "PIVOT"]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-WEAK-AUTH-002",
+          "vulnerability_family": "WEAK_AUTH",
+          "severity": "MEDIUM",
+          "target_service_id": "svc-ssh-22"
+        }
+      ],
+      "credentials_present": ["cred-db-admin", "cred-honey-token"]
+    },
+    {
+      "node_id": "lab-decoy-honeypot",
+      "node_kind": "DECOY",
+      "network_zone": "INTERNAL",
+      "ip": "10.0.2.99",
+      "hostname": "backup-vault-decoy.lab.local",
+      "is_decoy": true,
+      "decoy_metadata": {
+        "trap_type": "HONEYPOT_SERVER",
+        "tripwire_alarm": true
+      },
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-decoy-smb-445",
+          "port": 445,
+          "protocol": "TCP",
+          "service_type": "SMB",
+          "capabilities": ["TRAP_INTERACTION"]
+        }
+      ],
+      "vulnerabilities": [
+        {
+          "vulnerability_id": "VULN-DECOY-TRAP-001",
+          "vulnerability_family": "MISCONFIGURATION",
+          "severity": "LOW",
+          "target_service_id": "svc-decoy-smb-445"
+        }
+      ],
+      "credentials_present": []
+    },
+    {
+      "node_id": "lab-db-crown",
+      "node_kind": "DATABASE",
+      "network_zone": "SECURE_DATA",
+      "ip": "10.0.3.30",
+      "hostname": "db-prod-02.lab.local",
+      "is_decoy": false,
+      "initial_access_level": "NONE",
+      "services": [
+        {
+          "service_id": "svc-pg-5432",
+          "port": 5432,
+          "protocol": "TCP",
+          "service_type": "DATABASE",
+          "capabilities": ["FINANCIAL_DATA"]
+        }
+      ],
+      "vulnerabilities": [],
+      "credentials_present": []
+    }
+  ],
+  "hidden_topology": {
+    "edges": [
+      {
+        "edge_id": "edge-dmz-to-app",
+        "source": "lab-dmz-entry",
+        "target": "lab-internal-app",
+        "protocol": "TCP",
+        "port": 22,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-app-to-db",
+        "source": "lab-internal-app",
+        "target": "lab-db-crown",
+        "protocol": "TCP",
+        "port": 5432,
+        "bidirectional": false,
+        "is_blocked": false
+      },
+      {
+        "edge_id": "edge-app-to-decoy",
+        "source": "lab-internal-app",
+        "target": "lab-decoy-honeypot",
+        "protocol": "TCP",
+        "port": 445,
+        "bidirectional": false,
+        "is_blocked": false
+      }
+    ]
+  },
+  "hidden_credentials": [
+    {
+      "credential_id": "cred-app-svc",
+      "principal": "app_svc",
+      "credential_kind": "SSH_KEY",
+      "valid_nodes": ["lab-internal-app"],
+      "granted_access_level": "USER",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-db-admin",
+      "principal": "dbadmin",
+      "credential_kind": "PASSWORD",
+      "valid_nodes": ["lab-db-crown"],
+      "granted_access_level": "PRIVILEGED",
+      "validity_state": "VALID",
+      "is_decoy": false
+    },
+    {
+      "credential_id": "cred-honey-token",
+      "principal": "superadmin_fake",
+      "credential_kind": "PASSWORD",
+      "valid_nodes": ["lab-decoy-honeypot"],
+      "granted_access_level": "USER",
+      "validity_state": "HONEY_TOKEN",
+      "is_decoy": true
+    }
+  ],
+  "objective": {
+    "objective_id": "OBJ-FINANCIAL-CROWN-002",
+    "target_node_id": "lab-db-crown",
+    "target_artifact": "vault_keys.enc",
+    "required_access_level": "PRIVILEGED",
+    "completion_condition": "ACCESS",
+    "description": "Locate and access sensitive financial database while avoiding honeypot traps"
+  },
+  "detection_model": {
+    "noise_threshold": 8.0,
+    "alert_threshold": 16.0,
+    "containment_threshold": 24.0,
+    "initial_detection_state": "QUIET"
+  },
+  "transitions": [
+    {
+      "transition_id": "TRANS-RECON-ENTRY-002",
+      "action_id": "ACTION-RECON-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.5,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "SERVICE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry:80",
+            "value_template": {"port": 80, "protocol": "HTTP", "service_type": "HTTP"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 0.5},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-FOOTHOLD-ENTRY-002",
+      "action_id": "ACTION-WEB-001",
+      "match_conditions": {
+        "target_node_id": "lab-dmz-entry",
+        "require_active_session": false,
+        "require_reachability": false,
+        "require_vulnerability": "VULN-SQLI-002"
+      },
+      "success_probability": 0.9,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "FOOTHOLD",
+          "create_session": true
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry",
+            "value_template": {"access_level": "FOOTHOLD"}
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-dmz-02",
+            "value_template": {"node_id": "lab-dmz-entry", "session_state": "ACTIVE"}
+          },
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-app-svc",
+            "value_template": {
+              "credential_id": "cred-app-svc",
+              "principal": "app_svc",
+              "credential_kind": "SSH_KEY",
+              "observed_scope": "lab-internal-app",
+              "validity_state": "VALID"
+            }
+          },
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-dmz-entry->lab-internal-app",
+            "value_template": {
+              "source": "lab-dmz-entry",
+              "target": "lab-internal-app",
+              "from_host": "lab-dmz-entry",
+              "to_host": "lab-internal-app",
+              "protocol": "TCP"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-PIVOT-APP-002",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "lab-internal-app",
+        "from_node_id": "lab-dmz-entry",
+        "require_active_session": true,
+        "require_reachability": true,
+        "require_credential": "cred-app-svc"
+      },
+      "success_probability": 0.9,
+      "noise_delta": 2.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER",
+          "create_session": true,
+          "reveal_credentials": ["cred-db-admin", "cred-honey-token"]
+        },
+        "observations": [
+          {
+            "fact_type": "ACCESS",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-internal-app",
+            "value_template": {"access_level": "USER"}
+          },
+          {
+            "fact_type": "SESSION",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "sess-internal-02",
+            "value_template": {"node_id": "lab-internal-app", "session_state": "ACTIVE"}
+          },
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-honey-token",
+            "value_template": {
+              "credential_id": "cred-honey-token",
+              "principal": "superadmin_fake",
+              "credential_kind": "PASSWORD",
+              "observed_scope": "lab-decoy-honeypot",
+              "validity_state": "VALID"
+            }
+          },
+          {
+            "fact_type": "CREDENTIAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.95,
+            "source_kind": "SIMULATED",
+            "subject_template": "cred-db-admin",
+            "value_template": {
+              "credential_id": "cred-db-admin",
+              "principal": "dbadmin",
+              "credential_kind": "PASSWORD",
+              "observed_scope": "lab-db-crown",
+              "validity_state": "VALID"
+            }
+          },
+          {
+            "fact_type": "REACHABILITY",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 0.9,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-internal-app->lab-decoy-honeypot",
+            "value_template": {
+              "source": "lab-internal-app",
+              "target": "lab-decoy-honeypot",
+              "from_host": "lab-internal-app",
+              "to_host": "lab-decoy-honeypot",
+              "protocol": "TCP"
+            }
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-DECOY-TRAP-002",
+      "action_id": "ACTION-FLOW-001",
+      "match_conditions": {
+        "target_node_id": "lab-decoy-honeypot",
+        "from_node_id": "lab-internal-app",
+        "require_active_session": true,
+        "require_credential": "cred-honey-token"
+      },
+      "success_probability": 1.0,
+      "noise_delta": 25.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "USER"
+        },
+        "observations": [
+          {
+            "fact_type": "DETECTION_SIGNAL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "lab-decoy-honeypot",
+            "value_template": {"signal": "HONEYPOT_ALARM_TRIPPED", "severity": "HIGH"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 25.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-OBJECTIVE-DB-002",
+      "action_id": "ACTION-FLOW-002",
+      "match_conditions": {
+        "target_node_id": "lab-db-crown",
+        "from_node_id": "lab-internal-app",
+        "require_active_session": true,
+        "require_reachability": true,
+        "require_credential": "cred-db-admin"
+      },
+      "success_probability": 0.95,
+      "noise_delta": 1.0,
+      "success_outcome": {
+        "mutations": {
+          "grant_access_level": "PRIVILEGED",
+          "set_objective_achieved": true
+        },
+        "observations": [
+          {
+            "fact_type": "OBJECTIVE",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "OBJ-FINANCIAL-CROWN-002",
+            "value_template": {"objective_id": "OBJ-FINANCIAL-CROWN-002", "objective_state": "ACHIEVED"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {"noise_delta": 2.0},
+        "observations": []
+      }
+    },
+    {
+      "transition_id": "TRANS-STOP-002",
+      "action_id": "ACTION-END-001",
+      "match_conditions": {
+        "target_node_id": null
+      },
+      "success_probability": 1.0,
+      "noise_delta": 0.0,
+      "success_outcome": {
+        "mutations": {},
+        "observations": [
+          {
+            "fact_type": "CONTROL",
+            "emit_on": "SUCCESS",
+            "probability": 1.0,
+            "confidence": 1.0,
+            "source_kind": "SIMULATED",
+            "subject_template": "SIMULATOR",
+            "value_template": {"operation": "STOP", "session_state": "CLOSED"}
+          }
+        ]
+      },
+      "failure_outcome": {
+        "mutations": {},
+        "observations": []
+      }
+    }
+  ]
+}

@@ -180,9 +180,14 @@ class StartRunRequest(BaseModel):
     approve_active_verification: bool = Field(default=False, strict=True)
     preview_one_page: bool = False
     external_scanners: List[Literal["zap-passive", "zap-active", "nuclei"]] = Field(default_factory=list, max_length=2)
+    approve_authenticated_workflow: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def validate_scanner_scope(self):
+        if self.approve_authenticated_workflow and (not self.approve_active_verification or self.preview_one_page
+                or self.mode != "autonomous" or self.control_mode != "AUTONOMOUS" or self.target != "lab-ecommerce"
+                or self.max_requests < 200):
+            raise ValueError("Authenticated workflow requires autonomous lab-ecommerce, active approval and at least 200 requests")
         selected = set(self.external_scanners)
         if len(selected) != len(self.external_scanners) or {"zap-passive", "zap-active"} <= selected:
             raise ValueError("Choose one ZAP mode and/or Nuclei")

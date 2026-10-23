@@ -1,0 +1,178 @@
+{
+  "services": {
+    "dmz-service": {
+      "build": {
+        "context": "../..",
+        "dockerfile": "cyber-range/enterprise_range/Dockerfile"
+      },
+      "image": "enterprise-range-dmz:latest",
+      "container_name": "enterprise-range-dmz",
+      "environment": {
+        "TARGET_ID": "lab-enterprise-dmz",
+        "PORT": "8080"
+      },
+      "ports": [
+        "127.0.0.1:18081:8080"
+      ],
+      "networks": {
+        "dmz_net": {
+          "aliases": [
+            "dmz-service",
+            "lab-enterprise-dmz",
+            "dmz-web.enterprise.local"
+          ]
+        },
+        "internal_net": {
+          "aliases": [
+            "dmz-service",
+            "lab-enterprise-dmz"
+          ]
+        }
+      }
+    },
+    "clean-service": {
+      "build": {
+        "context": "../..",
+        "dockerfile": "cyber-range/enterprise_range/Dockerfile"
+      },
+      "image": "enterprise-range-clean:latest",
+      "container_name": "enterprise-range-clean",
+      "environment": {
+        "TARGET_ID": "lab-enterprise-clean",
+        "PORT": "8080"
+      },
+      "ports": [
+        "127.0.0.1:18085:8080"
+      ],
+      "networks": {
+        "dmz_net": {
+          "aliases": [
+            "clean-service",
+            "lab-enterprise-clean",
+            "clean-edge.enterprise.local"
+          ]
+        }
+      }
+    },
+    "internal-service": {
+      "build": {
+        "context": "../..",
+        "dockerfile": "cyber-range/enterprise_range/Dockerfile"
+      },
+      "image": "enterprise-range-internal:latest",
+      "container_name": "enterprise-range-internal",
+      "environment": {
+        "TARGET_ID": "lab-enterprise-internal",
+        "PORT": "8080"
+      },
+      "networks": {
+        "internal_net": {
+          "aliases": [
+            "internal-service",
+            "lab-enterprise-internal",
+            "internal-app.enterprise.local"
+          ]
+        },
+        "restricted_net": {
+          "aliases": [
+            "internal-service",
+            "lab-enterprise-internal"
+          ]
+        },
+        "decoy_net": {
+          "aliases": [
+            "internal-service",
+            "lab-enterprise-internal"
+          ]
+        }
+      }
+    },
+    "restricted-service": {
+      "build": {
+        "context": "../..",
+        "dockerfile": "cyber-range/enterprise_range/Dockerfile"
+      },
+      "image": "enterprise-range-restricted:latest",
+      "container_name": "enterprise-range-restricted",
+      "environment": {
+        "TARGET_ID": "lab-enterprise-restricted",
+        "PORT": "8080"
+      },
+      "networks": {
+        "restricted_net": {
+          "aliases": [
+            "restricted-service",
+            "lab-enterprise-restricted",
+            "restricted-vault.enterprise.local"
+          ]
+        }
+      }
+    },
+    "decoy-service": {
+      "build": {
+        "context": "../..",
+        "dockerfile": "cyber-range/enterprise_range/Dockerfile"
+      },
+      "image": "enterprise-range-decoy:latest",
+      "container_name": "enterprise-range-decoy",
+      "environment": {
+        "TARGET_ID": "lab-enterprise-decoy",
+        "PORT": "8080"
+      },
+      "networks": {
+        "decoy_net": {
+          "aliases": [
+            "decoy-service",
+            "lab-enterprise-decoy",
+            "decoy-srv.enterprise.local"
+          ]
+        }
+      }
+    }
+  },
+  "networks": {
+    "dmz_net": {
+      "driver": "bridge",
+      "ipam": {
+        "config": [
+          {
+            "subnet": "172.28.10.0/24"
+          }
+        ]
+      }
+    },
+    "internal_net": {
+      "driver": "bridge",
+      "internal": true,
+      "ipam": {
+        "config": [
+          {
+            "subnet": "172.28.20.0/24"
+          }
+        ]
+      }
+    },
+    "restricted_net": {
+      "driver": "bridge",
+      "internal": true,
+      "ipam": {
+        "config": [
+          {
+            "subnet": "172.28.30.0/24"
+          }
+        ]
+      }
+    },
+    "decoy_net": {
+      "driver": "bridge",
+      "internal": true,
+      "ipam": {
+        "config": [
+          {
+            "subnet": "172.28.40.0/24"
+          }
+        ]
+      }
+    }
+  }
+}

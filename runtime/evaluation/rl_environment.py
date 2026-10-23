@@ -1,5 +1,11 @@
 """TASK-023: bounded, offline Gymnasium replay of observed report metadata.
 
+DEPRECATION NOTICE (RT-04C):
+ReplayAssessmentEnv is a legacy mock replay environment for TASK-023.
+The canonical authoritative simulation environment for Enterprise Attack Planning
+is `runtime.simulation.EpisodeEnvironment` and `runtime.simulation.gym_adapter.SimulationGymEnv`.
+This legacy environment is maintained strictly for backward compatibility with TASK-023..026 tests.
+
 No scanner, executor, provider or transport integration. Replay indices are not
 canonical action IDs. Caller-supplied replay approval never authorizes dispatch.
 Audit is volatile and separate from agent info; durable evidence is UNRESOLVED.
@@ -52,12 +58,18 @@ class ReplayAsset:
 
 
 class ReplayAssessmentEnv(gym.Env):
-    """Read fixed fixtures with explicit simulation approval and step-based rate.
+    """[DEPRECATED - RT-04C] Read fixed fixtures with explicit simulation approval and step-based rate.
 
-Observation asset columns: inventory reviewed, report reviewed, report available,
-candidate observed. Candidate metadata is revealed only when a report is reviewed.
-The per-episode budget belongs to this simulator, never to the source state store.
-"""
+    DEPRECATION NOTICE:
+    ReplayAssessmentEnv is a legacy mock replay environment for TASK-023.
+    The canonical authoritative simulation environment for Enterprise Attack Planning
+    is `runtime.simulation.EpisodeEnvironment` and `runtime.simulation.gym_adapter.SimulationGymEnv`.
+    This legacy environment is maintained strictly for backward compatibility with TASK-023..026 tests.
+
+    Observation asset columns: inventory reviewed, report reviewed, report available,
+    candidate observed. Candidate metadata is revealed only when a report is reviewed.
+    The per-episode budget belongs to this simulator, never to the source state store.
+    """
 
     metadata = {"render_modes": []}
 

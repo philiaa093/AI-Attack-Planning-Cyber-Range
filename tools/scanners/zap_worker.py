@@ -48,6 +48,7 @@ def main():
             api("ascan", "action", "setOptionThreadPerHost", Integer=1)
         for url in job["urls"]:
             api("core", "action", "accessUrl", url=url, followRedirects="false")
+        for url in job["urls"]:
             if job["active"]:
                 # ZAP inserts accessed messages into its site tree asynchronously.
                 for _ in range(50):

@@ -11,11 +11,180 @@
       "required": ["fact_id", "fact_type", "subject", "value", "confidence", "source_observation_id"],
       "properties": {
         "fact_id": {"type": "string", "minLength": 1},
-        "fact_type": {"type": "string", "enum": ["TARGET", "SERVICE", "ENDPOINT", "PARAMETER", "CANDIDATE_FINDING", "CONFIRMED_FINDING", "ACTION_OUTCOME", "CONTROL"]},
+        "fact_type": {
+          "type": "string",
+          "enum": [
+            "TARGET", "HOST", "SERVICE", "ENDPOINT", "PARAMETER",
+            "CANDIDATE_FINDING", "CONFIRMED_FINDING", "ACCESS", "CREDENTIAL",
+            "SESSION", "REACHABILITY", "ACTION_OUTCOME", "DETECTION_SIGNAL",
+            "OBJECTIVE", "CONTROL"
+          ]
+        },
         "subject": {"type": "string", "minLength": 1},
-        "value": {"type": ["string", "number", "integer", "boolean", "null"]},
+        "value": {"type": ["string", "number", "integer", "boolean", "null", "object"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "source_observation_id": {"type": "string", "minLength": 1}
+        "source_observation_id": {"type": "string", "minLength": 1},
+        "source_kind": {"type": "string"}
+      }
+    },
+    "belief_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "known_hosts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "ip", "access_level", "confidence", "provenance"],
+            "properties": {
+              "host": {"type": "string"},
+              "ip": {"type": ["string", "null"]},
+              "access_level": {"type": "string", "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "known_services": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "port", "protocol", "confidence", "provenance"],
+            "properties": {
+              "host": {"type": "string"},
+              "port": {"type": ["integer", "string", "null"]},
+              "protocol": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "known_endpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host", "path", "confidence", "provenance"],
+            "properties": {
+              "host": {"type": "string"},
+              "path": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "candidate_findings": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "confirmed_findings": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "access_state": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+          }
+        },
+        "known_credentials": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["credential_id", "principal", "credential_kind", "observed_scope", "validity_state", "confidence", "provenance"],
+            "properties": {
+              "credential_id": {"type": "string"},
+              "principal": {"type": "string"},
+              "credential_kind": {"type": "string"},
+              "observed_scope": {"type": "string"},
+              "validity_state": {"type": "string", "enum": ["UNKNOWN", "CANDIDATE", "VALID", "INVALID", "REVOKED"]},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "target_id", "access_level", "state", "confidence", "provenance"],
+            "properties": {
+              "session_id": {"type": "string"},
+              "target_id": {"type": "string"},
+              "access_level": {"type": "string", "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]},
+              "state": {"type": "string", "enum": ["ACTIVE", "CLOSED"]},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "observed_reachability": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from_host", "to_host", "protocol", "confidence", "provenance"],
+            "properties": {
+              "from_host": {"type": "string"},
+              "to_host": {"type": "string"},
+              "protocol": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "detection_signals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["signal_type", "source_target", "observable_event", "confidence", "provenance"],
+            "properties": {
+              "signal_type": {"type": "string"},
+              "source_target": {"type": "string"},
+              "observable_event": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "objective_status": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "evidence_refs", "provenance"],
+            "properties": {
+              "status": {"type": "string", "enum": ["UNKNOWN", "DISCOVERED", "ACHIEVED"]},
+              "evidence_refs": {"type": "array", "items": {"type": "string"}},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["fact_type", "subject", "value", "confidence", "provenance"],
+            "properties": {
+              "fact_type": {"type": "string"},
+              "subject": {"type": "string"},
+              "value": {"type": ["string", "number", "integer", "boolean", "null", "object"]},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+              "provenance": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "provenance_refs": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
       }
     }
   },
@@ -37,6 +206,7 @@
       }
     },
     "observed_facts": {"type": "array", "items": {"$ref": "#/$defs/fact"}},
-    "previous_actions": {"type": "array", "items": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"}}
+    "previous_actions": {"type": "array", "items": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"}},
+    "belief_state": {"$ref": "#/$defs/belief_state"}
   }
 }

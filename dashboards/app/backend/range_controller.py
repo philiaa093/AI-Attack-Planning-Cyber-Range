@@ -3,33 +3,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import http.client
-import os
 from pathlib import Path
-import shutil
 import sys
 import threading
 from typing import Any, Dict, Optional
-
-def _ensure_docker_on_path() -> None:
-    if shutil.which("docker"):
-        return
-    candidates = [
-        r"C:\Program Files\Docker\Docker\resources\bin",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\DockerDesktop\resources\bin"),
-        os.path.expanduser(r"~\AppData\Local\Programs\DockerDesktop\resources\bin"),
-    ]
-    for cand in candidates:
-        if os.path.isdir(cand) and (os.path.isfile(os.path.join(cand, "docker.exe")) or os.path.isfile(os.path.join(cand, "docker"))):
-            os.environ["PATH"] = cand + os.pathsep + os.environ.get("PATH", "")
-            break
-
-_ensure_docker_on_path()
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import scripts.demo.run_professor_demo as demo
+from runtime.lab import control_support as lab
 from dashboards.app.backend.models import RangeState, RangeStatus
 
 
@@ -38,13 +21,13 @@ def _utc_now_iso() -> str:
 
 
 class RangeController:
-    """Thread-safe controller for ShopLab services, reusing canonical demo orchestration."""
+    """Thread-safe controller for ShopLab services, reusing shared lab orchestration."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._owned: Dict[str, str] = {}
-        self.target_id: str = demo.TARGET
-        self.origin: str = demo.ORIGIN
+        self.target_id: str = lab.TARGET
+        self.origin: str = lab.ORIGIN
 
     @property
     def owned_services(self) -> Dict[str, str]:
@@ -79,8 +62,8 @@ class RangeController:
         checked_at = _utc_now_iso()
         with self._lock:
             try:
-                snapshot = demo.service_snapshot()
-            except demo.DemoBlocked as exc:
+                snapshot = lab.service_snapshot()
+            except lab.DemoBlocked as exc:
                 return RangeStatus(
                     status=RangeState.UNAVAILABLE,
                     target_id=self.target_id,
@@ -104,7 +87,7 @@ class RangeController:
             all_running = True
             any_running = False
 
-            for svc in demo.SERVICES:
+            for svc in lab.SERVICES:
                 row = snapshot.get(svc)
                 if row:
                     running = row.get("State", {}).get("Running", False)
@@ -134,8 +117,8 @@ class RangeController:
 
             # If services are reported running, verify runtime isolation and probe HTTP health
             try:
-                demo.inspect_runtime(snapshot)
-            except demo.DemoBlocked as exc:
+                lab.inspect_runtime(snapshot)
+            except lab.DemoBlocked as exc:
                 return RangeStatus(
                     status=RangeState.UNHEALTHY,
                     target_id=self.target_id,
@@ -169,8 +152,8 @@ class RangeController:
         """Start project services (lab-ecommerce and gateway-ecommerce) with ownership tracking."""
         with self._lock:
             try:
-                demo.start_services(self._owned)
-            except demo.DemoBlocked as exc:
+                lab.start_services(self._owned)
+            except lab.DemoBlocked as exc:
                 return RangeStatus(
                     status=RangeState.UNAVAILABLE,
                     target_id=self.target_id,
@@ -205,9 +188,9 @@ class RangeController:
                 )
 
             try:
-                res = demo.stop_owned(self._owned)
+                res = lab.stop_owned(self._owned)
                 self._owned.clear()
-            except demo.DemoBlocked as exc:
+            except lab.DemoBlocked as exc:
                 return RangeStatus(
                     status=RangeState.UNKNOWN,
                     target_id=self.target_id,

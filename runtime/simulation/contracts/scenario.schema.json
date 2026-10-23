@@ -1,0 +1,453 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbl6.invalid/contracts/simulation/scenario.schema.json",
+  "title": "HiddenScenario",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "scenario_id",
+    "name",
+    "description",
+    "entry_seed",
+    "hidden_nodes",
+    "hidden_topology",
+    "hidden_credentials",
+    "objective",
+    "detection_model",
+    "transitions"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "scenario_id": {
+      "type": "string",
+      "pattern": "^SCN-[A-Za-z0-9_-]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "random_seed": {
+      "type": ["integer", "null"]
+    },
+    "entry_seed": {
+      "type": "string",
+      "minLength": 1
+    },
+    "hidden_nodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "node_id",
+          "node_kind",
+          "network_zone",
+          "services",
+          "vulnerabilities",
+          "initial_access_level"
+        ],
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node_kind": {
+            "type": "string",
+            "enum": [
+              "ENTRY",
+              "INTERNAL_HOST",
+              "DMZ_HOST",
+              "DATABASE",
+              "CRITICAL_ASSET",
+              "DECOY",
+              "WORKSTATION",
+              "SERVER"
+            ]
+          },
+          "network_zone": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ip": {
+            "type": ["string", "null"]
+          },
+          "hostname": {
+            "type": ["string", "null"]
+          },
+          "is_decoy": {
+            "type": "boolean"
+          },
+          "decoy_metadata": {
+            "type": ["object", "null"]
+          },
+          "initial_access_level": {
+            "type": "string",
+            "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["service_id", "port", "protocol", "service_type", "capabilities"],
+              "properties": {
+                "service_id": {"type": "string", "minLength": 1},
+                "port": {"type": "integer", "minimum": 0, "maximum": 65535},
+                "protocol": {"type": "string"},
+                "service_type": {"type": "string"},
+                "capabilities": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              }
+            }
+          },
+          "vulnerabilities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["vulnerability_id", "vulnerability_family", "severity"],
+              "properties": {
+                "vulnerability_id": {"type": "string", "minLength": 1},
+                "vulnerability_family": {
+                  "type": "string",
+                  "enum": [
+                    "SQLI",
+                    "PATH_TRAVERSAL",
+                    "COMMAND_INJECTION",
+                    "WEAK_AUTH",
+                    "RCE",
+                    "DESERIALIZATION",
+                    "MISCONFIGURATION"
+                  ]
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+                },
+                "target_service_id": {"type": ["string", "null"]},
+                "prerequisites": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "min_access_level": {
+                      "type": "string",
+                      "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM"]
+                    },
+                    "require_valid_credential": {"type": "boolean"},
+                    "required_credential_id": {"type": ["string", "null"]}
+                  }
+                }
+              }
+            }
+          },
+          "credentials_present": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "hidden_topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["edges"],
+      "properties": {
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["edge_id", "source", "target", "protocol", "is_blocked"],
+            "properties": {
+              "edge_id": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1},
+              "target": {"type": "string", "minLength": 1},
+              "protocol": {"type": "string"},
+              "port": {"type": ["integer", "null"], "minimum": 0, "maximum": 65535},
+              "bidirectional": {"type": "boolean"},
+              "is_blocked": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "hidden_credentials": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "credential_id",
+          "principal",
+          "credential_kind",
+          "valid_nodes",
+          "granted_access_level",
+          "validity_state",
+          "is_decoy"
+        ],
+        "properties": {
+          "credential_id": {"type": "string", "minLength": 1},
+          "principal": {"type": "string", "minLength": 1},
+          "credential_kind": {
+            "type": "string",
+            "enum": ["PASSWORD", "SSH_KEY", "API_TOKEN", "KERBEROS_TICKET", "JWT"]
+          },
+          "valid_nodes": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "granted_access_level": {
+            "type": "string",
+            "enum": ["USER", "PRIVILEGED", "SYSTEM"]
+          },
+          "validity_state": {
+            "type": "string",
+            "enum": ["VALID", "INVALID", "REVOKED", "HONEY_TOKEN"]
+          },
+          "is_decoy": {"type": "boolean"}
+        }
+      }
+    },
+    "objective": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective_id",
+        "target_node_id",
+        "required_access_level",
+        "completion_condition"
+      ],
+      "properties": {
+        "objective_id": {"type": "string", "minLength": 1},
+        "target_node_id": {"type": "string", "minLength": 1},
+        "target_artifact": {"type": ["string", "null"]},
+        "required_access_level": {
+          "type": "string",
+          "enum": ["USER", "PRIVILEGED", "SYSTEM"]
+        },
+        "completion_condition": {
+          "type": "string",
+          "enum": ["ACCESS", "EXFILTRATE", "MODIFY"]
+        },
+        "description": {"type": "string"}
+      }
+    },
+    "detection_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["noise_threshold", "alert_threshold", "initial_detection_state"],
+      "properties": {
+        "noise_threshold": {"type": "number", "minimum": 0},
+        "alert_threshold": {"type": "number", "minimum": 0},
+        "containment_threshold": {"type": "number", "minimum": 0},
+        "initial_detection_state": {
+          "type": "string",
+          "enum": ["QUIET", "MONITORING", "ALERTED", "CONTAINED"]
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transition_id",
+          "action_id",
+          "match_conditions",
+          "success_probability",
+          "noise_delta",
+          "success_outcome",
+          "failure_outcome"
+        ],
+        "properties": {
+          "transition_id": {"type": "string", "minLength": 1},
+          "action_id": {"type": "string", "pattern": "^ACTION-[A-Z]+-[0-9]{3}$"},
+          "match_conditions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "target_node_id": {"type": ["string", "null"]},
+              "from_node_id": {"type": ["string", "null"]},
+              "required_access_level": {
+                "type": ["string", "null"],
+                "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM", null]
+              },
+              "require_active_session": {"type": "boolean"},
+              "require_reachability": {"type": "boolean"},
+              "require_vulnerability": {"type": ["string", "null"]},
+              "require_credential": {"type": ["string", "null"]},
+              "require_service_type": {"type": ["string", "null"]}
+            }
+          },
+          "success_probability": {"type": "number", "minimum": 0, "maximum": 1},
+          "noise_delta": {"type": "number", "minimum": 0},
+          "success_outcome": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mutations", "observations"],
+            "properties": {
+              "mutations": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "grant_access_level": {
+                    "type": ["string", "null"],
+                    "enum": ["NONE", "FOOTHOLD", "USER", "PRIVILEGED", "SYSTEM", null]
+                  },
+                  "create_session": {"type": "boolean"},
+                  "close_session": {"type": "boolean"},
+                  "reveal_credentials": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"}
+                  },
+                  "set_objective_achieved": {"type": "boolean"},
+                  "block_edges": {
+                    "type": ["array", "null"],
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["source", "target"],
+                      "properties": {
+                        "source": {"type": "string"},
+                        "target": {"type": "string"}
+                      }
+                    }
+                  }
+                }
+              },
+              "observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["fact_type", "emit_on", "probability", "confidence", "source_kind", "subject_template", "value_template"],
+                  "properties": {
+                    "fact_type": {
+                      "type": "string",
+                      "enum": [
+                        "TARGET",
+                        "HOST",
+                        "SERVICE",
+                        "ENDPOINT",
+                        "PARAMETER",
+                        "CANDIDATE_FINDING",
+                        "CONFIRMED_FINDING",
+                        "ACCESS",
+                        "CREDENTIAL",
+                        "SESSION",
+                        "REACHABILITY",
+                        "ACTION_OUTCOME",
+                        "DETECTION_SIGNAL",
+                        "OBJECTIVE",
+                        "CONTROL"
+                      ]
+                    },
+                    "emit_on": {
+                      "type": "string",
+                      "enum": ["SUCCESS", "FAILURE", "ALWAYS"]
+                    },
+                    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "source_kind": {
+                      "type": "string",
+                      "enum": [
+                        "TOOL_ADAPTER",
+                        "SCANNER",
+                        "DISCOVERY",
+                        "EXECUTOR",
+                        "AGENT_PROBE",
+                        "MANUAL",
+                        "SIMULATED",
+                        "PLANNER_INFERENCE",
+                        "ENV_PROBE"
+                      ]
+                    },
+                    "subject_template": {"type": "string"},
+                    "value_template": {"type": ["string", "number", "integer", "boolean", "null", "object"]}
+                  }
+                }
+              }
+            }
+          },
+          "failure_outcome": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["mutations", "observations"],
+            "properties": {
+              "mutations": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "noise_delta": {"type": "number", "minimum": 0}
+                }
+              },
+              "observations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["fact_type", "emit_on", "probability", "confidence", "source_kind", "subject_template", "value_template"],
+                  "properties": {
+                    "fact_type": {
+                      "type": "string",
+                      "enum": [
+                        "TARGET",
+                        "HOST",
+                        "SERVICE",
+                        "ENDPOINT",
+                        "PARAMETER",
+                        "CANDIDATE_FINDING",
+                        "CONFIRMED_FINDING",
+                        "ACCESS",
+                        "CREDENTIAL",
+                        "SESSION",
+                        "REACHABILITY",
+                        "ACTION_OUTCOME",
+                        "DETECTION_SIGNAL",
+                        "OBJECTIVE",
+                        "CONTROL"
+                      ]
+                    },
+                    "emit_on": {
+                      "type": "string",
+                      "enum": ["SUCCESS", "FAILURE", "ALWAYS"]
+                    },
+                    "probability": {"type": "number", "minimum": 0, "maximum": 1},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "source_kind": {
+                      "type": "string",
+                      "enum": [
+                        "TOOL_ADAPTER",
+                        "SCANNER",
+                        "DISCOVERY",
+                        "EXECUTOR",
+                        "AGENT_PROBE",
+                        "MANUAL",
+                        "SIMULATED",
+                        "PLANNER_INFERENCE",
+                        "ENV_PROBE"
+                      ]
+                    },
+                    "subject_template": {"type": "string"},
+                    "value_template": {"type": ["string", "number", "integer", "boolean", "null", "object"]}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

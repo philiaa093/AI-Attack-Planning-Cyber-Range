@@ -81,6 +81,11 @@ export const CurrentActivity: React.FC<CurrentActivityProps> = ({
             <p className="text-slate-200">{tool}: {displayValue(String(result.status ?? 'NOT_RUN'), lang)}</p>
             <p className="text-amber-200">{lang === 'vi' ? 'Phạm vi' : 'Coverage'}: {String(result.coverage ?? 'IN_PROGRESS')}</p>
             {result.candidate_count !== undefined && <p>{String(result.candidate_count)} {lang === 'vi' ? 'candidate cần xác minh' : 'unconfirmed candidates'}</p>}
+            {Boolean(result.seed_coverage) && <p>
+              {lang === 'vi' ? 'URL đầu vào đã gửi / tổng số: ' : 'Seed URLs requested / total: '}
+              {String((result.seed_coverage as Record<string, unknown>).requested_seed_count)} / {String((result.seed_coverage as Record<string, unknown>).observed_seed_count)}
+              {(result.seed_coverage as Record<string, unknown>).options_truncated === true && (lang === 'vi' ? ' · Danh sách option bị giới hạn' : ' · Option list truncated')}
+            </p>}
             {Boolean(result.reason) && <p className="break-all text-rose-300">{String(result.reason)}</p>}
           </div>
         ))}
