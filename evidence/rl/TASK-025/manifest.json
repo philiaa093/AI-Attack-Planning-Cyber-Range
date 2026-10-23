@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "evidence_schema": "agent/planner/contracts/evidence.schema.json",
+  "retention": "append_only",
+  "append_only": true,
+  "traceable": true,
+  "status": "SPEC_ONLY",
+  "records": [
+    {
+      "evidence_id": "EV-RL-TASK-025-001",
+      "run_id": "RL-TASK-025-001",
+      "path": "evidence/rl-task-025-test.txt",
+      "sha256": "30eb8a978c03fee3cb80bd6701785fe0595361cce178ac22e57b19605bd1d0fc",
+      "created_at_utc": "2026-09-26T06:55:27.534Z",
+      "source": "UNIT_TEST",
+      "redacted": true,
+      "expected_state": "exit 0 / focused q-learning reproducibility tests pass",
+      "observed_state": "exit 0; 2 tests OK",
+      "derived_from": [
+        "TASK-025",
+        "configs/rl/training.yaml",
+        "agent/planner/rl/q_learning.py",
+        "agent/planner/rl/trainer.py",
+        "tests/rl/test_trainer.py"
+      ]
+    }
+  ]
+}
