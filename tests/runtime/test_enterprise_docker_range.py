@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
+import secrets
 import unittest
 from urllib.parse import urlsplit
 
@@ -69,10 +71,10 @@ class TestEnterpriseDockerRange(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.harness = DockerEnterpriseRangeHarness()
-        health = cls.harness.health_check_all()
-        if health.get("lab-enterprise-dmz") and health.get("lab-enterprise-clean"):
-            return
+        cls.control_token = secrets.token_urlsafe(48)
+        cls.compose_env = dict(os.environ)
+        cls.compose_env["RANGE_CONTROL_TOKEN"] = cls.control_token
+        cls.harness = DockerEnterpriseRangeHarness(control_token=cls.control_token)
 
         docker_bin = cls._find_docker()
         if not docker_bin:
@@ -91,6 +93,7 @@ class TestEnterpriseDockerRange(unittest.TestCase):
                 text=True,
                 timeout=60,
                 check=False,
+                env=cls.compose_env,
             )
             if up_res.returncode != 0:
                 raise unittest.SkipTest(f"DOCKER_E2E_BLOCKED_BY_ENVIRONMENT: docker compose up failed: {up_res.stderr}")
@@ -112,6 +115,7 @@ class TestEnterpriseDockerRange(unittest.TestCase):
                         text=True,
                         timeout=30,
                         check=False,
+                        env=cls.compose_env,
                     )
                 except Exception:
                     pass
@@ -131,6 +135,33 @@ class TestEnterpriseDockerRange(unittest.TestCase):
         self.assertTrue(health.get("lab-enterprise-restricted"), "Restricted container must be healthy via relay")
         self.assertTrue(health.get("lab-enterprise-decoy"), "Decoy container must be healthy via relay")
 
+    def test_management_plane_is_authenticated_and_separate(self) -> None:
+        """Control routes require auth and are absent from target data endpoints."""
+        unauthenticated = self.harness._dispatch_http_raw(
+            self.harness.dmz_host,
+            self.harness.control_ports["lab-enterprise-dmz"],
+            "GET",
+            "/control/v1/health",
+        )
+        self.assertEqual(unauthenticated.get("http_status"), 403)
+        self.assertEqual(unauthenticated.get("error"), "CONTROL_AUTH_REQUIRED")
+
+        authenticated = self.harness._dispatch_control(
+            "lab-enterprise-dmz",
+            "GET",
+            "/control/v1/health",
+        )
+        self.assertEqual(authenticated.get("http_status"), 200)
+
+        data_reset = self.harness._dispatch_http_raw(
+            self.harness.dmz_host,
+            self.harness.dmz_port,
+            "POST",
+            "/reset",
+            body={},
+        )
+        self.assertEqual(data_reset.get("http_status"), 404)
+
     # -------------------------------------------------------------------------
     # 2. Wire-Level Isolation Verification
     # -------------------------------------------------------------------------
@@ -147,8 +178,8 @@ class TestEnterpriseDockerRange(unittest.TestCase):
                 conn.close()
 
     def test_wire_level_dmz_cannot_reach_restricted_directly(self) -> None:
-        """Verify that DMZ relay cannot directly reach Restricted Vault across unjoined networks."""
-        # Even if DMZ has a foothold, direct relay to restricted-service must fail
+        """Verify DMZ authority rejects direct Restricted relay before dispatch."""
+        # Even if DMZ has a foothold, policy must deny the direct jump before DNS/network I/O.
         self.harness.dispatch_bounded_request(
             target_id="lab-enterprise-dmz",
             method="POST",
@@ -170,10 +201,11 @@ class TestEnterpriseDockerRange(unittest.TestCase):
             body=direct_jump,
         )
         self.assertEqual(res.get("http_status"), 403)
-        self.assertEqual(res.get("error"), "NETWORK_ISOLATION_BARRIER")
+        self.assertEqual(res.get("error"), "RELAY_DESTINATION_DENIED")
+        self.assertNotIn("restricted-service", json.dumps(res, sort_keys=True))
 
     def test_wire_level_dmz_cannot_reach_decoy_directly(self) -> None:
-        """Verify that DMZ relay cannot directly reach Decoy across unjoined networks."""
+        """Verify DMZ authority rejects direct Decoy relay before dispatch."""
         self.harness.dispatch_bounded_request(
             target_id="lab-enterprise-dmz",
             method="POST",
@@ -194,7 +226,8 @@ class TestEnterpriseDockerRange(unittest.TestCase):
             body=direct_jump,
         )
         self.assertEqual(res.get("http_status"), 403)
-        self.assertEqual(res.get("error"), "NETWORK_ISOLATION_BARRIER")
+        self.assertEqual(res.get("error"), "RELAY_DESTINATION_DENIED")
+        self.assertNotIn("decoy-service", json.dumps(res, sort_keys=True))
 
     # -------------------------------------------------------------------------
     # 3. Live Episode Validation L1 on Docker (DMZ -> Internal -> Restricted)

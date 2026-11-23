@@ -8,7 +8,7 @@ Status vocabulary: `SPEC_ONLY`, `TBD`, `UNRESOLVED`, `IMPLEMENTED`, `VALIDATED`,
 
 1. Hoàn thiện episode mô phỏng nhỏ và nối RULE/random đối chứng qua cùng observation/action/gate/evidence boundary (RT-04, phần tích hợp RT-05).
 2. Tái lập bảng so sánh bằng scenario splits, seeds và budgets cố định; tái dùng log/hash/metrics/report hiện có. Chưa đóng RT-07 toàn phần khi thiếu RT-06.
-3. Thêm từng LLM/RL/HYBRID sau baseline. Tạm ngừng mở rộng ecommerce, Oscar, dashboard và live range; giữ acceptance/pending work lịch sử.
+3. Thêm từng LLM/RL/HYBRID sau baseline. RT-06P remote provider/control-plane foundation đã `IMPLEMENTED`; chỉ kích hoạt GNS3/vSphere sau khi có deployment manifest, secret/TLS/VLAN/egress/snapshot receipts, per-run approval và independent review. Tạm ngừng mở rộng ecommerce, Oscar và dashboard; giữ acceptance/pending work lịch sử.
 
 Các trạng thái bên dưới là ledger đã ghi, gồm thay đổi đang có trong working tree; không phải chứng nhận mọi phần đã commit/review. `IMPLEMENTED` không đồng nghĩa `VALIDATED`. Không chép receipts sang context/plan. Xem [blockers hiện hành](#blockers) trước khi tái dùng claim cũ.
 
@@ -30,7 +30,7 @@ Nguồn kế hoạch: `PLAN-ENTERPRISE-REDTEAM-001`, work package nhóm `RT-*` c
 | RT-03 | TASK-004, TASK-012, TASK-013 | `IMPLEMENTED` | RT-01, RT-02 | Enterprise Action Model: Hoàn tất cả RT-03A (Generic TTP Action Contract) và RT-03B (Action Constraint Evaluator). Single canonical ActionConstraintEvaluator tại runtime/evaluators/action_evaluator.py. Thống nhất canonical access: NONE < FOOTHOLD < USER < PRIVILEGED < SYSTEM. Quarantined hypotheses. Historical access != active capability. Eligibility != Authorization. Chưa review độc lập / VALIDATED. |
 | RT-04 | TASK-007, TASK-010, TASK-023 | `IMPLEMENTED` | RT-02, RT-03 | Simulation Backend: Hoàn tất cả RT-04A (Hidden Scenario & True-State Model), RT-04B (Transition & Observation Simulator), và RT-04C (Unified Episode Environment & Gymnasium Adapter: canonical EpisodeEnvironment lifecycle loop, Farama Gymnasium adapter, action masking, 16D belief state encoding, replay bit-for-bit determinism, legacy RL coexistence). Chưa review độc lập / VALIDATED. |
 | RT-05 | TASK-020, TASK-021, TASK-022, TASK-027 | `IMPLEMENTED` | RT-04 | Planner Integration: Lớp tích hợp tập hoạch định chuẩn mực (Planner-Neutral Episode Integration Layer). Hoàn tất toàn bộ gói RT-05 gồm RT-05A (Common Planner Episode Interface & Rule Baseline), RT-05A1 (Benchmark Action-Space Normalization: 9 canonical generic benchmark actions), RT-05B (Pure LLM Belief-State Planner Baseline), RT-05C (Hybrid Belief-State Planner — Proposed Method: LLM semantic ranking + deterministic symbolic scoring -> fusion, HYBRID_SCORING_V1, SYMBOLIC_ONLY fallback, ablation readiness), và RT-05D (Benchmark Protocol & Methodology Freeze: đóng băng RULE_POLICY_V1, LLM_ATTACK_PLANNER_PROMPT_V1, HYBRID_SCORING_V1_FROZEN, weights hash, 12 kịch bản held-out H1–H12 độc lập với S1–S4 dev, seed manifest cố định, primary/secondary metrics machine-computable, tests/runtime/test_benchmark_protocol.py 14/14 PASS). Chưa review độc lập / VALIDATED. |
-| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `IMPLEMENTED` | RT-04, RT-05 | Mini Enterprise Live Range & Docker Wire-Level Validation (RT-06 + RT-06V): Cyber-range multi-host doanh nghiệp thu nhỏ cô lập trên Docker Compose (4 bridge networks, internal: true segmentation, loopback ingress). Dùng chung executor, observation normalizer và belief projection với simulator. Tích hợp CentralizedSafetyGate, KillSwitch, pivot relay. Automated suites tests/runtime/test_live_validation_range.py (21 tests PASS) và tests/runtime/test_enterprise_docker_range.py (9 tests PASS). Chưa review độc lập / VALIDATED. |
+| RT-06 | TASK-011, TASK-012, TASK-013, TASK-014 | `IMPLEMENTED` | RT-04, RT-05 | Mini Enterprise Live Range, Docker wire-level range và RT-06P remote foundation. Relay fail closed theo source/destination/port/method/path; reset/route control đã tách khỏi data plane sang authenticated control API. `RangeProvider` thống nhất loopback/Docker/GNS3-vSphere; remote config secret-free, HTTPS-only, fixed lifecycle/snapshot/task APIs và bounded rollback. Offline focused checks PASS; Docker daemon và external GNS3/vSphere evidence chưa sẵn sàng. Chưa review độc lập / `VALIDATED`. |
 | RT-07 | TASK-028, TASK-029, TASK-030, TASK-031 | `SPEC_ONLY` | RT-05, RT-06 | Experimental Evaluation: Bộ kịch bản đánh giá so sánh (benchmark suite) trên simulator và live range. Chấm điểm planner dựa trên Ground Truth (cô lập trong evaluation). Đo lường metrics: success rate, steps to goal, budget efficiency, belief accuracy vs true state. |
 
 </details>
@@ -1306,6 +1306,43 @@ Tranche `RT-05D`, plan `PLAN-RT05D-BENCHMARK-FREEZE-001`, build `BUILD-RT05D-001
 | `python -B -m pytest -p no:cacheprovider tests/runtime/test_benchmark_protocol.py` | 0 | 20 passed in 0.59s (BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED confirmed intact) |
 | `python -B scripts/validation/validate_scaffold.py` | 1 | Compose enterprise YAML accepted without error; exit 1 due only to documented pre-existing workspace items (.demo-session.json PIDs and pycache) |
 | `git diff --check` | 0 | Clean diff (0 whitespace/conflict errors) |
+
+### RT-06H1 — Relay Destination Hardening
+
+- Phạm vi được người dùng duyệt: `PROJECT_PLAN.md`, `TASKS.md`, `docs/task-specs/RT-06-mini-enterprise-live-range.md`, `runtime/lab/enterprise_range/services.py`, `tests/runtime/test_live_validation_range.py`, `tests/runtime/test_enterprise_docker_range.py`.
+- `runtime/lab/enterprise_range/services.py` áp dụng relay policy tĩnh theo source target, destination service hostname, port `8080`, HTTP method và exact path trước khi tạo `HTTPConnection`. Input malformed dùng `INVALID_RELAY_REQUEST`; destination ngoài scope dùng `RELAY_DESTINATION_DENIED`; method/path ngoài scope dùng `RELAY_ACTION_DENIED`. Rejection và lỗi transport không phản chiếu destination thô.
+- Các hop canonical DMZ -> Internal và Internal -> Restricted/Decoy được giữ trong policy; focused test xác minh cả acceptance và zero connection creation cho request bị từ chối.
+- `FINDING-RT06-RELAY-01` đã được xử lý ở mức implementation và focused checks, chưa `VALIDATED` khi thiếu Docker rerun trên matching source và independent review. `FINDING-RT06-ADMIN-02` vẫn mở; tách admin/reset sang control plane riêng và provider GNS3/vSphere không thuộc RT-06H1.
+
+| Command / Check | Exit code | Observed result |
+|---|---:|---|
+| `python -B -m py_compile runtime/lab/enterprise_range/services.py tests/runtime/test_live_validation_range.py tests/runtime/test_enterprise_docker_range.py` | 0 | Ba file Python compile thành công. |
+| `python -B -m pytest -p no:cacheprovider -q tests/runtime/test_live_validation_range.py tests/runtime/test_enterprise_docker_range.py tests/runtime/test_benchmark_protocol.py` | 0 | 44 passed, 9 skipped, 15 subtests passed; 9 Docker integration tests skip vì Docker daemon không sẵn sàng. Loopback relay hardening và benchmark regression pass. |
+| `python -B -m pytest -p no:cacheprovider -q tests/runtime` | 2 | Full runtime collection bị chặn bởi hai bare-import lỗi có trước: `test_evaluation_operations` và `test_llm_planner` không resolve từ repo root. Lượt thử thêm `PYTHONPATH` phát sinh hàng loạt lỗi fixture/environment ngoài RT-06H1 và được dừng; không ghi là regression PASS. |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Checker dừng trước validation vì `PermissionError: [WinError 5]` khi walk `.pytest_cache`, ngoài allowlist RT-06H1; không ghi PASS. |
+| `git diff --check -- PROJECT_PLAN.md TASKS.md docs/task-specs/RT-06-mini-enterprise-live-range.md runtime/lab/enterprise_range/services.py tests/runtime/test_live_validation_range.py tests/runtime/test_enterprise_docker_range.py` | 0 | Scoped diff không có whitespace/conflict error. |
+
+### RT-06P — Remote Production-Grade Lab Foundation
+
+- Phạm vi master allowlist do người dùng duyệt được ghi tại `PROJECT_PLAN.md`; không sửa contracts, catalog, scenarios, frozen benchmark, config ngoài `configs/lab/remote-range.example.json` hoặc evidence hiện hữu.
+- `RangeProvider` là boundary chung cho loopback, Docker và remote provider. Planner vẫn chỉ gửi canonical bounded actions qua evaluator và Safety Gate; provider metadata trong evidence chỉ gồm provider kind, configuration ID và external-infrastructure flag.
+- Data plane không còn `/reset` hoặc admin route. Control plane chạy cổng riêng, bearer token tối thiểu 32 ký tự lấy từ environment; relay policy không cho control port/path.
+- Remote config là closed JSON: exact năm canonical targets, HTTPS-only, không credential value, không public-IP literal, unique data/control URL, GNS3 node ID và vSphere VM ID. Authenticated transport pin đúng configured hosts, bỏ qua ambient proxy và không theo redirect.
+- GNS3/vSphere adapter chỉ dùng fixed project/node lifecycle, VM power, current-snapshot và task-status APIs. Snapshot restore phải đợi task `success`; partial start rollback hữu hạn; lỗi secret/TLS/API/task/timeout fail closed, không fallback sang provider khác.
+- Loopback Windows từng phát sinh một transport abort `WinError 10053` trong lượt stress. Harness loopback hiện retry đúng một lần cho lỗi transport hữu hạn và trả lỗi ổn định không chứa thông báo hệ điều hành; năm lượt live suite liên tiếp sau sửa đều PASS.
+- `FINDING-RT06-ADMIN-02` được xử lý ở mức implementation/data-control boundary. Trạng thái RT-06P vẫn `IMPLEMENTED`, không `VALIDATED`: chưa kết nối hạ tầng GNS3/vSphere thật, chưa có matching-source TLS/VLAN/egress/snapshot/restore receipts và chưa independent review.
+
+| Command / Check | Exit code | Observed result |
+|---|---:|---|
+| `python -B -m py_compile` trên toàn bộ Python mới/sửa thuộc RT-06P | 0 | Provider, config, control plane, harness, executor/environment và focused tests compile thành công. |
+| `python -B -m pytest -p no:cacheprovider -q tests/runtime/test_range_provider.py tests/runtime/test_remote_range_config.py tests/runtime/test_remote_range_provider.py tests/runtime/test_control_plane.py tests/runtime/test_live_validation_range.py tests/runtime/test_enterprise_docker_range.py tests/runtime/test_benchmark_protocol.py` | 0 | 70 passed, 10 skipped, 22 subtests passed in 5.33s. Provider/config/control/live/benchmark checks PASS; Docker tests là phần skip. |
+| `python -B -m pytest -p no:cacheprovider -q tests/runtime/test_live_validation_range.py` lặp 5 lần | 0 | Mỗi lượt 24 passed, 15 subtests passed; xác nhận bounded loopback retry sau transient abort. |
+| `python -B -m pytest -p no:cacheprovider -q -rs tests/runtime/test_enterprise_docker_range.py` | 0 | 10 skipped; Docker Desktop Linux daemon không tồn tại tại named pipe, nên không có matching-source Docker runtime receipt. |
+| JSON parse + `RANGE_CONTROL_TOKEN=<synthetic> docker compose -f cyber-range/enterprise_range/compose.enterprise.yaml config -q` | 0 | Compose JSON-compatible và Docker Compose config hợp lệ; secret synthetic không được ghi file hoặc output. |
+| `python -B scripts/validation/validate_scaffold.py` | 1 | Checker dừng trước validation vì `PermissionError: [WinError 5]` khi walk `.pytest_cache`; không ghi PASS và không sửa/xóa cache ngoài allowlist. |
+| Scoped `git diff --check` + trailing-whitespace scan cho file mới | 0 | Không có whitespace/conflict error; chỉ có cảnh báo line-ending LF/CRLF của Git. |
+
+Pending handoff: operator cung cấp deployment-specific config ngoài repository, TLS trust, GNS3/vSphere least-privilege identities, control token, approved VM/node/snapshot manifest, evidence destination và per-run approval; sau đó thực hiện bốn runbook start/validate/restore/stop và independent review trên matching source. Không đưa secret vào chat, repository hoặc evidence.
 
 ### RT-07A — Reproducible Benchmark Runner & Experimental Preflight
 

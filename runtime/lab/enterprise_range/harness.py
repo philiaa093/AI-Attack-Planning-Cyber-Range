@@ -33,12 +33,20 @@ from runtime.lab.enterprise_range.topology import (
     is_direct_ingress_allowed,
     validate_network_transition,
 )
+from runtime.lab.range_provider import RangeProviderCapabilities
 
 logger = logging.getLogger(__name__)
 
 
 class EnterpriseLiveRangeHarness:
     """Manages the lifecycle and network boundaries of the live enterprise range services."""
+
+    capabilities = RangeProviderCapabilities(external_infrastructure=False)
+    metadata = {
+        "provider_kind": "LOOPBACK_ENTERPRISE_RANGE",
+        "configuration_id": "RT-06-LOOPBACK",
+        "external_infrastructure": False,
+    }
 
     def __init__(self, host: str = "127.0.0.1") -> None:
         self.host = host
@@ -211,27 +219,36 @@ class EnterpriseLiveRangeHarness:
         if encoded_body:
             headers["Content-Length"] = str(len(encoded_body))
 
-        conn = http.client.HTTPConnection(parsed.hostname or self.host, parsed.port or 80, timeout=timeout)
-        try:
-            conn.request(method, path, body=encoded_body, headers=headers)
-            resp = conn.getresponse()
-            raw_data = resp.read()
-            status_code = resp.status
+        for attempt in range(2):
+            conn = http.client.HTTPConnection(
+                parsed.hostname or self.host,
+                parsed.port or 80,
+                timeout=timeout,
+            )
             try:
-                data = json.loads(raw_data.decode("utf-8"))
-            except Exception:
-                data = {"raw_text": raw_data.decode("utf-8", errors="replace")}
-            data["http_status"] = status_code
-            return data
-        except Exception as exc:
-            return {
-                "outcome": "ERROR",
-                "status_code": 500,
-                "error": "NETWORK_ERROR",
-                "message": str(exc),
-            }
-        finally:
-            conn.close()
+                conn.request(method, path, body=encoded_body, headers=headers)
+                resp = conn.getresponse()
+                raw_data = resp.read()
+                status_code = resp.status
+                try:
+                    data = json.loads(raw_data.decode("utf-8"))
+                except Exception:
+                    data = {"raw_text": raw_data.decode("utf-8", errors="replace")}
+                data["http_status"] = status_code
+                return data
+            except (ConnectionError, OSError, http.client.HTTPException):
+                if attempt == 0:
+                    continue
+                return {
+                    "outcome": "ERROR",
+                    "status_code": 500,
+                    "error": "NETWORK_ERROR",
+                    "message": "Loopback target request failed",
+                }
+            finally:
+                conn.close()
+
+        raise AssertionError("bounded loopback retry exhausted without result")
 
 
 class DockerEnterpriseRangeHarness:
@@ -249,15 +266,34 @@ class DockerEnterpriseRangeHarness:
     Direct access from DMZ to Restricted or Decoy is physically blocked by Docker network segmentation.
     """
 
+    capabilities = RangeProviderCapabilities(external_infrastructure=False)
+    metadata = {
+        "provider_kind": "DOCKER_COMPOSE_ENTERPRISE_RANGE",
+        "configuration_id": "RT-06V-COMPOSE",
+        "external_infrastructure": False,
+    }
+
     def __init__(
         self,
         dmz_host: str = "127.0.0.1",
         dmz_port: int = 18081,
         clean_port: int = 18085,
+        control_token: str | None = None,
+        control_ports: Mapping[str, int] | None = None,
     ) -> None:
+        if control_token is None or len(control_token) < 32:
+            raise ValueError("A management control token of at least 32 characters is required")
         self.dmz_host = dmz_host
         self.dmz_port = dmz_port
         self.clean_port = clean_port
+        self.control_token = control_token
+        self.control_ports = dict(control_ports or {
+            "lab-enterprise-dmz": 19081,
+            "lab-enterprise-internal": 19082,
+            "lab-enterprise-restricted": 19083,
+            "lab-enterprise-decoy": 19084,
+            "lab-enterprise-clean": 19085,
+        })
         self.endpoints = {
             "lab-enterprise-dmz": f"http://{dmz_host}:{dmz_port}",
             "lab-enterprise-clean": f"http://{dmz_host}:{clean_port}",
@@ -275,63 +311,18 @@ class DockerEnterpriseRangeHarness:
         self._running = False
 
     def reset_all(self) -> None:
-        """Reset state across all running Docker containers in innermost-first order."""
+        """Reset state through the authenticated management plane."""
         self.compromised_hosts.clear()
-        # Reset restricted vault
-        self._dispatch_http_raw(
-            self.dmz_host,
-            self.dmz_port,
-            "POST",
-            "/api/v1/relay",
-            body={
-                "target_host": "internal-service",
-                "target_port": 8080,
-                "method": "POST",
-                "path": "/api/v1/relay",
-                "body": {
-                    "target_host": "restricted-service",
-                    "target_port": 8080,
-                    "method": "POST",
-                    "path": "/reset",
-                },
-            },
-        )
-        # Reset decoy honeypot
-        self._dispatch_http_raw(
-            self.dmz_host,
-            self.dmz_port,
-            "POST",
-            "/api/v1/relay",
-            body={
-                "target_host": "internal-service",
-                "target_port": 8080,
-                "method": "POST",
-                "path": "/api/v1/relay",
-                "body": {
-                    "target_host": "decoy-service",
-                    "target_port": 8080,
-                    "method": "POST",
-                    "path": "/reset",
-                },
-            },
-        )
-        # Reset internal app
-        self._dispatch_http_raw(
-            self.dmz_host,
-            self.dmz_port,
-            "POST",
-            "/api/v1/relay",
-            body={
-                "target_host": "internal-service",
-                "target_port": 8080,
-                "method": "POST",
-                "path": "/reset",
-            },
-        )
-        # Reset DMZ
-        self._dispatch_http_raw(self.dmz_host, self.dmz_port, "POST", "/reset")
-        # Reset Clean control
-        self._dispatch_http_raw(self.dmz_host, self.clean_port, "POST", "/reset")
+        for target_id in (
+            "lab-enterprise-restricted",
+            "lab-enterprise-decoy",
+            "lab-enterprise-internal",
+            "lab-enterprise-dmz",
+            "lab-enterprise-clean",
+        ):
+            result = self._dispatch_control(target_id, "POST", "/control/v1/reset")
+            if result.get("http_status") != 200:
+                raise RuntimeError(f"CONTROL_RESET_FAILED: {target_id}: {result.get('error', 'UNKNOWN')}")
 
     def health_check_all(self) -> dict[str, bool]:
         """Perform health checks across all Docker containers."""
@@ -389,38 +380,49 @@ class DockerEnterpriseRangeHarness:
         return results
 
     def block_route(self, target_id: str, route_name: str = "primary") -> None:
-        """Block a route on an internal Docker target via admin control."""
+        """Block a route through the authenticated management plane."""
         if target_id == "lab-enterprise-internal":
-            self._dispatch_http_raw(
-                self.dmz_host,
-                self.dmz_port,
+            result = self._dispatch_control(
+                target_id,
                 "POST",
-                "/api/v1/relay",
-                body={
-                    "target_host": "internal-service",
-                    "target_port": 8080,
-                    "method": "POST",
-                    "path": "/api/v1/admin/block_route",
-                    "body": {"route": route_name},
-                },
+                "/control/v1/routes/block",
+                body={"route": route_name},
             )
+            if result.get("http_status") != 200:
+                raise RuntimeError(f"CONTROL_ROUTE_BLOCK_FAILED: {result.get('error', 'UNKNOWN')}")
 
     def unblock_route(self, target_id: str, route_name: str = "primary") -> None:
-        """Unblock a route on an internal Docker target via admin control."""
+        """Unblock a route through the authenticated management plane."""
         if target_id == "lab-enterprise-internal":
-            self._dispatch_http_raw(
-                self.dmz_host,
-                self.dmz_port,
+            result = self._dispatch_control(
+                target_id,
                 "POST",
-                "/api/v1/relay",
-                body={
-                    "target_host": "internal-service",
-                    "target_port": 8080,
-                    "method": "POST",
-                    "path": "/api/v1/admin/unblock_route",
-                    "body": {"route": route_name},
-                },
+                "/control/v1/routes/unblock",
+                body={"route": route_name},
             )
+            if result.get("http_status") != 200:
+                raise RuntimeError(f"CONTROL_ROUTE_UNBLOCK_FAILED: {result.get('error', 'UNKNOWN')}")
+
+    def _dispatch_control(
+        self,
+        target_id: str,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        port = self.control_ports.get(target_id)
+        if port is None:
+            return {"http_status": 404, "error": "UNKNOWN_CONTROL_TARGET"}
+        return self._dispatch_http_raw(
+            self.dmz_host,
+            port,
+            method,
+            path,
+            body=body,
+            timeout=timeout,
+            headers={"Authorization": f"Bearer {self.control_token}"},
+        )
 
     def _dispatch_http_raw(
         self,
@@ -430,14 +432,17 @@ class DockerEnterpriseRangeHarness:
         path: str,
         body: dict[str, Any] | None = None,
         timeout: float = 5.0,
+        headers: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         encoded = json.dumps(body or {}).encode("utf-8") if method in ("POST", "PUT") else None
-        headers = {"Content-Type": "application/json"} if encoded else {}
+        request_headers = dict(headers or {})
         if encoded:
-            headers["Content-Length"] = str(len(encoded))
+            request_headers["Content-Type"] = "application/json"
+        if encoded:
+            request_headers["Content-Length"] = str(len(encoded))
         conn = http.client.HTTPConnection(host, port, timeout=timeout)
         try:
-            conn.request(method, path, body=encoded, headers=headers)
+            conn.request(method, path, body=encoded, headers=request_headers)
             resp = conn.getresponse()
             raw_data = resp.read()
             try:

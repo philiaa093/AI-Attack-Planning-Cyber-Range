@@ -9,10 +9,13 @@
       "container_name": "enterprise-range-dmz",
       "environment": {
         "TARGET_ID": "lab-enterprise-dmz",
-        "PORT": "8080"
+        "PORT": "8080",
+        "CONTROL_PORT": "9090",
+        "RANGE_CONTROL_TOKEN": "${RANGE_CONTROL_TOKEN:?RANGE_CONTROL_TOKEN is required}"
       },
       "ports": [
-        "127.0.0.1:18081:8080"
+        "127.0.0.1:18081:8080",
+        "127.0.0.1:19081:9090"
       ],
       "networks": {
         "dmz_net": {
@@ -27,6 +30,11 @@
             "dmz-service",
             "lab-enterprise-dmz"
           ]
+        },
+        "control_net": {
+          "aliases": [
+            "dmz-control"
+          ]
         }
       }
     },
@@ -39,10 +47,13 @@
       "container_name": "enterprise-range-clean",
       "environment": {
         "TARGET_ID": "lab-enterprise-clean",
-        "PORT": "8080"
+        "PORT": "8080",
+        "CONTROL_PORT": "9090",
+        "RANGE_CONTROL_TOKEN": "${RANGE_CONTROL_TOKEN:?RANGE_CONTROL_TOKEN is required}"
       },
       "ports": [
-        "127.0.0.1:18085:8080"
+        "127.0.0.1:18085:8080",
+        "127.0.0.1:19085:9090"
       ],
       "networks": {
         "dmz_net": {
@@ -50,6 +61,11 @@
             "clean-service",
             "lab-enterprise-clean",
             "clean-edge.enterprise.local"
+          ]
+        },
+        "control_net": {
+          "aliases": [
+            "clean-control"
           ]
         }
       }
@@ -63,8 +79,13 @@
       "container_name": "enterprise-range-internal",
       "environment": {
         "TARGET_ID": "lab-enterprise-internal",
-        "PORT": "8080"
+        "PORT": "8080",
+        "CONTROL_PORT": "9090",
+        "RANGE_CONTROL_TOKEN": "${RANGE_CONTROL_TOKEN:?RANGE_CONTROL_TOKEN is required}"
       },
+      "ports": [
+        "127.0.0.1:19082:9090"
+      ],
       "networks": {
         "internal_net": {
           "aliases": [
@@ -84,6 +105,11 @@
             "internal-service",
             "lab-enterprise-internal"
           ]
+        },
+        "control_net": {
+          "aliases": [
+            "internal-control"
+          ]
         }
       }
     },
@@ -96,14 +122,24 @@
       "container_name": "enterprise-range-restricted",
       "environment": {
         "TARGET_ID": "lab-enterprise-restricted",
-        "PORT": "8080"
+        "PORT": "8080",
+        "CONTROL_PORT": "9090",
+        "RANGE_CONTROL_TOKEN": "${RANGE_CONTROL_TOKEN:?RANGE_CONTROL_TOKEN is required}"
       },
+      "ports": [
+        "127.0.0.1:19083:9090"
+      ],
       "networks": {
         "restricted_net": {
           "aliases": [
             "restricted-service",
             "lab-enterprise-restricted",
             "restricted-vault.enterprise.local"
+          ]
+        },
+        "control_net": {
+          "aliases": [
+            "restricted-control"
           ]
         }
       }
@@ -117,14 +153,24 @@
       "container_name": "enterprise-range-decoy",
       "environment": {
         "TARGET_ID": "lab-enterprise-decoy",
-        "PORT": "8080"
+        "PORT": "8080",
+        "CONTROL_PORT": "9090",
+        "RANGE_CONTROL_TOKEN": "${RANGE_CONTROL_TOKEN:?RANGE_CONTROL_TOKEN is required}"
       },
+      "ports": [
+        "127.0.0.1:19084:9090"
+      ],
       "networks": {
         "decoy_net": {
           "aliases": [
             "decoy-service",
             "lab-enterprise-decoy",
             "decoy-srv.enterprise.local"
+          ]
+        },
+        "control_net": {
+          "aliases": [
+            "decoy-control"
           ]
         }
       }
@@ -170,6 +216,17 @@
         "config": [
           {
             "subnet": "172.28.40.0/24"
+          }
+        ]
+      }
+    },
+    "control_net": {
+      "driver": "bridge",
+      "internal": true,
+      "ipam": {
+        "config": [
+          {
+            "subnet": "172.28.50.0/24"
           }
         ]
       }

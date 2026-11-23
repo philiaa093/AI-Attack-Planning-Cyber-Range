@@ -24,9 +24,9 @@ from typing import Any, Mapping, Sequence
 
 from agent.memory.state.belief_state import BeliefState
 from agent.memory.state.state_manager import StateManager
-from runtime.lab.enterprise_range.harness import EnterpriseLiveRangeHarness
 from runtime.lab.enterprise_range.topology import get_target_allowlist
 from runtime.lab.live_executor_adapter import LiveExecutionResult, LiveExecutorAdapter
+from runtime.lab.range_provider import RangeProvider, validate_provider_contract
 from runtime.safety.discovery_gate import CentralizedSafetyGate, KillSwitch
 from runtime.simulation.models.step_result import EpisodeStepResult, TerminationReason
 
@@ -75,7 +75,7 @@ class LiveEpisodeEnvironment:
 
     def __init__(
         self,
-        harness: EnterpriseLiveRangeHarness,
+        harness: RangeProvider,
         entry_target_id: str = "lab-enterprise-dmz",
         objective_id: str = "OBJ-ENTERPRISE-MISSION",
         run_id: str | None = None,
@@ -83,6 +83,7 @@ class LiveEpisodeEnvironment:
         max_budget: int = 20,
         safety_gate: CentralizedSafetyGate | None = None,
     ) -> None:
+        validate_provider_contract(harness)
         self.harness = harness
         self.entry_target_id = entry_target_id
         self.objective_id = objective_id

@@ -27,10 +27,12 @@ Verifies invariants A through V:
 from __future__ import annotations
 
 import copy
+import http.client
 import json
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from actions.catalog.action_registry import (
     CANONICAL_BENCHMARK_ACTION_IDS,
@@ -44,6 +46,7 @@ from agent.perception.normalizers.enterprise_normalizer import (
     validate_canonical_observation,
 )
 from runtime.lab.enterprise_range.harness import EnterpriseLiveRangeHarness
+from runtime.lab.enterprise_range.services import _validate_relay_request
 from runtime.lab.enterprise_range.topology import (
     ENTERPRISE_TARGETS,
     ZONES,
@@ -117,6 +120,164 @@ class TestLiveValidationRange(unittest.TestCase):
         ok_dmz_to_restr, reason2 = validate_network_transition("lab-enterprise-dmz", "lab-enterprise-restricted")
         self.assertFalse(ok_dmz_to_restr)
         self.assertIn("NETWORK_BARRIER_FAIL_CLOSED", reason2)
+
+    def test_a1_relay_policy_rejects_before_network_dispatch(self) -> None:
+        """Unapproved relay authority must fail before connection creation."""
+        cases = (
+            (
+                {
+                    "target_host": "unapproved.example.invalid",
+                    "target_port": 8080,
+                    "method": "GET",
+                    "path": "/health",
+                },
+                "RELAY_DESTINATION_DENIED",
+                "unapproved.example.invalid",
+            ),
+            (
+                {
+                    "target_host": "internal-service",
+                    "target_port": 9090,
+                    "method": "GET",
+                    "path": "/health",
+                },
+                "RELAY_DESTINATION_DENIED",
+                "9090",
+            ),
+            (
+                {
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "DELETE",
+                    "path": "/health",
+                },
+                "RELAY_ACTION_DENIED",
+                "DELETE",
+            ),
+            (
+                {
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "GET",
+                    "path": "/not-approved",
+                },
+                "RELAY_ACTION_DENIED",
+                "/not-approved",
+            ),
+            (
+                {
+                    "target_host": "internal-service",
+                    "target_port": "8080",
+                    "method": "GET",
+                    "path": "/health",
+                },
+                "INVALID_RELAY_REQUEST",
+                '"8080"',
+            ),
+        )
+
+        with patch("runtime.lab.enterprise_range.services._open_relay_connection") as open_connection:
+            for request_body, expected_error, raw_marker in cases:
+                with self.subTest(expected_error=expected_error, request_body=request_body):
+                    response = self.harness.dispatch_bounded_request(
+                        target_id="lab-enterprise-dmz",
+                        method="POST",
+                        path="/api/v1/relay",
+                        body=request_body,
+                    )
+                    expected_status = 400 if expected_error == "INVALID_RELAY_REQUEST" else 403
+                    self.assertEqual(response.get("http_status"), expected_status)
+                    self.assertEqual(response.get("error"), expected_error)
+                    self.assertNotIn(raw_marker, json.dumps(response, sort_keys=True))
+
+            open_connection.assert_not_called()
+
+    def test_a2_relay_policy_preserves_canonical_routes(self) -> None:
+        """Every canonical inter-zone hop remains expressible after hardening."""
+        cases = (
+            (
+                "lab-enterprise-dmz",
+                {
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "GET",
+                    "path": "/api/v1/discovery",
+                },
+            ),
+            (
+                "lab-enterprise-dmz",
+                {
+                    "target_host": "internal-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/api/v1/relay",
+                    "body": {
+                        "target_host": "restricted-service",
+                        "target_port": 8080,
+                        "method": "GET",
+                        "path": "/health",
+                    },
+                },
+            ),
+            (
+                "lab-enterprise-internal",
+                {
+                    "target_host": "restricted-service",
+                    "target_port": 8080,
+                    "method": "POST",
+                    "path": "/api/v1/vault/objective",
+                    "body": {"target_id": "lab-enterprise-restricted"},
+                },
+            ),
+            (
+                "lab-enterprise-internal",
+                {
+                    "target_host": "decoy-service",
+                    "target_port": 8080,
+                    "method": "GET",
+                    "path": "/api/v1/discovery",
+                },
+            ),
+        )
+
+        for source_target_id, request_body in cases:
+            with self.subTest(source_target_id=source_target_id, request_body=request_body):
+                normalized, rejection = _validate_relay_request(source_target_id, request_body)
+                self.assertIsNone(rejection)
+                self.assertIsNotNone(normalized)
+                self.assertEqual(normalized["target_host"], request_body["target_host"])
+                self.assertEqual(normalized["target_port"], 8080)
+
+    def test_a3_loopback_transport_retries_one_transient_abort(self) -> None:
+        original_connection = http.client.HTTPConnection
+        call_count = 0
+
+        class AbortedConnection:
+            def request(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                raise ConnectionAbortedError("synthetic host abort")
+
+            def close(self) -> None:
+                return None
+
+        def flaky_connection(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return AbortedConnection()
+            return original_connection(*args, **kwargs)
+
+        with patch(
+            "runtime.lab.enterprise_range.harness.http.client.HTTPConnection",
+            side_effect=flaky_connection,
+        ):
+            response = self.harness.dispatch_bounded_request(
+                "lab-enterprise-dmz",
+                "GET",
+                "/health",
+            )
+
+        self.assertEqual(response["http_status"], 200)
+        self.assertEqual(call_count, 2)
 
     # -------------------------------------------------------------------------
     # Invariant B: Planner cannot read Docker Compose topology
@@ -301,7 +462,7 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-dmz",
         }
         res = adapter.execute_proposal(prop, belief_state=belief)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         self.assertIsNotNone(res.canonical_observation)
 
         obs_json = json.dumps(res.canonical_observation)
@@ -331,7 +492,7 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-dmz",
         }
         res = adapter.execute_proposal(prop)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         obs = res.canonical_observation
         self.assertIsNotNone(obs)
 
@@ -371,7 +532,7 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-dmz",
         }
         res = adapter.execute_proposal(prop, belief_state=belief)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         obs = res.canonical_observation
 
         errors = validate_canonical_observation(obs)
@@ -452,7 +613,7 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-restricted",
         }
         res = adapter.execute_proposal(prop, belief_state=belief)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         obs = res.canonical_observation
 
         errors = validate_canonical_observation(obs)
@@ -502,7 +663,7 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-dmz",
         }
         res = adapter.execute_proposal(prop)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         self.assertGreater(sm.get_fact_count(), initial_facts_count)
 
     # -------------------------------------------------------------------------
@@ -518,10 +679,15 @@ class TestLiveValidationRange(unittest.TestCase):
             "target_id": "lab-enterprise-dmz",
         }
         res = adapter.execute_proposal(stop_prop)
-        self.assertTrue(res.success)
+        self.assertTrue(res.success, res.to_dict())
         self.assertEqual(res.status, "EXECUTED")
         self.assertEqual(adapter.network_dispatch_count, initial_dispatches)
         self.assertFalse(res.evidence_bundle["network_dispatched"])
+        self.assertEqual(res.evidence_bundle["provider"]["provider_kind"], "LOOPBACK_ENTERPRISE_RANGE")
+        self.assertEqual(
+            set(res.evidence_bundle["provider"]),
+            {"provider_kind", "configuration_id", "external_infrastructure"},
+        )
 
     # -------------------------------------------------------------------------
     # Invariant S: Frozen benchmark protocol unchanged

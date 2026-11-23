@@ -12,6 +12,7 @@ Enforces:
 """
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import threading
@@ -26,6 +27,99 @@ SYNTHETIC_LAB_SECRETS: dict[str, str] = {
     "svc_internal": "SYNTHETIC_LAB_TOKEN_INT_98472a1f",
     "vault_admin": "SYNTHETIC_LAB_KEY_VAULT_33b890cc",
 }
+
+
+# Relay authority is deliberately narrower than network reachability. A
+# container may resolve another service, but it may only forward the exact
+# bounded operations needed by the canonical live-range workflow.
+_RELAY_POLICY: dict[str, dict[str, dict[str, frozenset[str]]]] = {
+    "lab-enterprise-dmz": {
+        "internal-service": {
+            "GET": frozenset({
+                "/health",
+                "/api/v1/discovery",
+                "/api/v1/system/recon",
+            }),
+            "POST": frozenset({
+                "/api/v1/relay",
+                "/api/v1/pivot",
+                "/api/v1/auth/privesc",
+                "/api/v1/credentials/harvest",
+            }),
+        },
+    },
+    "lab-enterprise-internal": {
+        "restricted-service": {
+            "GET": frozenset({"/health", "/api/v1/discovery"}),
+            "POST": frozenset({
+                "/api/v1/pivot",
+                "/api/v1/vault/objective",
+            }),
+        },
+        "decoy-service": {
+            "GET": frozenset({"/health", "/api/v1/discovery"}),
+            "POST": frozenset(),
+        },
+    },
+}
+
+
+def _validate_relay_request(
+    source_target_id: str,
+    body: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, tuple[int, str, str] | None]:
+    """Canonicalize a relay request and reject anything outside fixed policy."""
+    target_host = body.get("target_host")
+    target_port = body.get("target_port", 8080)
+    method_value = body.get("method", "GET")
+    path = body.get("path", "/")
+    forwarded_body = body.get("body")
+
+    if (
+        not isinstance(target_host, str)
+        or not target_host
+        or type(target_port) is not int
+        or not isinstance(method_value, str)
+        or not isinstance(path, str)
+        or not path.startswith("/")
+        or (forwarded_body is not None and not isinstance(forwarded_body, dict))
+    ):
+        return None, (
+            400,
+            "INVALID_RELAY_REQUEST",
+            "Relay request fields are malformed",
+        )
+
+    source_policy = _RELAY_POLICY.get(source_target_id, {})
+    destination_policy = source_policy.get(target_host)
+    if destination_policy is None or target_port != 8080:
+        return None, (
+            403,
+            "RELAY_DESTINATION_DENIED",
+            "Relay destination is not permitted for this source zone",
+        )
+
+    method = method_value.upper()
+    allowed_paths = destination_policy.get(method)
+    if allowed_paths is None or path not in allowed_paths:
+        return None, (
+            403,
+            "RELAY_ACTION_DENIED",
+            "Relay method and path are not permitted for this destination",
+        )
+
+    return {
+        "target_host": target_host,
+        "target_port": target_port,
+        "method": method,
+        "path": path,
+        "body": forwarded_body,
+    }, None
+
+
+def _open_relay_connection(host: str, port: int, timeout: float) -> http.client.HTTPConnection:
+    """Single post-policy network seam used by focused no-dispatch tests."""
+    return http.client.HTTPConnection(host, port, timeout=timeout)
 
 
 class TargetState:
@@ -119,34 +213,48 @@ class BaseEnterpriseHandler(BaseHTTPRequestHandler):
         """Relay bounded request through this pivot host to an onward target.
 
         Enforces:
-          1. Foothold requirement: Node must have active session to permit outbound relaying
-             (except for lab lifecycle /reset).
-          2. Physical/wire-level network boundary: Connection is made from inside the container's
+          1. Fixed source/destination/port/method/path policy before DNS or network I/O.
+          2. Foothold requirement: Node must have active session to permit outbound relaying
+             (except for bounded lab lifecycle operations).
+          3. Physical/wire-level network boundary: Connection is made from inside the container's
              network namespace using standard HTTPConnection to the onward container hostname.
-          3. Fail-closed error mapping: If onward host is unroutable (e.g. DMZ attempting direct
-             connection to RESTRICTED across unjoined networks), socket failure is mapped to 403
-             NETWORK_ISOLATION_BARRIER.
+          4. Fail-closed error mapping: If an approved onward host is unroutable, socket failure
+             is mapped to 403 NETWORK_ISOLATION_BARRIER.
         """
         body = self._read_body_json()
-        target_host = body.get("target_host")
-        target_port = int(body.get("target_port", 8080))
-        fwd_method = body.get("method", "GET").upper()
-        fwd_path = body.get("path", "/")
-        fwd_body = body.get("body")
+        relay_request, rejection = _validate_relay_request(self.target_state.target_id, body)
+        if rejection is not None:
+            status, error, message = rejection
+            self._send_json(status, {
+                "outcome": "DENIED",
+                "status_code": status,
+                "error": error,
+                "message": message,
+            })
+            return
 
-        if not target_host or not fwd_path.startswith("/"):
+        if relay_request is None:
             self._send_json(400, {
                 "outcome": "DENIED",
                 "status_code": 400,
                 "error": "INVALID_RELAY_REQUEST",
-                "message": "target_host and valid path starting with / are required",
+                "message": "Relay request could not be canonicalized",
             })
             return
+        target_host = relay_request["target_host"]
+        target_port = relay_request["target_port"]
+        fwd_method = relay_request["method"]
+        fwd_path = relay_request["path"]
+        fwd_body = relay_request["body"]
 
         # Verification of active session (foothold) on this pivot host for operational actions
         is_admin_lifecycle = (
-            fwd_path in ("/health", "/reset", "/api/v1/admin/block_route", "/api/v1/admin/unblock_route")
-            or (fwd_path == "/api/v1/relay" and isinstance(fwd_body, dict) and fwd_body.get("path") in ("/health", "/reset", "/api/v1/admin/block_route", "/api/v1/admin/unblock_route"))
+            fwd_path == "/health"
+            or (
+                fwd_path == "/api/v1/relay"
+                and isinstance(fwd_body, dict)
+                and fwd_body.get("path") == "/health"
+            )
         )
         if not is_admin_lifecycle and not self.target_state.has_active_session("FOOTHOLD"):
             self._send_json(403, {
@@ -157,9 +265,9 @@ class BaseEnterpriseHandler(BaseHTTPRequestHandler):
             })
             return
 
-        import http.client
+        conn: http.client.HTTPConnection | None = None
         try:
-            conn = http.client.HTTPConnection(target_host, target_port, timeout=3.0)
+            conn = _open_relay_connection(target_host, target_port, timeout=3.0)
             encoded = json.dumps(fwd_body or {}).encode("utf-8") if fwd_method in ("POST", "PUT") else None
             headers = {"Content-Type": "application/json"} if encoded else {}
             if encoded:
@@ -173,14 +281,16 @@ class BaseEnterpriseHandler(BaseHTTPRequestHandler):
                 data = {"raw_text": raw_data.decode("utf-8", errors="replace")}
             data["http_status"] = resp.status
             self._send_json(resp.status, data)
-            conn.close()
-        except Exception as exc:
+        except Exception:
             self._send_json(403, {
                 "outcome": "DENIED",
                 "status_code": 403,
                 "error": "NETWORK_ISOLATION_BARRIER",
-                "message": f"Network route to '{target_host}:{target_port}' is unreachable from '{self.target_state.target_id}': {exc}",
+                "message": "Approved relay destination is unreachable from the source zone",
             })
+        finally:
+            if conn is not None:
+                conn.close()
 
 
 class DMZServiceHandler(BaseEnterpriseHandler):
@@ -238,11 +348,6 @@ class DMZServiceHandler(BaseEnterpriseHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
-        if path == "/reset":
-            self.target_state.reset()
-            self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
-            return
-
         if path == "/api/v1/relay":
             self._handle_relay()
             return
@@ -349,29 +454,8 @@ class InternalServiceHandler(BaseEnterpriseHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
-        if path == "/reset":
-            self.target_state.reset()
-            self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
-            return
-
         if path == "/api/v1/relay":
             self._handle_relay()
-            return
-
-        if path == "/api/v1/admin/block_route":
-            body = self._read_body_json()
-            route = body.get("route", "primary")
-            with self.target_state.lock:
-                self.target_state.blocked_routes.add(route)
-            self._send_json(200, {"status": "ok", "blocked_routes": list(self.target_state.blocked_routes)})
-            return
-
-        if path == "/api/v1/admin/unblock_route":
-            body = self._read_body_json()
-            route = body.get("route", "primary")
-            with self.target_state.lock:
-                self.target_state.blocked_routes.discard(route)
-            self._send_json(200, {"status": "ok", "blocked_routes": list(self.target_state.blocked_routes)})
             return
 
         if path == "/api/v1/pivot":
@@ -498,11 +582,6 @@ class RestrictedServiceHandler(BaseEnterpriseHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path).path
-        if path == "/reset":
-            self.target_state.reset()
-            self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
-            return
-
         if path == "/api/v1/pivot":
             body = self._read_body_json()
             from_node = body.get("from_node_id")
@@ -574,12 +653,6 @@ class DecoyServiceHandler(BaseEnterpriseHandler):
         })
 
     def do_POST(self) -> None:
-        path = urlsplit(self.path).path
-        if path == "/reset":
-            self.target_state.reset()
-            self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
-            return
-
         # Any action on decoy is rejected and alerted
         self._send_json(403, {
             "outcome": "DENIED",
@@ -627,12 +700,6 @@ class CleanControlServiceHandler(BaseEnterpriseHandler):
         })
 
     def do_POST(self) -> None:
-        path = urlsplit(self.path).path
-        if path == "/reset":
-            self.target_state.reset()
-            self._send_json(200, {"status": "ok", "reset_count": self.target_state.reset_count})
-            return
-
         # All attack actions cleanly fail without granting sessions or credentials
         self._send_json(200, {
             "status": "ok",

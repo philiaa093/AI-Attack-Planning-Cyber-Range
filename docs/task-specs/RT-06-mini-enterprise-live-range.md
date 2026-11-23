@@ -3,6 +3,8 @@
 ## Status
 
 - **RT-06 — Mini Enterprise Live Validation Range**: `IMPLEMENTED` (Validation pending review).
+- **RT-06H1 — Relay Destination Hardening**: `IMPLEMENTED` (focused checks pass; Docker daemon and independent review pending).
+- **RT-06P — Remote Production-Grade Lab Foundation**: `IMPLEMENTED` for provider contract, authenticated control plane, secret-free configuration, GNS3/vSphere fixed-path adapters, runbooks and offline tests. External deployment/validation pending.
 - **Frozen Protocol**: `BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` (Verified intact; zero modifications to benchmark methodology, weights, or held-out scenarios).
 
 ## Purpose
@@ -68,6 +70,15 @@ Tác tử tuyệt đối không được gọi shell trực tiếp, không mở 
   - Quản lý vòng đời dịch vụ HTTP loopback trên các cổng ngẫu nhiên độc lập.
   - Kiểm tra rào chắn mạng (firewall isolation boundary) trước mỗi dispatch mạng.
   - Hỗ trợ cô lập/chặn route (`block_route`, `unblock_route`) để kiểm chứng hành vi L2 replan.
+- **RT-06H1 Relay Destination Hardening (`runtime/lab/enterprise_range/services.py`)**:
+  - Relay authority dùng ma trận tĩnh theo source target, destination service hostname, port `8080`, HTTP method và exact path.
+  - Input malformed, destination hoặc action ngoài policy bị từ chối trước khi tạo `HTTPConnection`; response dùng mã cố định và không phản chiếu destination thô.
+  - Giữ các hop canonical DMZ -> Internal và Internal -> Restricted/Decoy. Lifecycle admin/reset tạm thời vẫn đi qua relay bounded và phải được tách sang control plane riêng ở tranche kế tiếp.
+- **RT-06P Provider and Control Plane**:
+  - `RangeProvider` tách lifecycle/restore/route-control/bounded-dispatch khỏi Docker harness; loopback, Docker và remote provider dùng cùng contract.
+  - Data handlers không còn reset/admin. `ControlPlaneHandler` cung cấp fixed management routes trên port riêng, yêu cầu bearer token từ environment và không phản chiếu secret.
+  - `GNS3VSphereRangeProvider` dùng fixed GNS3 project/node và vSphere power/current-snapshot/task-status API paths. Snapshot restore phải đạt task `success`; transport pin configured hosts, bỏ qua ambient proxy và không cho redirect, arbitrary URL, topology mutation, VM creation, guest process hoặc shell.
+  - Remote config là closed JSON, exact canonical target set, HTTPS-only, chỉ chứa tên environment variables cho credentials/token.
 - **Docker Compose Topology (`cyber-range/enterprise_range/compose.enterprise.yaml`, `Dockerfile`)**:
   - Cấu hình 4 mạng bridge cô lập không có gateway internet ra ngoài (`internal: true`).
 - **Live Executor Adapter (`runtime/lab/live_executor_adapter.py`)**:
@@ -91,6 +102,8 @@ Tác tử tuyệt đối không được gọi shell trực tiếp, không mở 
 - Thay đổi prompt LLM, schema, trọng số chấm điểm hybrid, hay tập kịch bản held-out đã đóng băng.
 - Triển khai Active Directory thật, kernel exploits, credential dumping bộ nhớ OS thật, hay các payload phá hoại.
 - Phá vỡ tính tương thích ngược với ShopLab / e-commerce lab hiện hữu.
+- Triển khai hoặc thay đổi GNS3/vSphere thật khi chưa có endpoint, TLS trust, credential, manifest và per-run approval do người vận hành cung cấp.
+- NSX, physical firewall configuration, Active Directory thật, guest-process execution, VM/topology creation hoặc public ingress.
 
 ## Inputs
 
@@ -111,7 +124,12 @@ Tác tử tuyệt đối không được gọi shell trực tiếp, không mở 
 - `cyber-range/enterprise_range/compose.enterprise.yaml`: Cấu hình Docker Compose cô lập.
 - `runtime/lab/live_executor_adapter.py`: Bộ điều hợp thực thi live đạt tính tương đương với SimulationExecutor.
 - `runtime/lab/live_environment.py`: Môi trường live episode cho PlannerEpisodeRunner.
-- `tests/runtime/test_live_validation_range.py`: Bộ kiểm thử 21 test bao phủ toàn bộ bất biến A-W.
+- `tests/runtime/test_live_validation_range.py`: Bộ kiểm thử 24 test bao phủ các bất biến A-W, relay hardening A1-A2 và bounded loopback retry A3.
+- `runtime/lab/range_provider.py`: Provider-neutral contract và capability declaration.
+- `runtime/lab/remote_range_config.py`: Closed secret-free remote configuration loader.
+- `runtime/lab/providers/gns3.py`, `vsphere.py`, `gns3_vsphere.py`: Fixed-path remote lifecycle adapters.
+- `runtime/lab/enterprise_range/control.py`: Authenticated management control plane.
+- `configs/lab/remote-range.example.json`: Non-secret deployment configuration template.
 
 ## Interfaces
 
@@ -122,6 +140,8 @@ Tác tử tuyệt đối không được gọi shell trực tiếp, không mở 
 - `EnterpriseLiveRangeHarness.stop() -> None`
 - `EnterpriseLiveRangeHarness.reset_all() -> None`
 - `EnterpriseLiveRangeHarness.dispatch_bounded_request(target_id, method, path, body, from_target_id, timeout) -> dict`
+- `RangeProvider.start/stop/reset_all/health_check_all/block_route/unblock_route/dispatch_bounded_request`
+- `GNS3VSphereRangeProvider(config, transport, environ, timeout)`; construction resolves only the control-token reference and performs no network I/O.
 
 ## Data Contracts
 
@@ -145,33 +165,43 @@ Tác tử tuyệt đối không được gọi shell trực tiếp, không mở 
 3. **Cross-Zone Access Control**: Yêu cầu session hợp lệ trên node nguồn trước khi cho phép pivot sang node đích trong zone kế tiếp.
 4. **Secret Isolation**: Secret tổng hợp chỉ lưu trữ ở phía service/executor; Planner chỉ nhận được opaque handle định danh.
 5. **Clean STOP Semantics**: Hành động `ACTION-STOP-001` phải kết thúc tập ngay lập tức mà không phát sinh bất kỳ request mạng nào.
+6. **Relay Authority**: Mọi relay request phải khớp source/destination/port/method/path policy trước DNS hoặc network dispatch; network reachability không tự cấp relay authority.
+7. **Management Isolation**: Reset/route control chỉ tồn tại trên authenticated control API; data plane và relay không được phép gọi control routes hoặc port.
+8. **Remote Provider Boundary**: Provider config/IDs/credentials không được đưa vào planner observations; provider chỉ thực thi fixed APIs sau Safety Gate.
 
 ## Safety Requirements
 
 - Cổng an toàn trung tâm (`CentralizedSafetyGate`) và `KillSwitch` có quyền phủ quyết tuyệt đối; khi kích hoạt hoặc bị từ chối, zero network dispatch được gửi đi.
 - Lab mode là bắt buộc (`lab_mode=True`); từ chối mọi mục tiêu nằm ngoài `target_allowlist`.
 - Từ chối ngay lập tức mọi tham số proposal chứa các khóa nguy hiểm (`command`, `shell`, `exec`, `eval`, `powershell`, `subprocess`, v.v.).
+- Không phản chiếu hostname, port, method hoặc path ngoài policy trong relay rejection; lỗi transport của destination được duyệt cũng dùng thông báo cố định.
+- Remote URL phải HTTPS, không userinfo/query/fragment; credential/token values chỉ lấy từ environment và không được serialize vào metadata/evidence.
+- Missing secret, TLS/API failure, partial lifecycle hoặc snapshot failure phải halt; không fallback sang local/Docker và không báo success.
 
 ## Testing Requirements
 
-- Bộ kiểm thử `tests/runtime/test_live_validation_range.py` phải đạt 100% pass với 21 bài test bao phủ các bất biến từ A đến W.
+- Bộ kiểm thử `tests/runtime/test_live_validation_range.py` phải đạt 100% pass với 24 bài test, gồm các bất biến A-W, relay hardening A1-A2 và bounded loopback retry A3.
 - Kiểm chứng 4 ca thực địa: L1 (Straight), L2 (Blocked/Replan), L3 (Clean Control), L4 (Decoy).
 - Toàn bộ suite kiểm thử `tests/runtime/test_benchmark_protocol.py` (20 tests) phải giữ nguyên kết quả pass.
 - Không gây hồi quy lên các test suite hiện hữu của perception, contracts, runtime, và ShopLab.
+- Provider/config/control-plane tests phải chạy offline với injected transport; kiểm missing-secret zero-dispatch, closed schema, fixed API paths, rollback, control auth và data/control separation.
 
 ## Acceptance Criteria
 
-1. Tất cả 21 bài kiểm thử trong `tests/runtime/test_live_validation_range.py` pass.
+1. Tất cả 24 bài kiểm thử trong `tests/runtime/test_live_validation_range.py` pass.
 2. `BENCHMARK_PROTOCOL_FREEZE_V1 = SEALED` được giữ nguyên vẹn; các giá trị băm của prompt và trọng số chấm điểm không bị thay đổi.
 3. Không có bất kỳ shell command tùy ý nào được chuyển đến hệ thống host hay container.
 4. Tác tử `RuleBasedPlanner` hoàn thành chuỗi thâm nhập L1 (21 bước) đạt mục tiêu tối thượng mà không cần biết trước topology Compose.
+5. `FINDING-RT06-ADMIN-02` được xử lý ở data/control API boundary; matching Docker và remote infrastructure validation vẫn cần observed evidence.
+6. Remote implementation được giữ `IMPLEMENTED`, không `VALIDATED`, cho tới khi có certificate/VLAN/egress/snapshot/restore receipts và independent review trên hạ tầng thật.
 
 ## Evidence Required
 
-- Biên bản kiểm thử `test_live_validation_range.py` (21 passed).
+- Biên bản kiểm thử `test_live_validation_range.py` (23 passed).
 - Biên bản kiểm thử `test_benchmark_protocol.py` (20 passed).
 - Biên bản toàn bộ suite `tests/runtime/` (618 passed, 2 skipped, 387 subtests passed).
 - Biên bản kiểm tra scaffold `validate_scaffold.py` xác nhận 0 hồi quy vi phạm.
+- Biên bản focused provider/config/control tests và danh sách external checks chưa thực hiện.
 
 ## Failure Conditions
 

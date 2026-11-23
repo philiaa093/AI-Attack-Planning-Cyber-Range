@@ -10,3 +10,7 @@
 8. [Run experiment](run-experiment.md)
 9. [Collect evidence](collect-evidence.md)
 10. [Restore range](restore-range.md)
+11. [Start remote enterprise range](start-remote-enterprise-range.md)
+12. [Stop remote enterprise range](stop-remote-enterprise-range.md)
+13. [Restore remote enterprise range](restore-remote-enterprise-range.md)
+14. [Validate remote enterprise range isolation](validate-remote-enterprise-range.md)

@@ -9,9 +9,12 @@ from runtime.lab.enterprise_range.topology import (
     is_direct_ingress_allowed,
     validate_network_transition,
 )
+from runtime.lab.range_provider import RangeProvider, RangeProviderCapabilities
 
 __all__ = [
     "EnterpriseLiveRangeHarness",
+    "RangeProvider",
+    "RangeProviderCapabilities",
     "ENTERPRISE_TARGETS",
     "ZONES",
     "get_target_allowlist",

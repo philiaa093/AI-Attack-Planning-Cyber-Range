@@ -42,10 +42,14 @@ from agent.perception.normalizers.enterprise_normalizer import (
     validate_canonical_observation,
 )
 from runtime.evaluators.action_evaluator import ActionConstraintEvaluator, EvaluationResult
-from runtime.lab.enterprise_range.harness import EnterpriseLiveRangeHarness
 from runtime.lab.enterprise_range.topology import (
     ENTERPRISE_TARGETS,
     get_target_allowlist,
+)
+from runtime.lab.range_provider import (
+    RangeProvider,
+    sanitized_provider_metadata,
+    validate_provider_contract,
 )
 from runtime.safety.discovery_gate import ApprovalToken, CentralizedSafetyGate
 
@@ -117,13 +121,14 @@ class LiveExecutorAdapter:
 
     def __init__(
         self,
-        harness: EnterpriseLiveRangeHarness,
+        harness: RangeProvider,
         run_id: str | None = None,
         safety_gate: CentralizedSafetyGate | None = None,
         state_manager: StateManager | None = None,
         normalizer: EnterpriseObservationNormalizer | None = None,
         allowed_targets: frozenset[str] | None = None,
     ) -> None:
+        validate_provider_contract(harness)
         self.harness = harness
         self.run_id = run_id or f"RUN-LIVE-{uuid.uuid4().hex[:8]}"
         self.safety_gate = safety_gate
@@ -664,6 +669,10 @@ class LiveExecutorAdapter:
                 if "secret_token" in cred:
                     cred["secret_token"] = "[REDACTED_BY_LIVE_EXECUTOR_EVIDENCE_BOUNDARY]"
 
+        provider_metadata = getattr(self.harness, "metadata", {})
+        if not isinstance(provider_metadata, Mapping):
+            provider_metadata = {}
+
         return {
             "run_id": self.run_id,
             "step_index": self.step_count,
@@ -676,4 +685,5 @@ class LiveExecutorAdapter:
             "observation_facts_count": len(observation.get("new_facts", [])),
             "outcome": observation.get("outcome"),
             "raw_response_sanitized": sanitized_raw,
+            "provider": sanitized_provider_metadata(provider_metadata),
         }

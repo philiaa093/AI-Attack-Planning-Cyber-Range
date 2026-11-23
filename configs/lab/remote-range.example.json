@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "configuration_id": "REMOTE-ENTERPRISE-RANGE-EXAMPLE",
+  "control_token_env": "RANGE_CONTROL_TOKEN",
+  "gns3": {
+    "base_url": "https://gns3.example.invalid",
+    "project_id": "00000000-0000-0000-0000-000000000000",
+    "username_env": "GNS3_USERNAME",
+    "password_env": "GNS3_PASSWORD"
+  },
+  "vsphere": {
+    "base_url": "https://vcenter.example.invalid",
+    "api_release": "9.0.0.0",
+    "username_env": "VSPHERE_USERNAME",
+    "password_env": "VSPHERE_PASSWORD"
+  },
+  "targets": {
+    "lab-enterprise-clean": {
+      "data_url": "https://clean-edge.enterprise.example.invalid",
+      "control_url": "https://clean-control.management.example.invalid",
+      "gns3_node_id": "gns3-node-clean",
+      "vsphere_vm_id": "vm-clean"
+    },
+    "lab-enterprise-decoy": {
+      "data_url": "https://decoy.enterprise.example.invalid",
+      "control_url": "https://decoy-control.management.example.invalid",
+      "gns3_node_id": "gns3-node-decoy",
+      "vsphere_vm_id": "vm-decoy"
+    },
+    "lab-enterprise-dmz": {
+      "data_url": "https://dmz.enterprise.example.invalid",
+      "control_url": "https://dmz-control.management.example.invalid",
+      "gns3_node_id": "gns3-node-dmz",
+      "vsphere_vm_id": "vm-dmz"
+    },
+    "lab-enterprise-internal": {
+      "data_url": "https://internal.enterprise.example.invalid",
+      "control_url": "https://internal-control.management.example.invalid",
+      "gns3_node_id": "gns3-node-internal",
+      "vsphere_vm_id": "vm-internal"
+    },
+    "lab-enterprise-restricted": {
+      "data_url": "https://restricted.enterprise.example.invalid",
+      "control_url": "https://restricted-control.management.example.invalid",
+      "gns3_node_id": "gns3-node-restricted",
+      "vsphere_vm_id": "vm-restricted"
+    }
+  }
+}
