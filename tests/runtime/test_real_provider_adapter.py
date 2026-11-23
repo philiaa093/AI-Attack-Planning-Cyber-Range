@@ -1160,4 +1160,35 @@ class TestRT07SmokeAuditOfflineSafety(unittest.TestCase):
         self.assertEqual(guard.metrics.http_attempts, 2)
         self.assertEqual(guard.metrics.retry_attempts, 0)
 
+    def test_14_max_retry_attempts_zero_independently_prevents_retries_when_http_cap_has_capacity(self):
+        """Test 14: max_retry_attempts=0 independently halts retries with MAX_RETRY_ATTEMPTS_EXCEEDED when HTTP attempt cap has capacity."""
+        limits = ProviderBudgetLimits(max_logical_calls=2, max_retry_attempts=0, max_http_attempts=10)
+        guard = ProviderBudgetGuard(limits=limits)
+        cfg = RealLLMProviderConfig(model="offline-model", api_base="http://127.0.0.1:20128/v1")
 
+        # Mock connection that always fails with TimeoutError
+        class FailingMockHTTPConnection:
+            def __init__(self, *args, **kwargs):
+                self.calls = 0
+
+            def request(self, *args, **kwargs):
+                self.calls += 1
+
+            def getresponse(self):
+                raise TimeoutError("Simulated socket timeout on dispatch")
+
+        mock_conn = FailingMockHTTPConnection()
+        adapter = RealLLMProviderAdapter(
+            config=cfg,
+            budget_guard=guard,
+            http_transport_factory=lambda *a, **k: mock_conn,
+        )
+
+        # First logical call encounters initial failure, and retry 1 must trip on MAX_RETRY_ATTEMPTS_EXCEEDED
+        with self.assertRaises(CircuitBreakerTrippedError) as ctx:
+            adapter.complete("Test prompt that times out")
+
+        self.assertIn("MAX_RETRY_ATTEMPTS_EXCEEDED", str(ctx.exception))
+        # Verify exactly one dispatch attempt was made over the wire; second dispatch never happened
+        self.assertEqual(mock_conn.calls, 1)
+        self.assertEqual(guard.metrics.retry_attempts, 1)

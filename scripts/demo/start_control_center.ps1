@@ -1,286 +1,184 @@
 <#
 .SYNOPSIS
-    One-Command Launcher for Autonomous Cyber Range Control Center (Professor Demo Hardening).
-.DESCRIPTION
-    Performs prerequisite checks (Python, Node, Docker), verifies port availability,
-    launches Backend & Frontend (with idempotency and PID tracking in .demo-session.json),
-    polls system demo readiness via GET /api/demo/readiness, and launches the browser dashboard.
-.PARAMETER NoBrowser
-    Do not automatically open the default web browser.
-.PARAMETER SkipDocker
-    Do not attempt to start Docker containers if offline.
-.PARAMETER BackendPort
-    Port for FastAPI backend (default: 8000).
-.PARAMETER FrontendPort
-    Port for Vite frontend (default: 5173).
+    Launch checkout-bound backend and frontend processes with verifiable birth identities.
 #>
-
 [CmdletBinding()]
 param (
     [switch]$NoBrowser,
     [switch]$SkipDocker,
-    [int]$BackendPort = 8000,
-    [int]$FrontendPort = 5173
+    [ValidateRange(1, 65535)][int]$BackendPort = 8000,
+    [ValidateRange(1, 65535)][int]$FrontendPort = 5173
 )
 
-$ErrorActionPreference = "Stop"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = (Resolve-Path (Join-Path $ScriptDir "..\..")).Path
-$SessionFile = Join-Path $ProjectRoot ".demo-session.json"
-$FrontendDir = Join-Path $ProjectRoot "dashboards\app\frontend"
+$ErrorActionPreference = 'Stop'
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path.TrimEnd('\', '/')
+$SessionFile = Join-Path $ProjectRoot '.demo-session.json'
+$FrontendDir = Join-Path $ProjectRoot 'dashboards\app\frontend'
+$ViteScript = Join-Path $FrontendDir 'node_modules\vite\bin\vite.js'
+$mutex = $null
+$lockHeld = $false
+$sessionData = $null
+$script:expectedSession = $null
 
-Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "   AUTONOMOUS CYBER RANGE CONTROL CENTER - ONE-COMMAND DEMO LAUNCHER           " -ForegroundColor Yellow
-Write-Host "   Bounded Autonomous Penetration Testing & Policy Enforcement Prototype       " -ForegroundColor Gray
-Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "[*] Project Root: $ProjectRoot" -ForegroundColor Gray
-Write-Host "[*] Timestamp:    $([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" -ForegroundColor Gray
-Write-Host ""
-
-# ------------------------------------------------------------------------------
-# 1. Prerequisite Validation
-# ------------------------------------------------------------------------------
-Write-Host "[1/5] Checking Environment Prerequisites..." -ForegroundColor Yellow
-
-# Check Python
-try {
-    $pyVer = & python --version 2>&1
-    Write-Host "  [+] Python: $pyVer" -ForegroundColor Green
-}
-catch {
-    Write-Error "[-] Python not found in PATH. Python >= 3.10 is required."
-    exit 1
-}
-
-# Check Node.js
-try {
-    $nodeVer = & node --version 2>&1
-    Write-Host "  [+] Node.js: $nodeVer" -ForegroundColor Green
-}
-catch {
-    Write-Error "[-] Node.js not found in PATH. Node >= 18 is required."
-    exit 1
-}
-
-# Check Docker
-$DockerAvailable = $false
-try {
-    $dockerVer = & docker --version 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        $DockerAvailable = $true
-        Write-Host "  [+] Docker Engine: $dockerVer" -ForegroundColor Green
-    }
-    else {
-        Write-Host "  [!] Docker CLI present but engine may be offline." -ForegroundColor DarkYellow
-    }
-}
-catch {
-    Write-Host "  [!] Docker not detected. System will operate in Historical Replay & Offline Verification mode." -ForegroundColor DarkYellow
-}
-
-# ------------------------------------------------------------------------------
-# 2. Port Collision & Idempotency Inspection
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[2/5] Checking Port Status & Existing Project Services..." -ForegroundColor Yellow
-
-$BackendRunning = $false
-$FrontendRunning = $false
-$BackendPID = $null
-$FrontendPID = $null
-
-# Inspect Backend Port
-try {
-    $bResp = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/status" -TimeoutSec 2 -ErrorAction Stop
-    if ($bResp.api -eq "healthy") {
-        $BackendRunning = $true
-        Write-Host "  [+] Existing Project Backend is active & healthy on port $BackendPort (reusing instance)." -ForegroundColor Green
-    }
-}
-catch {
-    # Check if port is occupied by unrelated process
-    $occupied = Get-NetTCPConnection -LocalPort $BackendPort -State Listen -ErrorAction SilentlyContinue
-    if ($occupied) {
-        Write-Error "[-] Port $BackendPort is occupied by an unrelated non-project application (PID: $($occupied.OwningProcess)). Please free port $BackendPort."
-        exit 1
-    }
-    Write-Host "  [*] Port $BackendPort is available for Backend." -ForegroundColor Gray
-}
-
-# Inspect Frontend Port
-try {
-    $fResp = Invoke-WebRequest -Uri "http://127.0.0.1:$FrontendPort" -TimeoutSec 2 -ErrorAction Stop
-    if ($fResp.StatusCode -eq 200) {
-        $FrontendRunning = $true
-        Write-Host "  [+] Existing Frontend server is active on port $FrontendPort (reusing instance)." -ForegroundColor Green
-    }
-}
-catch {
-    # Check if port is occupied by unrelated process
-    $occupied = Get-NetTCPConnection -LocalPort $FrontendPort -State Listen -ErrorAction SilentlyContinue
-    if ($occupied) {
-        Write-Error "[-] Port $FrontendPort is occupied by an unrelated non-project application (PID: $($occupied.OwningProcess)). Please free port $FrontendPort."
-        exit 1
-    }
-    Write-Host "  [*] Port $FrontendPort is available for Frontend." -ForegroundColor Gray
-}
-
-# ------------------------------------------------------------------------------
-# 3. Launching Services
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[3/5] Starting Control Center Services..." -ForegroundColor Yellow
-
-# Read existing session if present
-$ExistingSession = @{}
-if (Test-Path $SessionFile) {
+function Write-SessionCheckpoint {
+    if (Test-Path -LiteralPath $SessionFile) {
+        if ([IO.File]::ReadAllText($SessionFile) -cne $script:expectedSession) {
+            throw 'Session changed during startup.'
+        }
+    } elseif ($null -ne $script:expectedSession) { throw 'Session disappeared during startup.' }
+    $text = $sessionData | ConvertTo-Json -Depth 5
+    $pending = Join-Path $ProjectRoot ('.demo-session.' + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
-        $ExistingSession = Get-Content $SessionFile -Raw | ConvertFrom-Json -AsHashtable
-    }
-    catch {
-        $ExistingSession = @{}
-    }
-}
-
-# Spawn Backend if not running
-if (-not $BackendRunning) {
-    Write-Host "  [*] Spawning Backend (uvicorn FastAPI on 127.0.0.1:$BackendPort)..." -ForegroundColor Cyan
-    $bProc = Start-Process -FilePath "python" `
-        -ArgumentList "-m", "uvicorn", "dashboards.app.backend.control_api:app", "--host", "127.0.0.1", "--port", "$BackendPort" `
-        -WorkingDirectory $ProjectRoot `
-        -PassThru -WindowStyle Hidden
-    $BackendPID = $bProc.Id
-    Write-Host "  [+] Backend launched with PID: $BackendPID" -ForegroundColor Green
-}
-else {
-    $BackendPID = $ExistingSession["backend_pid"]
-}
-
-# Spawn Frontend if not running
-if (-not $FrontendRunning) {
-    Write-Host "  [*] Spawning Frontend (Vite dev server on 127.0.0.1:$FrontendPort)..." -ForegroundColor Cyan
-    $fProc = Start-Process -FilePath "npm.cmd" `
-        -ArgumentList "run", "dev", "--", "--host", "127.0.0.1", "--port", "$FrontendPort" `
-        -WorkingDirectory $FrontendDir `
-        -PassThru -WindowStyle Hidden
-    $FrontendPID = $fProc.Id
-    Write-Host "  [+] Frontend launched with PID: $FrontendPID" -ForegroundColor Green
-}
-else {
-    $FrontendPID = $ExistingSession["frontend_pid"]
-}
-
-# Record session manifest for safe targeted termination
-$SessionData = @{
-    session_id     = "DEMO-SES-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-    backend_pid    = $BackendPID
-    frontend_pid   = $FrontendPID
-    backend_url    = "http://127.0.0.1:$BackendPort"
-    frontend_url   = "http://127.0.0.1:$FrontendPort"
-    gateway_url    = "http://127.0.0.1:18088"
-    started_at_utc = [DateTime]::UtcNow.ToString("o")
-    project_root   = $ProjectRoot
-    status         = "INITIALIZING"
-}
-
-[System.IO.File]::WriteAllText($SessionFile, ($SessionData | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
-
-# ------------------------------------------------------------------------------
-# 4. Polling System Readiness & Health
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[4/5] Polling Unified Readiness & System Health..." -ForegroundColor Yellow
-
-$MaxWaitSeconds = 30
-$PollInterval = 1
-$Elapsed = 0
-$BackendReady = $false
-$FrontendReady = $false
-$ReadinessData = $null
-
-while ($Elapsed -lt $MaxWaitSeconds) {
-    # Check Backend Readiness endpoint
-    if (-not $BackendReady) {
+        $stream = [IO.File]::Open($pending, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         try {
-            $rResp = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/demo/readiness" -TimeoutSec 2 -ErrorAction Stop
-            if ($rResp.overall_status -in @("READY", "DEGRADED")) {
-                $BackendReady = $true
-                $ReadinessData = $rResp
-            }
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally { $stream.Dispose() }
+        if (Test-Path -LiteralPath $SessionFile) { [IO.File]::Replace($pending, $SessionFile, [System.Management.Automation.Language.NullString]::Value, $true) }
+        else { [IO.File]::Move($pending, $SessionFile) }
+        $script:expectedSession = $text
+    } catch {
+        if (Test-Path -LiteralPath $pending) { Write-Host "Unpublished session checkpoint retained: $pending" }
+        throw
+    }
+}
+
+function Get-PortListeners([int]$Port) {
+    return @(Get-NetTCPConnection -ErrorAction Stop | Where-Object {
+        $_.State -eq 'Listen' -and $_.LocalPort -eq $Port
+    })
+}
+
+function Test-OwnedListener([int]$Port, $Process) {
+    if ($Process.HasExited) { throw 'Recorded process exited during startup.' }
+    $listeners = @(Get-PortListeners $Port)
+    return $listeners.Count -gt 0 -and -not @($listeners | Where-Object {
+        $_.OwningProcess -ne $Process.Id -or $_.LocalAddress -notin @('127.0.0.1', '::1')
+    }).Count
+}
+
+try {
+    if ($BackendPort -eq $FrontendPort) { throw 'Backend and frontend ports must differ.' }
+    $python = (Get-Command python.exe -CommandType Application -ErrorAction Stop).Source
+    $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+    foreach ($path in @($ProjectRoot, $python, $node, $ViteScript, $FrontendDir)) {
+        if ($path -notmatch '^[A-Za-z]:[\\/]' -or $path -match '["\x00-\x1f]' -or $path -match '[^\S \t]') {
+            throw 'Unsupported executable or project path.'
         }
-        catch {
-            # Still warming up
+    }
+    foreach ($path in @($python, $node, $ViteScript)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Required local file is missing: $path" }
+    }
+    # A linked Vite installation could resolve to another checkout.
+    $directory = Get-Item -LiteralPath $ViteScript
+    while ($directory.FullName -ne $ProjectRoot) {
+        if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked Vite paths are unsupported.' }
+        $directory = Get-Item -LiteralPath (Split-Path -Parent $directory.FullName)
+    }
+    $rootKey = [IO.Path]::GetFullPath($ProjectRoot).ToLowerInvariant()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($rootKey))).Replace('-', '') }
+    finally { $hash.Dispose() }
+    $mutex = [Threading.Mutex]::new($false, "Local\PBL6-ControlCenter-$key")
+    try { $lockHeld = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $lockHeld = $true }
+    if (-not $lockHeld) { throw 'Another control operation is active.' }
+    if (@(Get-ChildItem -LiteralPath $ProjectRoot -Filter '.demo-session.*.tmp' -File -ErrorAction Stop).Count) {
+        throw 'Unpublished session checkpoints require recovery before startup.'
+    }
+
+    $backend = $null
+    $frontend = $null
+    $reuse = $false
+    if (Test-Path -LiteralPath $SessionFile) {
+        if ((Get-Item -LiteralPath $SessionFile).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Linked session files are unsupported.'
+        }
+        $script:expectedSession = [IO.File]::ReadAllText($SessionFile)
+        $ownership = & (Join-Path $PSScriptRoot 'stop_control_center.ps1') -VerifyOnly
+        if ($LASTEXITCODE -ne 0 -or $null -eq $ownership) { throw 'Existing session ownership could not be verified.' }
+        $backend = $ownership.backend
+        $frontend = $ownership.frontend
+        if (($null -ne $backend) -ne ($null -ne $frontend)) { throw 'Existing session is partially active; stop it before restarting.' }
+        $reuse = $null -ne $backend
+    }
+
+    if ($reuse) {
+        $previous = $script:expectedSession | ConvertFrom-Json
+        if ($previous.backend_url -cne "http://127.0.0.1:$BackendPort" -or
+            $previous.frontend_url -cne "http://127.0.0.1:$FrontendPort") {
+            throw 'Existing session URLs do not match the requested loopback ports.'
+        }
+        if (-not (Test-OwnedListener $BackendPort $backend) -or -not (Test-OwnedListener $FrontendPort $frontend)) {
+            throw 'Existing session does not own the requested loopback listeners.'
+        }
+        Write-Host 'Reusing verified processes; existing session identity is unchanged.'
+    } else {
+        if (@(Get-PortListeners $BackendPort).Count -or @(Get-PortListeners $FrontendPort).Count) {
+            throw 'Requested port is occupied by an unowned process.'
+        }
+        $sessionData = @{
+            session_id = 'DEMO-SES-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+            backend_pid = $null; backend_started_at_utc = $null
+            frontend_pid = $null; frontend_started_at_utc = $null
+            backend_url = "http://127.0.0.1:$BackendPort"
+            frontend_url = "http://127.0.0.1:$FrontendPort"
+            gateway_url = 'http://127.0.0.1:18088'
+            started_at_utc = [datetime]::UtcNow.ToString('o')
+            project_root = $ProjectRoot; status = 'INITIALIZING'
+        }
+        Write-SessionCheckpoint
+        foreach ($role in @('backend', 'frontend')) {
+            if ($role -eq 'backend') {
+                $arguments = '-m uvicorn dashboards.app.backend.control_api:app --app-dir "' + $ProjectRoot + '" --host 127.0.0.1 --port ' + $BackendPort
+                $process = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $ProjectRoot -PassThru -WindowStyle Hidden
+                $backend = $process
+            } else {
+                $arguments = '"' + $ViteScript + '" "' + $FrontendDir + '" --host 127.0.0.1 --port ' + $FrontendPort
+                $process = Start-Process -FilePath $node -ArgumentList $arguments -WorkingDirectory $FrontendDir -PassThru -WindowStyle Hidden
+                $frontend = $process
+            }
+            $sessionData["${role}_pid"] = $process.Id
+            Write-Host "Started $role PID $($process.Id); capturing its birth identity."
+            $handle = $process.Handle
+            if ($null -eq $handle -or $handle -eq [IntPtr]::Zero) { throw 'Process handle is unavailable.' }
+            $sessionData["${role}_started_at_utc"] = $process.StartTime.ToUniversalTime().ToString('o')
+            Write-Host "Owned $role PID $($process.Id), birth $($sessionData["${role}_started_at_utc"])."
+            Write-SessionCheckpoint
+            if ($process.HasExited) { throw "$role exited before readiness." }
         }
     }
 
-    # Check Frontend
-    if (-not $FrontendReady) {
+    $readiness = $null
+    for ($elapsed = 0; $elapsed -lt 30; $elapsed++) {
+        $backendReady = Test-OwnedListener $BackendPort $backend
+        $frontendReady = Test-OwnedListener $FrontendPort $frontend
         try {
-            $fResp = Invoke-WebRequest -Uri "http://127.0.0.1:$FrontendPort" -TimeoutSec 2 -ErrorAction Stop
-            if ($fResp.StatusCode -eq 200) {
-                $FrontendReady = $true
+            if ($backendReady) {
+                $readiness = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/api/demo/readiness" -MaximumRedirection 0 -TimeoutSec 2 -ErrorAction Stop
+                $backendReady = $readiness.overall_status -in @('READY', 'DEGRADED')
             }
-        }
-        catch {
-            # Still warming up
-        }
+            if ($frontendReady) {
+                $response = Invoke-WebRequest -Uri "http://127.0.0.1:$FrontendPort" -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 2 -ErrorAction Stop
+                $frontendReady = $response.StatusCode -eq 200
+            }
+        } catch { $backendReady = $false; $frontendReady = $false }
+        if ($backendReady -and $frontendReady) { break }
+        Start-Sleep -Seconds 1
     }
-
-    if ($BackendReady -and $FrontendReady) {
-        break
+    if (-not $backendReady -or -not $frontendReady) { throw 'Control Center did not reach verified readiness after 30 readiness checks.' }
+    if (-not $reuse) { $sessionData.status = $readiness.overall_status; Write-SessionCheckpoint }
+    Write-Host "Control Center $($readiness.overall_status): http://127.0.0.1:$FrontendPort/#overview"
+    if (-not $NoBrowser) { Start-Process "http://127.0.0.1:$FrontendPort/#overview" }
+    exit 0
+} catch {
+    if ($null -ne $sessionData) {
+        $sessionData.status = 'FAILED'
+        try { Write-SessionCheckpoint } catch { Write-Host "Session checkpoint failed; prior receipt retained: $($_.Exception.Message)" }
     }
-
-    Start-Sleep -Seconds $PollInterval
-    $Elapsed += $PollInterval
-    Write-Host "  [*] Waiting for services to respond ($Elapsed/${MaxWaitSeconds}s)..." -ForegroundColor Gray
-}
-
-if (-not $BackendReady) {
-    Write-Error "[-] Backend failed to reach ready state within $MaxWaitSeconds seconds."
+    Write-Host "Startup refused or incomplete: $($_.Exception.Message)"
     exit 1
-}
-
-if (-not $FrontendReady) {
-    Write-Error "[-] Frontend failed to respond within $MaxWaitSeconds seconds."
-    exit 1
-}
-
-# Update session manifest to ACTIVE
-$SessionData["status"] = $ReadinessData.overall_status
-[System.IO.File]::WriteAllText($SessionFile, ($SessionData | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
-
-# ------------------------------------------------------------------------------
-# 5. Presentation Summary & Ready Banner
-# ------------------------------------------------------------------------------
-Write-Host ""
-Write-Host "[5/5] Control Center Ready for Professor Demonstration!" -ForegroundColor Green
-Write-Host "================================================================================" -ForegroundColor Cyan
-Write-Host "   OVERALL SYSTEM STATUS: " -NoNewline
-if ($ReadinessData.overall_status -eq "READY") {
-    Write-Host "READY (DEMO READY)" -ForegroundColor Green
-}
-else {
-    Write-Host "$($ReadinessData.overall_status) (DEGRADED / HISTORICAL REPLAY AVAILABLE)" -ForegroundColor Yellow
-}
-Write-Host "   Summary: $($ReadinessData.summary)" -ForegroundColor Gray
-Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "   Frontend Dashboard URL:  http://127.0.0.1:$FrontendPort" -ForegroundColor Cyan
-Write-Host "   Backend API URL:         http://127.0.0.1:$BackendPort/docs" -ForegroundColor Cyan
-Write-Host "   Readiness Endpoint:      http://127.0.0.1:$BackendPort/api/demo/readiness" -ForegroundColor Cyan
-Write-Host "   Cyber Range Gateway:     http://127.0.0.1:18088" -ForegroundColor Gray
-Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "   [HONEST LLM PROVENANCE DISCLOSURE]" -ForegroundColor Cyan
-Write-Host "   Provider Status:         $($ReadinessData.details.llm_status)" -ForegroundColor Yellow
-Write-Host "   Provenance Disclosure:   $($ReadinessData.details.llm_provenance_disclosure)" -ForegroundColor Yellow
-Write-Host "   RULE Baseline Fallback:  $($ReadinessData.details.rule_baseline_ready)" -ForegroundColor Green
-Write-Host "   Zero Network Dispatch:   ENFORCED BY CENTRALIZED SAFETY GATE" -ForegroundColor Green
-Write-Host "--------------------------------------------------------------------------------" -ForegroundColor DarkGray
-Write-Host "   To safely stop the Control Center:" -ForegroundColor Gray
-Write-Host "   powershell -File .\scripts\demo\stop_control_center.ps1" -ForegroundColor Yellow
-Write-Host "================================================================================" -ForegroundColor Cyan
-
-# Open Browser unless -NoBrowser
-if (-not $NoBrowser) {
-    Write-Host "[*] Launching browser to http://127.0.0.1:$FrontendPort/#overview..." -ForegroundColor Green
-    Start-Process "http://127.0.0.1:$FrontendPort/#overview"
+} finally {
+    if ($lockHeld) { $mutex.ReleaseMutex() }
+    if ($null -ne $mutex) { $mutex.Dispose() }
 }

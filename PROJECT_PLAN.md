@@ -12,6 +12,46 @@ Người dùng yêu cầu bắt đầu sau đề xuất chuẩn hóa ba file. Al
 
 Checks: headings/links/dependencies của ba file, bảo toàn bảng/receipt/anchor, scoped whitespace check và repository checker. Kết quả toàn repo phải so với baseline; blocker ngoài allowlist không được tự sửa. Tài liệu cập nhật là `IMPLEMENTED`, chưa `VALIDATED` nếu chưa đủ checks/review.
 
+### Đợt sửa kết luận kiểm tra SQLi có giới hạn
+
+Người dùng duyệt sửa và bổ sung kiểm tra ngày 2026-11-06 sau khi audit tái hiện kết luận sai với refusal, timeout và baseline 404. Allowlist duy nhất: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `tests/runtime/test_autonomous_pentest.py`.
+
+Acceptance: SQLi executor dừng khi gate từ chối hoặc phản hồi không đủ điều kiện; refusal là `REFUSED`, lỗi transport/control/truncation là `INCONCLUSIVE`. Đếm dispatch bằng chênh lệch bộ đếm thực của gate. Chỉ kết luận differential khi baseline và balanced control trả HTTP 200 hợp lệ, đầy đủ, không chứa dấu hiệu lỗi SQL; giữ tham chiếu bằng chứng của cả ba probe. `VERIFIED_IN_LAB` chỉ xác nhận dấu hiệu cú pháp trong lab, không xác nhận đọc dữ liệu hoặc vượt xác thực.
+
+Checks: focused regressions cho refusal trước/giữa lượt, timeout trước/sau dispatch, controls lỗi, truncation, evidence failure, positive differential, signal và negative; existing autonomous-pentest/backend regressions, scoped diff và repository checker đối chiếu baseline. Fixtures dùng mock hoặc loopback cùng thư mục tạm; không chạy lab/provider thật. Phạm vi này không đổi contracts, policy, targets, payloads, evidence cũ hoặc trạng thái task; review độc lập và live confirmation vẫn pending.
+
+### Đợt sửa khởi động workflow trên volume clone
+
+Người dùng yêu cầu sửa `WORKFLOW_START_TIMEOUT` và restart ngày 2026-11-06. Allowlist duy nhất: `PROJECT_PLAN.md`, `runtime/lab/workflow_lab.py`, `cyber-range/runtime/workflow_volume.py`, `tests/integration/test_authenticated_workflow.py`.
+
+Acceptance: snapshot mới giữ UID/GID của thư mục gốc và từng entry; giữ nguyên thuật toán hash nội dung. Chỉ helper snapshot được thêm capability `CHOWN`, sau `--cap-drop ALL`; nguồn và helper script vẫn mount read-only, không mạng, root filesystem read-only, chỉ clone được ghi. Lỗi chown/copy phải propagate qua restore hiện có. Không đổi user của app, quyền volume gốc, target/action policy, credential handling hoặc evidence cũ; không xóa clone được giữ lại.
+
+Checks: hồi quy snapshot ownership/content và failure-stop, kiểm command scope của helper, workflow tích hợp trên app/thư mục tạm, Linux fixture xác minh UID/GID thực, scoped diff/AST và repository checker so với blocker đã quan sát. Trước restart xác minh evidence phiên lỗi và restore; chỉ restart backend thuộc phiên này khi không có run hoạt động. Restart không tự chạy lại workflow ghi dữ liệu hoặc provider; xác nhận API và lab health, giữ review độc lập pending.
+
+### Đợt sửa phạm vi ZAP và batch scanner
+
+Theo yêu cầu kiểm tra ZAP và Nuclei bị bỏ qua ngày 2026-11-06, allowlist duy nhất: `PROJECT_PLAN.md`, `tools/scanners/zap_worker.py`, `runtime/lab/external_scanners.py`, `tests/runtime/test_external_scanners.py`.
+
+Acceptance: ZAP active chỉ dùng điểm chèn query GET trên seed đã quan sát, không đổi hai rule được duyệt. Relay giữ nguyên authority/path/query allowlists, giới hạn 32 refusals và mọi Safety Gate check; chỉ bổ sung mã nguyên nhân cố định, không lưu URL/payload thô. Nuclei được thử trong cùng batch sau lỗi cục bộ ZAP (`SCANNER_REFUSAL_LIMIT`, `SCANNER_TIMEOUT`, `SCANNER_PROCESS_FAILED`); mỗi tool kiểm quyền/ngân sách lại. Lỗi evidence, cleanup, hủy hoặc thu hồi quyền không được tiếp tục. Aggregate vẫn FAILURE khi một tool lỗi; không retry batch, ép planner chạy hoặc báo lỗi scanner là sạch.
+
+Checks: mock regressions cho worker query-only, local-error continuation, global-stop/no-repeat và refusal diagnostics; existing scanner/planner/runner regressions; Docker scanner chỉ trên fixture loopback với evidence tạm, không chạy lại ShopLab/provider hoặc sửa evidence phiên cũ. Scoped diff và repository checker so với blocker có sẵn; không nâng task status, tự approve hoặc commit. Restart chỉ backend thuộc phiên này khi không có run hoạt động nếu cần nạp bản sửa.
+
+### Đợt sửa phản hồi provider thiếu cấu trúc
+
+Theo lỗi `PROVIDER_ERROR_KeyError` của phiên `RUN-DASH-2290c82f6d9146189cc96202c19eb592`, allowlist duy nhất: `PROJECT_PLAN.md`, `runtime/planners/observed_planner.py`, `tests/runtime/test_observed_planner.py`.
+
+Acceptance: xác minh envelope và nội dung provider trước khi dùng; phân biệt JSON/envelope lỗi, error response, refusal, truncation và nội dung rỗng bằng mã cố định, không lưu raw response/secret. Chỉ retry tối đa một lần cho envelope/JSON lỗi hoặc nội dung rỗng trong cùng timeout tổng; không retry authentication, refusal, truncation, secret echo hoặc response vượt giới hạn. Ghi số lần gọi và lý do retry vào provenance/event. Không thay profile, model, fallback approval, plan schema, target/action policy hoặc kết luận phiên cũ; response hợp lệ vẫn qua schema/gate hiện có.
+
+Checks: mocked provider regressions cho malformed-to-valid và persistent malformed, refusal/error/truncation/secret/no-retry, connection closure và fallback-denied; existing profile/planner/runner regressions, scoped diff và checker đối chiếu blockers. Có thể kiểm kết nối profile đã lưu bằng prompt tổng hợp không chứa observations/target, không chạy workflow/scanner/provider trên dữ liệu phiên cũ. Restart backend sở hữu bởi chat sau khi xác nhận run terminal; review độc lập và full-run confirmation vẫn pending.
+
+### Đợt báo lỗi provider timeout và trạng thái kết thúc
+
+Người dùng báo phiên `RUN-DASH-80c1491151324b0bbaea4711ae169486` và chọn giữ LLM, dừng/báo lỗi rõ khi provider lỗi. Allowlist duy nhất: `PROJECT_PLAN.md`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `dashboards/app/backend/run_manager.py`, `dashboards/app/backend/run_history.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_autonomous_runner.py`, `tests/backend/test_runtime_events.py`, `tests/backend/test_history_truthfulness.py`.
+
+Acceptance: timeout có mã cố định và metadata stage/latency không chứa response/secret; giữ timeout tổng và retry ceiling hiện có. Provider halt khi fallback không được duyệt là FAILED, không phải COMPLETED; giữ configured provider/model và actual mode NONE. Dashboard nhận stop reason/error, defer terminal event tới sau restore; lịch sử suy ra failure từ stop reason đã ghi mà không sửa artifact. Không đổi model/profile, tự mở fallback, nới Safety Gate, chạy lại lab hoặc ghi lại evidence cũ.
+
+Checks: timeout fixtures cho headers/body, no-secret metadata, fallback-denied/lifecycle và backend/history regressions; readonly hash check phiên cũ, scoped diff và checker so với blockers. Chẩn đoán proxy chỉ bằng prompt tổng hợp, không dùng credentials để vượt endpoint yêu cầu đăng nhập; không sửa 9Router. Restart backend thuộc chat khi run terminal. Upstream timeout gián đoạn và full-run confirmation vẫn unresolved; không suy ra success từ health hoặc synthetic probe.
+
 ### Đợt tách code dùng chung khỏi script demo
 
 Theo yêu cầu tiếp tục xử lý thư mục và code của người dùng, phạm vi kỹ thuật là chuyển helpers điều phối lab từ CLI demo về `runtime/lab/control_support.py`; backend và CLI cùng gọi module này. Giữ cấu trúc thư mục hiện có, không mở tính năng simulator hoặc đổi hành vi gate/approval/ownership/evidence. Đây là đợt kỹ thuật riêng, không mở rộng allowlist của đợt tài liệu trước.

@@ -340,6 +340,21 @@ class TestRuntimeEvents(unittest.TestCase):
         for e in emitted_events:
             self.assertEqual(e["run_id"], run_id)
 
+    def test_provider_halt_sets_failed_state_reason_and_plan_failure(self):
+        reason = "provider_unavailable_halt:FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT"
+        run_manager._on_runtime_event({"run_id": "RUN-PROVIDER-FAILURE", "type": "RUN_FAILED",
+            "payload": {"stop_reason": reason, "error": "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT"}}, event_sink)
+        run_manager._on_runtime_event({"run_id": "RUN-PROVIDER-FAILURE", "type": "EVIDENCE_VERIFIED",
+            "payload": {"records": 1}}, event_sink)
+        run, agent, _, evidence, pipeline = run_manager.get_snapshot()
+        self.assertEqual(run.state, AgentState.FAILED)
+        self.assertEqual(agent.state, AgentState.FAILED)
+        self.assertEqual(run.stop_reason, reason)
+        self.assertEqual(run.error, "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT")
+        self.assertEqual(pipeline.steps["PLAN"], StepState.FAILED)
+        self.assertEqual(pipeline.steps["COMPLETE"], StepState.FAILED)
+        self.assertEqual(evidence.integrity_status, "VERIFIED")
+
     def test_sse_endpoint_response_headers_and_filter(self):
         """Verify GET /api/events and /api/runs/{run_id}/events stream with text/event-stream."""
         async def mock_subscribe(run_id=None):

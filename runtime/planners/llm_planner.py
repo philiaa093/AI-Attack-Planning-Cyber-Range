@@ -25,6 +25,8 @@ from runtime.planners.planner_interface import (
 LLM_ATTACK_PLANNER_PROMPT_V1 = "LLM_ATTACK_PLANNER_PROMPT_V1"
 LLM_OUTPUT_SCHEMA_VERSION = "LLM_OUTPUT_SCHEMA_V1"
 LLM_CONTEXT_SERIALIZER_VERSION = "LLM_CONTEXT_SERIALIZER_V1"
+LLM_CONTEXT_SERIALIZER_V2 = "LLM_CONTEXT_SERIALIZER_V2"
+LLM_SELECTION_FOOTER_V1 = "Select exactly one candidate from 'eligible_candidates' above and return your decision JSON."
 
 ATTACK_PLANNER_SYSTEM_PROMPT = """You are an autonomous cyber security red-team planning agent operating in a strictly controlled laboratory assessment environment.
 Your task: Given the current partial-observability assessment state, select the SINGLE BEST NEXT ACTION from the provided list of eligible candidates.
@@ -79,6 +81,8 @@ def _scan_for_forbidden_llm_data(value: Any, path: str = "$") -> None:
 def serialize_llm_context(
     context: PlannerDecisionContext,
     system_prompt: str = ATTACK_PLANNER_SYSTEM_PROMPT,
+    *,
+    task_footer: str = LLM_SELECTION_FOOTER_V1,
 ) -> tuple[str, str, str, dict[str, dict[str, Any]]]:
     """Serialize PlannerDecisionContext into an LLM-safe prompt and metadata.
 
@@ -177,7 +181,7 @@ def serialize_llm_context(
         f"{system_prompt}\n\n"
         f"### CURRENT OPERATIONAL CONTEXT:\n"
         f"```json\n{context_json}\n```\n\n"
-        f"Select exactly one candidate from 'eligible_candidates' above and return your decision JSON."
+        f"{task_footer}"
     )
     prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
 

@@ -1,0 +1,100 @@
+{
+  "smoke_run_id": "smoke_hybrid_semantic_live_1792467018",
+  "timestamp_utc": "2026-10-20T03:30:18.363584+00:00",
+  "classification": "HYBRID_SEMANTIC_INVALID_RESPONSE",
+  "authorization": "USER_EXPLICIT_ONE_HTTP_HYBRID_SEMANTIC_SMOKE",
+  "operational_limits": {
+    "max_logical_calls": 1,
+    "max_http_attempts": 1,
+    "max_retry_attempts": 0,
+    "timeout_seconds": 30.0
+  },
+  "provider_configuration": {
+    "provider_type": "openai-compatible",
+    "model_id": "ag/gemini-3.8-flash",
+    "base_url": "http://localhost:20128/v1",
+    "adapter_protocol_version": "RT-07B0A_UNIFIED_ADAPTER_V1",
+    "inference_parameters": {
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "max_output_tokens": 512,
+      "timeout_seconds": 30.0,
+      "max_retries": 2,
+      "backoff_factor": 1.5
+    },
+    "provider_seed_supported": false,
+    "requested_seed": null,
+    "api_key_redacted": "[REDACTED]",
+    "configuration_source": "PERSISTED_PROFILE",
+    "is_local_endpoint": true,
+    "requires_api_key": false,
+    "allow_keyless": false,
+    "authoritative_input_tokens": null,
+    "is_configured": true,
+    "model_metadata": {
+      "context_window": null,
+      "parameter_count": null,
+      "weights_hash": null
+    }
+  },
+  "execution": {
+    "planner": "Hybrid Full",
+    "scenario": "S1 Straight",
+    "seed": 1001,
+    "step_index": 0,
+    "latency_ms": 26045.36,
+    "decision_valid": true,
+    "semantic_component_valid": false,
+    "fallback_used": true,
+    "fallback_mode": "SYMBOLIC_ONLY",
+    "selected_candidate_key": "CAND-001",
+    "action_id": "ACTION-DISCOVERY-001",
+    "target_id": "lab-dmz-entry",
+    "simulator_step_success": true,
+    "step_cost": 1,
+    "noise_estimate": 0.5
+  },
+  "accounting_summary": {
+    "planner_decisions": 0,
+    "logical_provider_calls": 1,
+    "http_attempts": 1,
+    "retry_attempts": 0,
+    "estimated_input_tokens": 440,
+    "authoritative_input_tokens": null,
+    "reserved_output_tokens": 512,
+    "provider_reported_input_tokens": 5156,
+    "provider_reported_output_tokens": 1877,
+    "provider_reported_total_tokens": 5199,
+    "input_tokens": 5156,
+    "output_tokens": 1877,
+    "reasoning_tokens": 1877,
+    "consecutive_errors": 0,
+    "cumulative_errors": 0,
+    "authorization_incidents": [],
+    "monetary_cap_status": "MONETARY_CAP_NOT_ENFORCED",
+    "estimated_monetary_spend_usd": null,
+    "monetary_accounting_note": "User-configured models have arbitrary external or local pricing; monetary spending is governed by strict token and HTTP attempt ceilings rather than unverified currency estimates."
+  },
+  "upstream_router": {
+    "row_id": 43484,
+    "timestamp": "2026-10-20T03:30:18.333Z",
+    "model": "gemini-3.8-flash",
+    "endpoint": "/v1/chat/completions",
+    "prompt_tokens": 1279,
+    "completion_tokens": 43,
+    "cost_usd": 0.02335725,
+    "status": "ok",
+    "meta_tokens": {
+      "prompt_tokens": 1279,
+      "completion_tokens": 43,
+      "total_tokens": 1322,
+      "cached_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "reasoning_tokens": 1877
+    }
+  },
+  "held_out_protection": {
+    "h01_to_h12_accessed": false,
+    "held_out_contamination": false
+  }
+}

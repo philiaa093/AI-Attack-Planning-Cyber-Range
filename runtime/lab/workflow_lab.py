@@ -42,12 +42,13 @@ class WorkflowLab:
             "expected_state": phase.upper(), "observed_state": phase.upper(), **details})
 
     def volume_operation(self, operation):
+        capabilities = ["--cap-add", "CHOWN"] if operation == "snapshot" else []
         mounts = ["--mount", f"type=volume,source={self.source},target=/source,readonly",
                   "--mount", f"type=bind,source={ROOT / 'cyber-range/runtime/workflow_volume.py'},target=/helper.py,readonly"]
         if operation == "snapshot":
             mounts += ["--mount", f"type=volume,source={self.volume},target=/clone"]
         return json.loads(docker("run", "--rm", "--network", "none", "--read-only", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges", *mounts, self.helper, "python", "-B", "/helper.py", operation))["sha256"]
+            *capabilities, "--security-opt", "no-new-privileges", *mounts, self.helper, "python", "-B", "/helper.py", operation))["sha256"]
 
     def __enter__(self):
         fd = os.open(self.lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

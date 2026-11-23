@@ -51,6 +51,56 @@ class ScanScopeTests(unittest.TestCase):
         v.load_json(path, errors)
         self.assertEqual(errors, [])
 
+    def test_managed_session_births_and_partial_failures_are_explicit(self):
+        session = dict(session_id="DEMO-SES-1234abcd", started_at_utc="2026-10-14T00:00:00.0000000Z",
+                       status="READY", backend_pid=123, frontend_pid=456,
+                       backend_started_at_utc="2026-10-14T00:00:01.1234567Z",
+                       frontend_started_at_utc="2026-10-14T00:00:02+00:00",
+                       backend_url="http://127.0.0.1:8000", frontend_url="http://127.0.0.1:5173",
+                       gateway_url="http://127.0.0.1:18088", project_root=str(self.root))
+        for changes in (
+            {}, {"status": "DEGRADED"}, {"status": "INITIALIZING"}, {"status": "FAILED"},
+            {"status": "INITIALIZING", "backend_pid": None, "backend_started_at_utc": None,
+             "frontend_pid": None, "frontend_started_at_utc": None},
+            {"status": "INITIALIZING", "frontend_pid": None, "frontend_started_at_utc": None},
+            {"status": "FAILED", "backend_started_at_utc": None,
+             "frontend_pid": None, "frontend_started_at_utc": None},
+        ):
+            with self.subTest(valid=changes):
+                self.assertEqual(v._session_errors({**session, **changes}), [])
+        for changes in (
+            {"backend_pid": True}, {"backend_pid": "123"}, {"backend_pid": 2**31},
+            {"backend_pid": 123.0}, {"frontend_pid": 123},
+            {"backend_pid": None}, {"backend_started_at_utc": None},
+            {"status": "INITIALIZING", "backend_started_at_utc": None},
+            {"status": "FAILED", "backend_pid": None},
+            {"backend_started_at_utc": "2026-02-30T00:00:00Z"},
+            {"backend_started_at_utc": "2026-10-14T00:00:00"},
+            {"backend_started_at_utc": "2026-10-14T00:00:00+07:00"},
+            {"backend_started_at_utc": "2026-10-14T00:00:00.12345678Z"},
+            {"backend_started_at_utc": "2999-10-14T00:00:00Z"},
+            {"backend_started_at_utc": 123}, {"started_at_utc": "2999-10-14T00:00:00Z"},
+            {"backend_url": "http://127.0.0.1:5173"},
+            {"frontend_url": "http://127.0.0.1:0"},
+            {"frontend_url": "http://127.0.0.1:65536"},
+            {"backend_url": "http://example.com:8000"},
+            {"project_root": "."}, {"status": "VALIDATED"}, {"command": "bad"},
+        ):
+            with self.subTest(invalid=changes):
+                path = self.write(".demo-session.json", json.dumps({**session, **changes}))
+                errors = []
+                v.load_json(path, errors)
+                self.assertTrue(errors)
+        for key in ("backend_started_at_utc", "frontend_started_at_utc"):
+            with self.subTest(missing=key):
+                incomplete = {name: value for name, value in session.items() if name != key}
+                self.assertEqual(v._session_errors(incomplete), ["invalid session fields"])
+        path = self.write(".demo-session.json", json.dumps(session))
+        self.assertFalse(v._is_contract_data(path))
+        errors = []
+        v.load_json(path, errors)
+        self.assertEqual(errors, [])
+
     def test_handoff_metadata_roles_do_not_exempt_contract_snapshots(self):
         base = "dashboards/app/handoffs/UI-20261014T134112Z-dca3d019/"
         for folder in ("source/", "before/"):

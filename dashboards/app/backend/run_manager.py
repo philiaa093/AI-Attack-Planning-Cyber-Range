@@ -719,6 +719,10 @@ class RunManager:
                 self._pipeline_status.steps["COMPLETE"] = StepState.FAILED
                 self._run_status.state = AgentState.FAILED
                 self._agent_status.state = AgentState.FAILED
+                self._run_status.stop_reason = payload.get("stop_reason")
+                self._run_status.error = payload.get("error")
+                if str(payload.get("stop_reason", "")).startswith("provider_unavailable_halt"):
+                    self._pipeline_status.steps["PLAN"] = StepState.FAILED
                 self._run_status.ended_at_utc = _utc_now_iso()
 
         evt_obj = AgentEvent(
@@ -1087,7 +1091,7 @@ class RunManager:
             deferred_completion = []
             workflow_restored = not req.approve_authenticated_workflow
             def on_runtime_event(ev: dict[str, Any]) -> None:
-                if ev.get("type") == "RUN_COMPLETED" and not workflow_restored:
+                if ev.get("type") in ("RUN_COMPLETED", "RUN_FAILED") and not workflow_restored:
                     deferred_completion.append(ev)
                     return
                 self._on_runtime_event(ev, event_sink)

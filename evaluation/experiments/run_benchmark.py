@@ -29,6 +29,7 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 from pathlib import Path
 import sys
 import time
@@ -54,6 +55,8 @@ from evaluation.experiments.benchmark_preflight import (
 )
 from evaluation.experiments.source_snapshot import (
     FROZEN_PROTOCOL_ID,
+    PROPOSED_PROTOCOL_ID_V2,
+    validate_protocol_version,
     HYBRID_FROZEN_WEIGHTS_HASH,
     HYBRID_PROMPT_HASH_V1,
     HYBRID_V1_WEIGHTS_HASH,
@@ -78,12 +81,18 @@ from runtime.planners.candidate_generator import CandidateGenerator
 from runtime.planners.hybrid_planner import (
     FakeHybridRankingProvider,
     HybridPlanner,
+    HYBRID_PLANNER_PROMPT_V1,
+    HYBRID_PLANNER_PROMPT_V2,
+    HYBRID_OUTPUT_SCHEMA_V2,
 )
 from runtime.planners.llm_planner import (
     ATTACK_PLANNER_SYSTEM_PROMPT,
     FakeAttackPlannerProvider,
     LLMPlanner,
     LLM_ATTACK_PLANNER_PROMPT_V1,
+    LLM_CONTEXT_SERIALIZER_VERSION,
+    LLM_CONTEXT_SERIALIZER_V2,
+    LLM_OUTPUT_SCHEMA_VERSION,
 )
 from runtime.planners.real_provider_adapter import (
     CircuitBreakerTrippedError,
@@ -162,9 +171,10 @@ class BenchmarkEpisodeResult:
     output_tokens: int
     planning_latencies_ms: tuple[float, ...]
     error_details: str = ""
+    prompt_provenance: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "experiment_id": self.experiment_id,
             "protocol_version": self.protocol_version,
             "source_commit": self.source_commit,
@@ -203,6 +213,10 @@ class BenchmarkEpisodeResult:
             "planning_latencies_ms": [round(lat, 2) for lat in self.planning_latencies_ms],
             "error_details": self.error_details,
         }
+
+        if self.prompt_provenance is not None:
+            payload["prompt_provenance"] = self.prompt_provenance
+        return payload
 
     def to_telemetry(self) -> EpisodeTelemetry:
         """Convert into benchmark_metrics.EpisodeTelemetry for primary/secondary metric computation."""
@@ -246,7 +260,10 @@ class BenchmarkRunner:
         provider: Any = None,
         provider_config: RealLLMProviderConfig | None = None,
         require_real_provider: bool = False,
+        *,
+        protocol_version: str = FROZEN_PROTOCOL_ID,
     ) -> None:
+        self.protocol_version = validate_protocol_version(protocol_version)
         self.repo_root = repo_root
         self.results_dir = results_dir
         self.results_dir.mkdir(parents=True, exist_ok=True)
@@ -261,12 +278,14 @@ class BenchmarkRunner:
         else:
             self.provider = None
 
-        self.preflight_checker = BenchmarkPreflightChecker(repo_root=self.repo_root)
+        self.preflight_checker = BenchmarkPreflightChecker(repo_root=self.repo_root, protocol_version=self.protocol_version)
         self.loader = ScenarioLoader()
-        self._source_snapshot = build_source_snapshot(self.repo_root)
+        self._source_snapshot = build_source_snapshot(self.repo_root, protocol_version=self.protocol_version)
 
     def load_pre_registered_matrix(self) -> list[dict[str, Any]]:
         """Load the frozen 420 planned episode matrix; reject missing/duplicate IDs."""
+        if self.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+            raise BenchmarkAuthorizationError("V2_PROTOCOL_NOT_SEALED: V2 matrix scheduling is not authorized.")
         if not BENCHMARK_MATRIX_PATH.exists():
             raise FileNotFoundError(f"Missing benchmark matrix: {BENCHMARK_MATRIX_PATH}")
 
@@ -297,6 +316,10 @@ class BenchmarkRunner:
             (planner_instance, version_string, prompt_hash, weights_hash)
         """
         active_provider = provider if provider is not None else self.provider
+        hybrid_prompt_version = (
+            HYBRID_PLANNER_PROMPT_V2 if self.protocol_version == PROPOSED_PROTOCOL_ID_V2
+            else HYBRID_PLANNER_PROMPT_V1
+        )
 
         if planner_id == "RULE":
             planner = RuleBasedPlanner()
@@ -314,6 +337,7 @@ class BenchmarkRunner:
             planner = HybridPlanner(
                 provider=active_provider or FakeHybridRankingProvider(),
                 scoring_config=cfg,
+                prompt_version=hybrid_prompt_version,
             )
             return planner, "HYBRID_SCORING_V1_FROZEN", HYBRID_PROMPT_HASH_V1, cfg.weights_hash()
 
@@ -322,6 +346,7 @@ class BenchmarkRunner:
             planner = HybridPlanner(
                 provider=active_provider or FakeHybridRankingProvider(),
                 scoring_config=cfg,
+                prompt_version=hybrid_prompt_version,
             )
             return planner, "HYBRID_NO_NOISE", HYBRID_PROMPT_HASH_V1, cfg.weights_hash()
 
@@ -330,6 +355,7 @@ class BenchmarkRunner:
             planner = HybridPlanner(
                 provider=active_provider or FakeHybridRankingProvider(),
                 scoring_config=cfg,
+                prompt_version=hybrid_prompt_version,
             )
             return planner, "HYBRID_NO_PENALTIES", HYBRID_PROMPT_HASH_V1, cfg.weights_hash()
 
@@ -338,6 +364,7 @@ class BenchmarkRunner:
             planner = HybridPlanner(
                 provider=active_provider or FakeHybridRankingProvider(),
                 scoring_config=cfg,
+                prompt_version=hybrid_prompt_version,
             )
             return planner, "HYBRID_SEMANTIC_ONLY", HYBRID_PROMPT_HASH_V1, cfg.weights_hash()
 
@@ -347,6 +374,7 @@ class BenchmarkRunner:
             planner = HybridPlanner(
                 provider=None,
                 scoring_config=cfg,
+                prompt_version=hybrid_prompt_version,
             )
             return planner, "HYBRID_SYMBOLIC_ONLY", "N/A", cfg.weights_hash()
 
@@ -361,6 +389,25 @@ class BenchmarkRunner:
         custom_provider: Any = None,
     ) -> BenchmarkEpisodeResult:
         """Run a single episode under strict Fog-of-War and record the result."""
+        spec_protocol = experiment_spec.get("protocol_version")
+        if spec_protocol is not None and spec_protocol != self.protocol_version:
+            raise BenchmarkAuthorizationError("Experiment protocol identity mismatch")
+        if self.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+            # Fail before file reads, simulator initialization or provider dispatch.
+            allowed_paths = {(DEV_SCENARIOS_DIR / name).resolve() for name in DEV_SCENARIOS.values()}
+            if Path(scenario_file_path).resolve() not in allowed_paths:
+                raise BenchmarkAuthorizationError("V2_PROTOCOL_NOT_SEALED: Only canonical S1-S4 development files are allowed.")
+            exp_id_value = experiment_spec.get("experiment_id")
+            if spec_protocol != self.protocol_version or not isinstance(exp_id_value, str) or not re.fullmatch(r"DEV_V2_[A-Za-z0-9_-]+", exp_id_value):
+                raise BenchmarkAuthorizationError("V2 development result requires explicit V2 protocol and DEV_V2_ identity")
+            scenario_id_value = experiment_spec.get("scenario_id")
+            matching_keys = {
+                key for key, name in DEV_SCENARIOS.items()
+                if (DEV_SCENARIOS_DIR / name).resolve() == Path(scenario_file_path).resolve()
+            }
+            allowed_ids = matching_keys | {f"SCN-DEV-{key}" for key in matching_keys}
+            if not isinstance(scenario_id_value, str) or scenario_id_value not in allowed_ids:
+                raise BenchmarkAuthorizationError("V2 development scenario identity does not match canonical file")
         t_start_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         exp_id = str(experiment_spec["experiment_id"])
@@ -395,6 +442,10 @@ class BenchmarkRunner:
             planner_id=planner_id,
             provider=custom_provider or self.provider,
         )
+
+        episode_provider = getattr(planner, "_provider", None) or getattr(planner, "provider", None)
+        request_history_start = len(getattr(episode_provider, "request_history", []))
+        call_history_start = len(getattr(episode_provider, "call_history", []))
 
         # 4. Execute using standard PlannerEpisodeRunner
         runner = PlannerEpisodeRunner(env=env, planner=planner)
@@ -528,9 +579,17 @@ class BenchmarkRunner:
         p_metrics = getattr(planner, "metrics", {})
         total_retries = max(total_retries, p_metrics.get("retries", 0))
 
+        prompt_provenance = None
+        if self.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+            prompt_provenance = self._prompt_provenance(
+                planner_id, p_hash, episode_provider, request_history_start, call_history_start,
+            )
+            if planner_id.startswith("HYBRID"):
+                p_ver += ":" + HYBRID_PLANNER_PROMPT_V2
+
         result = BenchmarkEpisodeResult(
             experiment_id=exp_id,
-            protocol_version=FROZEN_PROTOCOL_ID,
+            protocol_version=self.protocol_version,
             source_commit=self._source_snapshot.source_commit,
             source_tree_digest=self._source_snapshot.source_tree_digest,
             scenario_id=scenario_id,
@@ -566,11 +625,35 @@ class BenchmarkRunner:
             output_tokens=total_output_tokens,
             planning_latencies_ms=tuple(latencies),
             error_details=error_details,
+            prompt_provenance=prompt_provenance,
         )
 
         # Idempotent persistence to results directory
         self.save_episode_result(result)
         return result
+
+    def _prompt_provenance(
+        self, planner_id: str, system_prompt_hash: str, provider: Any,
+        request_start: int, call_start: int,
+    ) -> dict[str, Any]:
+        is_hybrid = planner_id.startswith("HYBRID")
+        uses_prompt = planner_id != "RULE" and planner_id != "HYBRID_SYMBOLIC_ONLY"
+        requests = [dict(entry) for entry in getattr(provider, "request_history", [])[request_start:]]
+        if not hasattr(provider, "request_history"):
+            # Scripted providers retain prompt text but have no adapter wire body.
+            requests = [
+                {"effective_prompt_sha256": hashlib.sha256(entry.encode("utf-8")).hexdigest(),
+                 "effective_request_sha256": None}
+                for entry in getattr(provider, "call_history", [])[call_start:] if isinstance(entry, str)
+            ]
+        return {
+            "prompt_version": (HYBRID_PLANNER_PROMPT_V2 if is_hybrid else LLM_ATTACK_PLANNER_PROMPT_V1) if uses_prompt else "N/A",
+            "serializer_version": (LLM_CONTEXT_SERIALIZER_V2 if is_hybrid else LLM_CONTEXT_SERIALIZER_VERSION) if uses_prompt else "N/A",
+            "output_schema_version": (HYBRID_OUTPUT_SCHEMA_V2 if is_hybrid else LLM_OUTPUT_SCHEMA_VERSION) if uses_prompt else "N/A",
+            "system_prompt_sha256": system_prompt_hash,
+            "requests": requests,
+            "wire_request_hashes_available": hasattr(provider, "request_history"),
+        }
 
     def save_episode_result(
         self,
@@ -613,6 +696,8 @@ class BenchmarkRunner:
                     "canonical_action_sequence",
                     "total_operational_noise",
                 )
+                if result.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+                    core_fields += ("prompt_provenance",)
                 is_consistent = all(existing.get(k) == payload.get(k) for k in core_fields)
                 if is_consistent:
                     return out_file
@@ -646,6 +731,8 @@ class BenchmarkRunner:
         6. Simulator-only execution is strictly enforced (is_simulator_only == True).
         7. Held-out scenario manifest hash matches expected bytes.
         """
+        if self.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+            raise BenchmarkAuthorizationError("V2_PROTOCOL_NOT_SEALED: Held-out execution is forbidden for proposed V2.")
         if not authorize_rt07b:
             raise BenchmarkAuthorizationError(
                 "RT-07B comparative execution on held-out scenarios (H01-H12) is BLOCKED. "
@@ -709,7 +796,8 @@ class BenchmarkRunner:
         scn_sha = compute_file_sha256(scn_path)
 
         exp_spec = {
-            "experiment_id": f"DEV_DRY_RUN_{planner_id}_{scenario_key}_{scn_sha[:8]}",
+            "experiment_id": f"DEV_V2_{planner_id}_{scenario_key}_{scn_sha[:8]}" if self.protocol_version == PROPOSED_PROTOCOL_ID_V2 else f"DEV_DRY_RUN_{planner_id}_{scenario_key}_{scn_sha[:8]}",
+            "protocol_version": self.protocol_version,
             "planner_id": planner_id,
             "scenario_id": f"SCN-DEV-{scenario_key}",
             "replicate_id": "DEV_R01",
@@ -727,6 +815,7 @@ class BenchmarkRunner:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reproducible Benchmark Runner & Preflight (RT-07A/RT-07A1)")
+    parser.add_argument("--protocol-version", choices=(FROZEN_PROTOCOL_ID, PROPOSED_PROTOCOL_ID_V2), default=FROZEN_PROTOCOL_ID)
     parser.add_argument("--validate-only", action="store_true", help="Run preflight validation and exit")
     parser.add_argument("--dry-run", action="store_true", help="Run development validation on S1-S4 only")
     parser.add_argument("--scenario", default="S1", help="Development scenario key for dry-run (S1..S4)")
@@ -750,6 +839,7 @@ def main() -> int:
         )
 
     runner = BenchmarkRunner(
+        protocol_version=args.protocol_version,
         provider_config=cfg,
         require_real_provider=args.require_real_provider,
     )

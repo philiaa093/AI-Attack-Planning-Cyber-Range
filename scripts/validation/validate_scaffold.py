@@ -8,6 +8,7 @@ import math
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -183,26 +184,64 @@ def _metadata_origin(path: Path) -> str:
 def _session_errors(data) -> list[str]:
     fields = {"session_id", "started_at_utc", "status", "backend_pid", "frontend_pid",
               "backend_url", "frontend_url", "gateway_url", "project_root"}
-    if not isinstance(data, dict) or set(data) != fields:
+    birth_fields = {"backend_started_at_utc", "frontend_started_at_utc"}
+    if not isinstance(data, dict) or set(data) not in (fields, fields | birth_fields):
         return ["invalid session fields"]
+    # ponytail: legacy receipts remain readable metadata; only the launcher/stopper can verify ownership.
+    legacy = set(data) == fields
     errors = []
-    if data["status"] not in ("INITIALIZING", "READY", "DEGRADED"):
+    statuses = ("INITIALIZING", "READY", "DEGRADED") if legacy else ("INITIALIZING", "READY", "DEGRADED", "FAILED")
+    if data["status"] not in statuses:
         errors.append("invalid session lifecycle status")
     if not isinstance(data["session_id"], str) or not re.fullmatch(r"DEMO-SES-[0-9a-f]{8}", data["session_id"]):
         errors.append("invalid session identity")
-    for key in ("backend_pid", "frontend_pid"):
-        if type(data[key]) is not int or not 0 < data[key] <= 2**32 - 1:
+    for role in ("backend", "frontend"):
+        key = f"{role}_pid"
+        pid = data[key]
+        nullable = not legacy and data["status"] in ("INITIALIZING", "FAILED")
+        if not (nullable and pid is None) and (type(pid) is not int or not 0 < pid <= 2**31 - 1):
             errors.append(f"invalid {key}")
+        if not legacy:
+            birth_key = f"{role}_started_at_utc"
+            birth = data[birth_key]
+            if pid is None:
+                if birth is not None:
+                    errors.append(f"{birth_key} requires a PID")
+            elif birth is None and data["status"] == "FAILED":
+                pass  # A failed process inspection preserves its PID without claiming a known birth.
+            else:
+                errors.extend(_session_timestamp_errors(birth, birth_key))
+    if data["backend_pid"] is not None and data["backend_pid"] == data["frontend_pid"]:
+        errors.append("session process PIDs must differ")
+    ports = {}
     for key in ("backend_url", "frontend_url", "gateway_url"):
         match = re.fullmatch(r"http://127\.0\.0\.1:([1-9][0-9]{0,4})", data[key]) if isinstance(data[key], str) else None
         if not match or int(match[1]) > 65535:
             errors.append(f"invalid loopback {key}")
-    if not isinstance(data["project_root"], str) or Path(data["project_root"]) != ROOT:
+        else:
+            ports[key] = int(match[1])
+    if "backend_url" in ports and ports["backend_url"] == ports.get("frontend_url"):
+        errors.append("session backend and frontend ports must differ")
+    root = data["project_root"]
+    if (not isinstance(root, str) or not Path(root).is_absolute()
+            or os.path.normcase(os.path.normpath(root)) != os.path.normcase(os.path.normpath(str(ROOT)))):
         errors.append("session project_root mismatch")
-    if not isinstance(data["started_at_utc"], str):
+    if not legacy:
+        errors.extend(_session_timestamp_errors(data["started_at_utc"], "started_at_utc"))
+    elif not isinstance(data["started_at_utc"], str):
         errors.append("invalid session UTC timestamp")
     else:
         errors.extend(_format_errors(data["started_at_utc"], {"format": "date-time"}, "started_at_utc"))
+    return errors
+
+
+def _session_timestamp_errors(value, key) -> list[str]:
+    if (not isinstance(value, str) or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|\+00:00)", value)):
+        return [f"invalid {key} UTC timestamp"]
+    errors = _format_errors(value, {"format": "date-time"}, key)
+    if not errors and datetime.fromisoformat(value.replace("Z", "+00:00")) > datetime.now(timezone.utc):
+        errors.append(f"{key}: timestamp is in the future")
     return errors
 
 

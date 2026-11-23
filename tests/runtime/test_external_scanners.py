@@ -1,7 +1,9 @@
 """Scanner isolation and integration checks; real Docker scans use only a local fixture."""
 import json
+import io
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import tempfile
 import threading
@@ -134,6 +136,51 @@ class ExternalScannerTests(unittest.TestCase):
         self.assertEqual(request.headers, {})
         self.assertNotIn("Set-Cookie", result["headers"])
 
+    def test_refusals_record_only_fixed_diagnostics_and_keep_limit(self):
+        requests = [("http://outside.invalid/products", "AUTHORITY"),
+                    ("http://lab-ecommerce/unobserved", "UNOBSERVED_PATH"),
+                    ("http://lab-ecommerce/products?unknown=private-value", "UNOBSERVED_QUERY_KEY")]
+        with patch.object(self.gate, "dispatch") as dispatch:
+            for url, expected in requests:
+                self.assertEqual(self.relay.dispatch({"url": url, "method": "GET"})["status"], 403)
+            self.relay.refusals = 31
+            with self.assertRaisesRegex(RuntimeError, "SCANNER_REFUSAL_LIMIT"):
+                self.relay.dispatch({"url": requests[-1][0], "method": "GET"})
+            dispatch.assert_not_called()
+        artifacts = [json.loads(f.read_text()) for f in (self.root / "evidence").glob("scanner_refusal-*.json")]
+        self.assertEqual({d["scope_violation"] for d in artifacts}, {expected for _, expected in requests})
+        self.assertTrue(all(len(d["request_sha256"]) == 64 for d in artifacts))
+        self.assertNotIn("private-value", json.dumps(artifacts))
+
+    def test_zap_worker_uses_query_insertion_points_and_observed_query_seeds_only(self):
+        worker = runpy.run_path(str(Path(__file__).resolve().parents[2] / "tools/scanners/zap_worker.py"))
+        urls = ["http://lab-ecommerce/products", "http://lab-ecommerce/products?q="]
+        calls = []
+        def respond(url, **kwargs):
+            path = urllib.parse.urlsplit(url).path
+            params = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query, keep_blank_values=True)
+            calls.append((path, params))
+            data = ({"version": "fixture"} if path.endswith("/version/") else
+                    {"urls": urls} if path.endswith("/urls/") else
+                    {"scan": "1"} if path.endswith("/scan/") else
+                    {"status": "100"} if path.endswith("/status/") else
+                    {"recordsToScan": "0"} if path.endswith("/recordsToScan/") else {})
+            return io.StringIO(json.dumps(data))
+        opener = Mock()
+        opener.open.side_effect = respond
+        with patch("urllib.request.build_opener", return_value=opener), \
+             patch("subprocess.Popen") as launch, \
+             patch("sys.stdin", io.StringIO(json.dumps({"active": True, "urls": urls}))), \
+             patch("sys.stdout", io.StringIO()):
+            launch.return_value.poll.return_value = None
+            worker["main"]()
+        self.assertIn(("/JSON/ascan/action/setOptionTargetParamsInjectable/", {"Integer": ["1"]}), calls)
+        self.assertIn(("/JSON/ascan/action/setOptionTargetParamsEnabledRPC/", {"Integer": ["0"]}), calls)
+        scans = [params for path, params in calls if path == "/JSON/ascan/action/scan/"]
+        self.assertEqual([params["url"] for params in scans], [[urls[1]]])
+        self.assertTrue(all(params["method"] == ["GET"] and params["recurse"] == ["false"] for params in scans))
+        self.assertEqual(len([p for p, _ in calls if p.endswith("/accessUrl/")]), len(urls))
+
     def test_revocation_budget_stop_and_missing_approval(self):
         changes = [lambda: setattr(self, "cancelled", True), lambda: self.approval.revoke(),
                    lambda: self.gate.revoke_target("lab-ecommerce"), lambda: self.gate.kill_switch.activate(),
@@ -184,6 +231,67 @@ class ExternalScannerTests(unittest.TestCase):
             self.assertEqual(result.classification, "INCONCLUSIVE")
             self.assertEqual(executor.results[0]["coverage"], "INCOMPLETE")
             self.assertTrue(result.result_evidence_id)
+
+    def test_zap_local_failure_does_not_skip_selected_nuclei_or_repeat_batch(self):
+        for reason in ("SCANNER_REFUSAL_LIMIT", "SCANNER_TIMEOUT", "SCANNER_PROCESS_FAILED"):
+            executor = ExternalScannerExecutor(["zap-active", "nuclei"])
+            def scan(tool, *args):
+                if tool == "zap-active":
+                    raise RuntimeError(reason)
+                self.gate.network_dispatch_count += 1
+                return b""
+            with self.subTest(reason=reason), \
+                 patch("runtime.lab.external_scanners.preflight", return_value={}), \
+                 patch("runtime.lab.external_scanners.isolated_scan", side_effect=scan) as invoke:
+                result = self.execute(executor)
+            self.assertEqual([c.args[0] for c in invoke.call_args_list], ["zap-active", "nuclei"])
+            self.assertEqual([r["status"] for r in executor.results], ["ERROR", "COMPLETED"])
+            self.assertEqual(result.outcome, "FAILURE")
+            self.assertEqual(result.classification, "INCONCLUSIVE")
+            self.assertEqual({f["subject"] for f in result.new_facts},
+                             {"ACTION-SCAN-002:zap-active", "ACTION-SCAN-002:nuclei"})
+            with self.assertRaisesRegex(ValueError, "SCANNER_BATCH_ALREADY_EXECUTED"):
+                self.execute(executor)
+
+    def test_global_failure_and_evidence_failure_do_not_continue_batch(self):
+        for reason in ("SCANNER_CANCELLED", "SCANNER_BUDGET_EXHAUSTED", "SCANNER_TARGET_REVOKED",
+                       "SCANNER_ACTION_REVOKED", "SCANNER_APPROVAL_INVALID", "SCANNER_CLEANUP_FAILED:fixture"):
+            with self.subTest(reason=reason), \
+                 patch("runtime.lab.external_scanners.preflight", return_value={}), \
+                 patch("runtime.lab.external_scanners.isolated_scan", side_effect=RuntimeError(reason)) as invoke:
+                executor = ExternalScannerExecutor(["zap-active", "nuclei"])
+                self.assertEqual(self.execute(executor).outcome, "FAILURE")
+                self.assertEqual(invoke.call_count, 1)
+                self.assertEqual(len(executor.results), 1)
+        with patch("runtime.lab.external_scanners.preflight", return_value={}), \
+             patch("runtime.lab.external_scanners.isolated_scan", side_effect=EvidenceFailure("fixture")) as invoke:
+            with self.assertRaises(EvidenceFailure):
+                self.execute(ExternalScannerExecutor(["zap-active", "nuclei"]))
+            self.assertEqual(invoke.call_count, 1)
+
+    def test_next_scanner_rechecks_approval_after_local_failure(self):
+        def scan(*args):
+            self.approval.revoke()
+            raise RuntimeError("SCANNER_REFUSAL_LIMIT")
+        with patch("runtime.lab.external_scanners.preflight", return_value={}), \
+             patch("runtime.lab.external_scanners.isolated_scan", side_effect=scan) as invoke:
+            executor = ExternalScannerExecutor(["zap-active", "nuclei"])
+            self.assertEqual(self.execute(executor).outcome, "FAILURE")
+        self.assertEqual(invoke.call_count, 1)
+        self.assertEqual(executor.results[-1]["reason"], "SCANNER_APPROVAL_INVALID")
+
+    def test_cleanup_failure_is_terminal_even_after_local_scanner_error(self):
+        for error in (RuntimeError("SCANNER_REFUSAL_LIMIT"), EvidenceFailure("fixture")):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(self.relay, "check", side_effect=error), \
+                 patch("runtime.lab.external_scanners.subprocess.run",
+                       return_value=SimpleNamespace(returncode=1, stderr=b"cleanup failed")):
+                expected = EvidenceFailure if isinstance(error, EvidenceFailure) else RuntimeError
+                message = "fixture" if isinstance(error, EvidenceFailure) else "SCANNER_CLEANUP_FAILED"
+                with self.assertRaisesRegex(expected, message):
+                    isolated_scan("zap-active", self.relay,
+                                  {"bridge_image": {"id": "fixture"}, "zap_image": {"id": "fixture"}},
+                                  {"timeout_seconds": 1})
 
     def test_report_provenance_and_candidates_not_confirmed(self):
         raw = json.dumps({"template-id": "lab-sql-error", "type": "http", "matcher-status": True,
@@ -293,8 +401,10 @@ class ExternalScannerTests(unittest.TestCase):
                         '<option value="3">Three</option></select></form>')
             self.inventory.items["/products"].forms = [asdict(form) for form in parser.forms]
             tool = os.environ.get("SCANNER_TEST_TOOL", "nuclei")
-            result = self.execute(ExternalScannerExecutor([tool]))
+            selected = ["zap-active", "nuclei"] if tool == "batch" else [tool]
+            result = self.execute(ExternalScannerExecutor(selected))
             self.assertEqual(result.outcome, "SUCCESS", result.details)
+            self.assertEqual([r["tool"] for r in result.details["scanners"]], selected)
             self.assertGreater(result.network_dispatch_count, 0)
             self.assertTrue(any(urllib.parse.parse_qs(urllib.parse.urlsplit(url).query,
                                 keep_blank_values=True) == {"category": ["2"], "q": [""]} for url in received))

@@ -33,6 +33,9 @@ from actions.catalog.action_registry import (
 )
 from evaluation.experiments.source_snapshot import (
     FROZEN_PROTOCOL_ID,
+    PROPOSED_PROTOCOL_ID_V2,
+    PROTOCOL_AMENDMENT_V2_PATH,
+    validate_protocol_version,
     HYBRID_FROZEN_WEIGHTS_HASH,
     HYBRID_PROMPT_HASH_V1,
     HYBRID_V1_WEIGHTS_HASH,
@@ -108,9 +111,47 @@ class PreflightReport:
 class BenchmarkPreflightChecker:
     """Performs full preflight verification before benchmark execution."""
 
-    def __init__(self, repo_root: Path = REPO_ROOT) -> None:
+    def __init__(
+        self, repo_root: Path = REPO_ROOT, *, protocol_version: str = FROZEN_PROTOCOL_ID,
+    ) -> None:
+        self.protocol_version = validate_protocol_version(protocol_version)
         self.repo_root = repo_root
         self.loader = ScenarioLoader()
+
+    def verify_v2_amendment(self) -> list[PreflightCheckItem]:
+        """Check inherited byte pins; V2 remains a proposal regardless of file contents."""
+        items = [PreflightCheckItem(
+            code="V2_PROTOCOL_NOT_SEALED", name="V2 Amendment Authorization",
+            passed=False, details="V2_PROTOCOL_NOT_SEALED: V2 is development-only; RT-07B is blocked.",
+            is_blocker=True,
+        )]
+        try:
+            path = self.repo_root / PROTOCOL_AMENDMENT_V2_PATH.relative_to(REPO_ROOT)
+            amendment = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(amendment, dict) or amendment.get("protocol_version") != PROPOSED_PROTOCOL_ID_V2:
+                raise ValueError("V2 protocol identity mismatch")
+            expected_paths = {
+                "evaluation/experiments/protocol_freeze.json",
+                "evaluation/experiments/benchmark_matrix.json",
+                "evaluation/experiments/seed_manifest.json",
+                "evaluation/datasets/held_out/manifest.json",
+            }
+            pins = amendment.get("pinned_v1_files")
+            if not isinstance(pins, dict) or set(pins) != expected_paths:
+                raise ValueError("Missing or unexpected V1 byte pins")
+            for rel_path in expected_paths:
+                if compute_file_sha256(self.repo_root / rel_path) != pins[rel_path]:
+                    raise ValueError(f"V1 byte pin mismatch: {rel_path}")
+            items.append(PreflightCheckItem(
+                code="CHK-V2-PINS", name="V2 Inherited V1 Integrity", passed=True,
+                details="V1 freeze, matrix, seed and held-out manifest byte pins match.", is_blocker=False,
+            ))
+        except (OSError, ValueError, TypeError) as exc:
+            items.append(PreflightCheckItem(
+                code="CHK-V2-PINS", name="V2 Inherited V1 Integrity", passed=False,
+                details=f"V2 amendment integrity failure: {exc}", is_blocker=True,
+            ))
+        return items
 
     def verify_protocol_seal(self) -> PreflightCheckItem:
         """Verify protocol_freeze.json is SEALED and unaltered."""
@@ -410,7 +451,7 @@ class BenchmarkPreflightChecker:
 
     def verify_source_provenance(self) -> tuple[PreflightCheckItem, SourceSnapshotManifest]:
         """Verify scientific source snapshot and provenance status."""
-        snapshot = build_source_snapshot(self.repo_root)
+        snapshot = build_source_snapshot(self.repo_root, protocol_version=self.protocol_version)
         if snapshot.blockers:
             item = PreflightCheckItem(
                 code="CHK-PROV-001",
@@ -624,6 +665,12 @@ class BenchmarkPreflightChecker:
         checks: list[PreflightCheckItem] = []
         blockers: list[str] = []
 
+        if self.protocol_version == PROPOSED_PROTOCOL_ID_V2:
+            for item in self.verify_v2_amendment():
+                checks.append(item)
+                if item.is_blocker and not item.passed:
+                    blockers.append(item.details)
+
         # 1. Protocol Seal
         c_proto = self.verify_protocol_seal()
         checks.append(c_proto)
@@ -697,7 +744,7 @@ class BenchmarkPreflightChecker:
 
         return PreflightReport(
             timestamp_utc=timestamp_utc,
-            protocol_version=FROZEN_PROTOCOL_ID,
+            protocol_version=self.protocol_version,
             all_passed=all_passed,
             has_blockers=has_blockers,
             benchmark_readiness=readiness,
@@ -709,9 +756,13 @@ class BenchmarkPreflightChecker:
 
 
 if __name__ == "__main__":
-    require_real = "--require-real-provider" in sys.argv
-    checker = BenchmarkPreflightChecker()
-    report = checker.run_preflight(require_real_provider=require_real)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--protocol-version", choices=(FROZEN_PROTOCOL_ID, PROPOSED_PROTOCOL_ID_V2), default=FROZEN_PROTOCOL_ID)
+    parser.add_argument("--require-real-provider", action="store_true")
+    args = parser.parse_args()
+    checker = BenchmarkPreflightChecker(protocol_version=args.protocol_version)
+    report = checker.run_preflight(require_real_provider=args.require_real_provider)
 
     print(json.dumps(report.to_dict(), indent=2))
     if report.has_blockers:

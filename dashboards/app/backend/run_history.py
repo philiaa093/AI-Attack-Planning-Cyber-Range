@@ -167,6 +167,8 @@ class RunIndex:
                 state = "BLOCKED"
             elif stop in ("STOP_REQUESTED", "MANUAL_STOP"):
                 state = "STOPPED"
+            elif stop and stop.startswith("provider_unavailable_halt"):
+                state = "FAILED"
             findings = rep_data.get("findings")
             return RunHistoryItem(
                 run_id=run_id, created_at_utc=created, started_at_utc=start,

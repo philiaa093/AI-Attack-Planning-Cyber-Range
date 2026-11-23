@@ -1,0 +1,70 @@
+{
+  "smoke_run_id": "smoke_s1_1760880588",
+  "timestamp_utc": "2026-10-19T13:29:48.440217+00:00",
+  "authorization": "USER_AUTHORIZATION_A_1000_TOKENS",
+  "global_token_ceiling": 1000,
+  "pre_dispatch_guard_active": true,
+  "provider_configuration": {
+    "provider_type": "openai-compatible",
+    "model_id": "ag/gemini-3.8-flash",
+    "sanitized_endpoint": "http://localhost:20128/v1",
+    "is_local_endpoint": true,
+    "requires_api_key": false,
+    "api_key_redacted": "[REDACTED]",
+    "configuration_source": "PERSISTED_PROFILE"
+  },
+  "inference_parameters": {
+    "version": "CONTROLLED_INFERENCE_CONFIG_V1",
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_output_tokens": 512,
+    "timeout_seconds": 30.0,
+    "max_retries": 2,
+    "backoff_factor": 1.5
+  },
+  "scenario_tested": {
+    "scenario_key": "S1",
+    "scenario_name": "S1 Straight (Development Fixture)",
+    "file": "runtime/simulation/fixtures/scenarios/scenario_s1_straight.json",
+    "is_held_out": false
+  },
+  "requests_executed": [
+    {
+      "request_index": 1,
+      "planner": "LLMPlanner (Pure LLM)",
+      "step": 0,
+      "prompt_tokens_client_measured": 236,
+      "worst_case_reservation": 748,
+      "pre_dispatch_check_passed": true,
+      "actual_total_tokens_metered_by_provider": 3861,
+      "http_attempts": 1,
+      "retries": 0,
+      "http_status": 200,
+      "server_side_overhead_detected": true,
+      "server_side_unmeasured_tokens": 3625,
+      "hidden_state_leakage": false
+    }
+  ],
+  "requests_skipped_due_to_budget": [
+    {
+      "request_index": 2,
+      "planner": "HybridPlanner",
+      "refusal_reason": "PRE_DISPATCH_HALTED: Prior request metered 3,861 tokens, exceeding the global 1,000-token ceiling. Zero further requests authorized."
+    }
+  ],
+  "token_accounting_summary": {
+    "global_limit": 1000,
+    "client_estimated_prompt_tokens": 236,
+    "provider_metered_total_tokens": 3861,
+    "total_tokens_consumed": 3861,
+    "limit_breached": true,
+    "breach_amount": 2861,
+    "root_cause": "The local loopback proxy (http://localhost:20128/v1 for ag/gemini-3.8-flash) injects ~3,600 server-side framing/agent/system tokens that are opaque and unmeasurable to client-side tokenizers before dispatch. Consequently, client-side pre-dispatch token reservation cannot guarantee the 1,000-token ceiling on this provider."
+  },
+  "error_classification": "SMOKE_TOKEN_BUDGET_ENFORCEMENT_UNAVAILABLE",
+  "smoke_status": "BLOCKED_SMOKE_TOKEN_ENFORCEMENT",
+  "held_out_protection": {
+    "h01_to_h12_accessed": false,
+    "held_out_contamination": false
+  }
+}

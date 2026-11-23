@@ -108,6 +108,17 @@ class HistoryTruthfulnessTests(unittest.TestCase):
         item = self.index.get_run(self.run.name)
         self.assertEqual(item.planner_verification, "LLM_PROVIDER_RECORDED")
 
+    def test_old_provider_halt_is_failed_without_rewriting_report(self):
+        self.report(state="COMPLETED", pipeline_control_completed=True,
+                    requested_planner_mode="LLM", actual_planner_mode="NONE",
+                    stop_reason="provider_unavailable_halt:FALLBACK_NOT_ALLOWED:PROVIDER_ERROR_TimeoutError")
+        path = self.run / "report.json"
+        before = path.read_bytes()
+        item = self.index.get_run(self.run.name)
+        self.assertEqual(item.state, "FAILED")
+        self.assertEqual(item.planner_actual, "NONE")
+        self.assertEqual(path.read_bytes(), before)
+
     def test_missing_timeline_does_not_fabricate_start_or_completion(self):
         self.assertEqual(self.index.get_run_timeline(self.run.name).events, [])
         self.report(traces=[dict(action_id="ACTION-PLAN-003")])

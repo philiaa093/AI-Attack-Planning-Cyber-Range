@@ -480,10 +480,17 @@ class AutonomousRunnerTests(unittest.TestCase):
             fallback_allowed=False,
             provider_callable=lambda *_: None,
         )
+        failed_events = []
+        r_fall_no.event_hook = failed_events.append
         rep_fall_no = r_fall_no.run()
         self.assertEqual(rep_fall_no.requested_planner_mode, "LLM_MOCK")
         self.assertEqual(rep_fall_no.actual_planner_mode, "NONE")
         self.assertIn("provider_unavailable_halt", rep_fall_no.stop_reason)
+        self.assertEqual(r_fall_no.lifecycle_state, "FAILED")
+        self.assertNotEqual(rep_fall_no.provider, "rule_engine")
+        self.assertIn("RUN_FAILED", [e["type"] for e in failed_events])
+        self.assertNotIn("RUN_COMPLETED", [e["type"] for e in failed_events])
+        self.assertTrue(all(not trace.dispatched for trace in rep_fall_no.traces))
 
     # =========================================================================
     # A12: Direct transport bypass inspection

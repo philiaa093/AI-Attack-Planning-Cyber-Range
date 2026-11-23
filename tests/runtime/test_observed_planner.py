@@ -529,6 +529,110 @@ class ReplanPreflightTests(unittest.TestCase):
 
 
 class LiveProviderRequestTests(unittest.TestCase):
+    def test_provider_timeout_identifies_stage_without_retry_or_secret_echo(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        for stage in ("RESPONSE_HEADERS", "RESPONSE_BODY"):
+            with self.subTest(stage=stage), patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+                if stage == "RESPONSE_HEADERS":
+                    connection.return_value.getresponse.side_effect = TimeoutError("fixture-key")
+                else:
+                    response = connection.return_value.getresponse.return_value
+                    response.status = 200
+                    response.read.side_effect = TimeoutError("fixture-key")
+                content, error, meta = _call_real_provider("system", "user", config=config)
+                self.assertIsNone(content)
+                self.assertEqual(error, "PROVIDER_TIMEOUT")
+                self.assertEqual(meta["provider_stage"], stage)
+                self.assertEqual(meta["provider_attempts"], 1)
+                self.assertNotIn("fixture-key", repr((error, meta)))
+                connection.return_value.close.assert_called_once()
+
+    def test_malformed_or_empty_provider_response_retries_once_then_recovers(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        malformed = (b'{}', b'{"choices":[]}', b'{"choices":[{"message":{}}]}', b'[]',
+                     b'{"choices":[{"message":{"content":null}}]}', b'not json')
+        valid = b'{"choices":[{"message":{"content":"{}"}}]}'
+        for raw in malformed:
+            with self.subTest(raw=raw), patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+                response = connection.return_value.getresponse.return_value
+                response.status = 200
+                response.read.side_effect = [raw, valid]
+                content, error, meta = _call_real_provider("system", "user", config=config)
+                self.assertEqual(content, "{}")
+                self.assertIsNone(error)
+                self.assertEqual(meta["provider_attempts"], 2)
+                self.assertIn(meta["retry_reason"], ("INVALID_PROVIDER_ENVELOPE", "PROVIDER_EMPTY_CONTENT", "PROVIDER_INVALID_JSON"))
+                self.assertEqual(connection.call_count, 2)
+                self.assertEqual(connection.return_value.close.call_count, 2)
+                first, second = connection.return_value.request.call_args_list
+                self.assertEqual(first, second)
+
+    def test_persistent_malformed_response_halts_without_rule_fallback_or_target_dispatch(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        planner = ObservedStatePlanner("lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+                                       provider_config=config)
+        events = []
+        planner.event_hook = events.append
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status, response.read.return_value = 200, b'{"choices":[{"message":{}}]}'
+            result = planner.propose({"remaining_budget": {"actions": 5}, "phase": "RECON"})
+            self.assertEqual(connection.return_value.request.call_count, 2)
+        self.assertEqual(result.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(result.mode_provenance["actual_mode"], "NONE")
+        self.assertEqual(result.mode_provenance["provider"], "openai-compatible")
+        self.assertEqual(result.mode_provenance["model"], "fixture-model")
+        self.assertIn("INVALID_PROVIDER_ENVELOPE", result.mode_provenance["fallback_reason"])
+        self.assertEqual(result.mode_provenance["provider_attempts"], 2)
+        self.assertTrue(any(e["type"] == "PLANNER_REQUEST_RETRIED" for e in events))
+        self.assertNotIn("fixture-key", json.dumps(events))
+
+    def test_terminal_provider_errors_do_not_retry_or_expose_response(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        cases = [(401, b'fixture-key', "HTTP_401"),
+                 (200, b'{"error":{"message":"fixture-key"}}', "PROVIDER_ERROR_RESPONSE"),
+                 (200, b'{"choices":[{"finish_reason":"length","message":{}}]}', "PROVIDER_OUTPUT_TRUNCATED"),
+                 (200, b'{"choices":[{"finish_reason":"content_filter"}]}', "PROVIDER_REFUSED"),
+                 (200, b'{"choices":[{"message":{"refusal":"fixture-key"}}]}', "PROVIDER_REFUSED"),
+                 (200, b'{"choices":[{"message":{"tool_calls":[{}]}}]}', "PROVIDER_UNSUPPORTED_TOOL_CALL"),
+                 (200, b'{"choices":[{"message":{"content":"fixture-key"}}]}', "INVALID_PROVIDER_CONTENT"),
+                 (200, b'x' * 8193, "PROVIDER_RESPONSE_TOO_LARGE")]
+        for status, raw, expected in cases:
+            with self.subTest(expected=expected), patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+                response = connection.return_value.getresponse.return_value
+                response.status, response.read.return_value = status, raw
+                content, error, meta = _call_real_provider("system", "user", config=config)
+                self.assertIsNone(content)
+                self.assertEqual(error, expected)
+                self.assertEqual(meta["provider_attempts"], 1)
+                self.assertEqual(connection.call_count, 1)
+                self.assertNotIn("fixture-key", repr((content, error, meta)))
+
+    def test_anthropic_envelope_and_retry_share_total_timeout(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "anthropic", "fixture-key")
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
+             patch("runtime.planners.observed_planner.time.monotonic", side_effect=[0, 0, 0, 0, 1, 1, 1, 1, 1]):
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.read.side_effect = [b'{"content":[{"type":"text"}]}', b'{"content":[{"type":"text","text":"{}"}]}']
+            content, error, meta = _call_real_provider("system", "user", timeout=10, config=config)
+            self.assertEqual(content, "{}")
+            self.assertIsNone(error)
+            self.assertEqual(meta["provider_attempts"], 2)
+            self.assertEqual([c.kwargs["timeout"] for c in connection.call_args_list], [10, 9])
+
+    def test_no_retry_after_deadline_or_anthropic_refusal(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "anthropic", "fixture-key")
+        for raw, expected, times in ((b'{}', "INVALID_PROVIDER_ENVELOPE", [0, 0, 0, 10, 10]),
+                                     (b'{"stop_reason":"refusal"}', "PROVIDER_REFUSED", [0, 0, 0, 0, 0])):
+            with self.subTest(expected=expected), \
+                 patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
+                 patch("runtime.planners.observed_planner.time.monotonic", side_effect=times):
+                response = connection.return_value.getresponse.return_value
+                response.status, response.read.return_value = 200, raw
+                self.assertEqual(_call_real_provider("system", "user", timeout=10, config=config)[1], expected)
+                self.assertEqual(connection.call_count, 1)
+
     def test_non_streaming_request_for_json_provider_response(self):
         config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
         with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:

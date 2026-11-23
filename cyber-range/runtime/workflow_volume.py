@@ -1,6 +1,7 @@
 """Fixed offline operations on the isolated workflow volume; never target source."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -23,18 +24,25 @@ def digest(root):
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
 
 
+def snapshot(source, destination):
+    value = digest(source)
+    if any(destination.iterdir()):
+        raise ValueError("WORKFLOW_CLONE_NOT_EMPTY")
+    shutil.copytree(source, destination, dirs_exist_ok=True)
+    for original in (source, *source.rglob("*")):
+        info = original.stat()
+        os.chown(destination / original.relative_to(source), info.st_uid, info.st_gid,
+                 follow_symlinks=False)
+    if digest(destination) != value:
+        raise ValueError("WORKFLOW_SNAPSHOT_MISMATCH")
+    return value
+
+
 def main():
     operation = sys.argv[1]
     if operation in ("snapshot", "verify"):
         source = Path("/source")
-        value = digest(source)
-        if operation == "snapshot":
-            destination = Path("/clone")
-            if any(destination.iterdir()):
-                raise ValueError("WORKFLOW_CLONE_NOT_EMPTY")
-            shutil.copytree(source, destination, dirs_exist_ok=True)
-            if digest(destination) != value:
-                raise ValueError("WORKFLOW_SNAPSHOT_MISMATCH")
+        value = snapshot(source, Path("/clone")) if operation == "snapshot" else digest(source)
         print(json.dumps({"sha256": value}))
     elif operation == "promote":
         username = sys.argv[2]

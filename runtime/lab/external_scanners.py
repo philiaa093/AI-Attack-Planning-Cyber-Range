@@ -177,6 +177,7 @@ class ScannerRelay:
     def dispatch(self, message):
         self.check()
         reason = "SCANNER_REQUEST_OUT_OF_SCOPE"
+        violation = "REQUEST_SHAPE"
         valid = type(message) is dict and set(message) == {"url", "method"}
         url, method = (message.get("url"), message.get("method")) if valid else (None, None)
         # Parse only bounded strings. Neither headers, bodies nor arbitrary ports cross this boundary.
@@ -185,6 +186,10 @@ class ScannerRelay:
             try:
                 parsed = urllib.parse.urlsplit(url)
                 keys = {k for k, _ in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)}
+                violation = ("AUTHORITY" if parsed.scheme != "http" or parsed.netloc not in (self.target_id, self.target_id + ":80")
+                             else "UNOBSERVED_PATH" if parsed.path not in self.paths
+                             else "UNOBSERVED_QUERY_KEY" if not keys <= self.paths[parsed.path]
+                             else "URL_SHAPE")
                 valid = (parsed.scheme == "http" and parsed.netloc in (self.target_id, self.target_id + ":80") and not parsed.fragment
                          and parsed.path in self.paths and keys <= self.paths[parsed.path]
                          and not any(ord(c) < 33 or ord(c) == 127 for c in url) and "\\" not in url)
@@ -195,7 +200,7 @@ class ScannerRelay:
         if not valid:
             self.refusals += 1
             self.recorder.persist_phase_artifact("scanner_refusal", {"run_id": self.run_id,
-                "source": "SCANNER_RELAY", "reason": reason, "request_sha256": hashlib.sha256(
+                "source": "SCANNER_RELAY", "reason": reason, "scope_violation": violation, "request_sha256": hashlib.sha256(
                     json.dumps(message, sort_keys=True).encode()).hexdigest()})
             if self.refusals >= 32:
                 raise RuntimeError("SCANNER_REFUSAL_LIMIT")
@@ -367,7 +372,7 @@ def isolated_scan(tool, relay, identities, config):
                 for stream in (process.stdin, process.stdout):
                     if stream and not stream.closed:
                         stream.close()
-        if cleanup_errors and sys.exc_info()[0] is None:
+        if cleanup_errors and not isinstance(sys.exc_info()[1], EvidenceFailure):
             raise RuntimeError("SCANNER_CLEANUP_FAILED:" + ",".join(cleanup_errors))
 
 
@@ -421,6 +426,7 @@ class ExternalScannerExecutor:
                 summary["reason"] = str(exc) if str(exc).startswith("SCANNER_") else type(exc).__name__
                 summary["coverage"] = "INCOMPLETE"
                 candidates = []
+            summary["refused_requests"] = relay.refusals
             summary["seed_coverage"] = relay.seed_coverage()
             if summary.get("coverage") == "BOUNDED" and (relay.options_truncated or
                     summary["seed_coverage"]["successful_seed_count"] < len(relay.seed_urls)):
@@ -442,7 +448,8 @@ class ExternalScannerExecutor:
                 facts.append({"fact_id": "FACT-SCANNER-" + uuid.uuid4().hex, "fact_type": "ACTION_OUTCOME",
                               "subject": action + ":" + tool + ":" + family,
                               "value": "UNCONFIRMED_CANDIDATE", "confidence": 0.0})
-            if summary["status"] != "COMPLETED":
+            if summary["status"] != "COMPLETED" and summary.get("reason") not in (
+                    "SCANNER_REFUSAL_LIMIT", "SCANNER_TIMEOUT", "SCANNER_PROCESS_FAILED"):
                 break
         aggregate = recorder.persist_phase_artifact("scanner_batch", {"run_id": run_id,
             "results": self.results, "result_evidence_refs": result_ids}, derived_from=result_ids)

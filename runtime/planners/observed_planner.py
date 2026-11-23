@@ -99,6 +99,27 @@ def _call_real_provider(
     max_response_bytes: int = 8192,
     config: ProviderConfig | None = None,
 ) -> tuple[str | None, str | None, dict[str, Any]]:
+    deadline = time.monotonic() + timeout
+    retry_reason = None
+    for attempt in range(2):
+        content, error, meta = _request_real_provider(
+            system_prompt, user_prompt, max(0.1, deadline - time.monotonic()), max_response_bytes, config)
+        meta["provider_attempts"] = attempt + 1
+        if retry_reason:
+            meta["retry_reason"] = retry_reason
+        if (attempt or time.monotonic() >= deadline or
+                error not in ("INVALID_PROVIDER_ENVELOPE", "PROVIDER_INVALID_JSON", "PROVIDER_EMPTY_CONTENT")):
+            return content, error, meta
+        retry_reason = error
+
+
+def _request_real_provider(
+    system_prompt: str,
+    user_prompt: str,
+    timeout: float,
+    max_response_bytes: int,
+    config: ProviderConfig | None,
+) -> tuple[str | None, str | None, dict[str, Any]]:
     """Use a private profile snapshot, or the legacy environment configuration."""
     if config is None:
         _load_env_if_present()
@@ -135,6 +156,7 @@ def _call_real_provider(
 
     t0 = time.monotonic()
     conn = None
+    stage = "CONNECT"
     try:
         conn = http.client.HTTPSConnection(host, port, timeout=timeout) if parsed.scheme == "https" else http.client.HTTPConnection(host, port, timeout=timeout)
         headers = {
@@ -148,10 +170,12 @@ def _call_real_provider(
         elif api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         conn.request("POST", path, body=encoded, headers=headers)
+        stage = "RESPONSE_HEADERS"
         res = conn.getresponse()
-        elapsed_ms = (time.monotonic() - t0) * 1000
 
+        stage = "RESPONSE_BODY"
         raw = res.read(max_response_bytes + 1)
+        elapsed_ms = (time.monotonic() - t0) * 1000
         if len(raw) > max_response_bytes:
             return None, "PROVIDER_RESPONSE_TOO_LARGE", {}
 
@@ -159,8 +183,37 @@ def _call_real_provider(
             return None, f"HTTP_{res.status}", {"status": res.status, "latency_ms": elapsed_ms}
 
         data = json.loads(raw.decode("utf-8"))
-        content = ("".join(block["text"] for block in data["content"] if block["type"] == "text")
-                   if protocol == "anthropic" else data["choices"][0]["message"]["content"])
+        if not isinstance(data, dict):
+            return None, "INVALID_PROVIDER_ENVELOPE", {}
+        if "error" in data:
+            return None, "PROVIDER_ERROR_RESPONSE", {}
+        try:
+            if protocol == "anthropic":
+                if data.get("stop_reason") == "max_tokens":
+                    return None, "PROVIDER_OUTPUT_TRUNCATED", {}
+                if data.get("stop_reason") == "refusal":
+                    return None, "PROVIDER_REFUSED", {}
+                if not isinstance(data["content"], list):
+                    return None, "INVALID_PROVIDER_ENVELOPE", {}
+                content = "".join(block["text"] for block in data["content"] if block["type"] == "text")
+            else:
+                if not isinstance(data["choices"], list):
+                    return None, "INVALID_PROVIDER_ENVELOPE", {}
+                choice = data["choices"][0]
+                if choice.get("finish_reason") == "length":
+                    return None, "PROVIDER_OUTPUT_TRUNCATED", {}
+                if choice.get("finish_reason") == "content_filter":
+                    return None, "PROVIDER_REFUSED", {}
+                message = choice["message"]
+                if message.get("refusal"):
+                    return None, "PROVIDER_REFUSED", {}
+                if message.get("tool_calls") or message.get("function_call"):
+                    return None, "PROVIDER_UNSUPPORTED_TOOL_CALL", {}
+                content = message["content"]
+        except (KeyError, IndexError, TypeError, AttributeError):
+            return None, "INVALID_PROVIDER_ENVELOPE", {}
+        if content is None or isinstance(content, str) and not content.strip():
+            return None, "PROVIDER_EMPTY_CONTENT", {}
         if not isinstance(content, str) or (api_key and api_key in content):
             return None, "INVALID_PROVIDER_CONTENT", {}
         returned_model = data.get("model", model)
@@ -176,6 +229,11 @@ def _call_real_provider(
             "latency_ms": round(elapsed_ms, 1),
         }
         return content, None, metadata
+    except TimeoutError:
+        return None, "PROVIDER_TIMEOUT", {"provider_stage": stage,
+                                          "latency_ms": round((time.monotonic() - t0) * 1000, 1)}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None, "PROVIDER_INVALID_JSON", {}
     except Exception as exc:
         return None, f"PROVIDER_ERROR_{type(exc).__name__}", {}
     finally:
@@ -360,6 +418,10 @@ class ObservedStatePlanner:
             provider_text, provider_err, provider_meta = _call_real_provider(
                 SYSTEM_PROMPT, user_prompt, config=self.provider_config
             )
+            if provider_meta.get("provider_attempts", 1) > 1:
+                self._emit_event("PLANNER_REQUEST_RETRIED", {
+                    "attempts": provider_meta["provider_attempts"], "reason": provider_meta.get("retry_reason"),
+                })
 
         # Attempt to parse and validate provider output
         parsed_plan: dict[str, Any] | None = None
@@ -378,6 +440,8 @@ class ObservedStatePlanner:
         else:
             self._emit_event("PLANNER_FAILED", {
                 "error": provider_err or "UNKNOWN_PROVIDER_ERROR",
+                "provider_stage": provider_meta.get("provider_stage"),
+                "latency_ms": provider_meta.get("latency_ms"),
             })
 
         if parsed_plan:
@@ -719,8 +783,8 @@ class ObservedStatePlanner:
             "requested_mode": self.requested_mode,
             "actual_mode": actual_mode,
             "fallback_reason": fallback_reason,
-            "provider": self.configured_provider if actual_mode == "LLM" else "rule_engine",
-            "model": self.configured_model if actual_mode == "LLM" else "none",
+            "provider": self.configured_provider if actual_mode == "LLM" or origin == "provider_halt_stop" else "rule_engine",
+            "model": self.configured_model if actual_mode == "LLM" or origin == "provider_halt_stop" else "none",
             "decision_origin": origin,
             "timestamp_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }

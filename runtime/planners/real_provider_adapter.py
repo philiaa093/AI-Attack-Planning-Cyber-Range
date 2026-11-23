@@ -30,6 +30,7 @@ Fog-of-War and laboratory isolation:
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -635,6 +636,7 @@ class RealLLMProviderAdapter:
         self.budget_guard = budget_guard or ProviderBudgetGuard()
         self._http_factory = http_transport_factory
         self.call_history: list[dict[str, Any]] = []
+        self.request_history: list[dict[str, str]] = []
 
     @property
     def model_name(self) -> str:
@@ -831,6 +833,10 @@ class RealLLMProviderAdapter:
             else:
                 conn = http.client.HTTPConnection(host, port, timeout=self.config.timeout_seconds)
 
+            self.request_history.append({
+                "effective_prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                "effective_request_sha256": hashlib.sha256(encoded_body).hexdigest(),
+            })
             conn.request("POST", path, body=encoded_body, headers=headers)
             res = conn.getresponse()
             raw_bytes = res.read(65536)

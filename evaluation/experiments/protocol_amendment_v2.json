@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0.0",
+  "protocol_version": "BENCHMARK_PROTOCOL_FREEZE_V2",
+  "parent_protocol_version": "BENCHMARK_PROTOCOL_FREEZE_V1",
+  "freeze_status": "PROPOSED",
+  "status": "IMPLEMENTED",
+  "source_baseline_commit": "5ff6f914d035333dda4a4fd9c6f5bbee1d6eee80",
+  "design_basis": "Source-code defects and development-only offline tests; no held-out outcomes used.",
+  "pinned_v1_files": {
+    "evaluation/experiments/protocol_freeze.json": "acbf209bb61be020794c14f0cef660f0121730f379f3162d87601dedddb7681e",
+    "evaluation/experiments/benchmark_matrix.json": "ba2e9056f65bfc00e9e8a29f2a1725d21cdbaa554078abad9009d10251d7158e",
+    "evaluation/experiments/seed_manifest.json": "931850eb5b4455c9e0e32a212e28df1ca404150ece3087efa9edf8e214b7e566",
+    "evaluation/datasets/held_out/manifest.json": "4e2312a14fc334d06250d67e6610d24d6c4a85d667720bb57365944d3ae15ac0"
+  },
+  "matrix_compatibility": {
+    "base_matrix_id": "BENCHMARK_MATRIX_V1",
+    "planned_episode_count": 420,
+    "assignments": "Unchanged: 12 scenarios x 5 paired replicates x 7 configurations.",
+    "existing_experiment_ids": "Remain V1; never relabel existing results.",
+    "v2_held_out_execution": "BLOCKED: proposal is not a seal or execution authorization."
+  },
+  "prompt_contracts": {
+    "pure_llm": {
+      "prompt_version": "LLM_ATTACK_PLANNER_PROMPT_V1",
+      "serializer_version": "LLM_CONTEXT_SERIALIZER_V1",
+      "output_schema_version": "LLM_OUTPUT_SCHEMA_V1",
+      "system_prompt_sha256_v1": "1d35855b6167b0ce151f400c4fb2b292d3e57779689da4a0273fed8a51ac3533",
+      "system_prompt_sha256_v2": "1d35855b6167b0ce151f400c4fb2b292d3e57779689da4a0273fed8a51ac3533",
+      "effective_request_change": "NONE"
+    },
+    "hybrid": {
+      "prompt_version_v1": "HYBRID_ATTACK_PLANNER_V1",
+      "prompt_version_v2": "HYBRID_ATTACK_PLANNER_V2",
+      "serializer_version_v1": "LLM_CONTEXT_SERIALIZER_V1",
+      "serializer_version_v2": "LLM_CONTEXT_SERIALIZER_V2",
+      "output_schema_version_v1": "HYBRID_OUTPUT_SCHEMA_V1",
+      "output_schema_version_v2": "HYBRID_OUTPUT_SCHEMA_V2",
+      "system_prompt_sha256_v1": "d1280d0b3329c261344f8206fb2a9f61218b55262b0bf9d121c511d83a9e6ec1",
+      "system_prompt_sha256_v2": "d1280d0b3329c261344f8206fb2a9f61218b55262b0bf9d121c511d83a9e6ec1",
+      "footer_v1": "Select exactly one candidate from 'eligible_candidates' above and return your decision JSON.",
+      "footer_v2": "Rank candidates from 'eligible_candidates' above from best to worst and return your ranking JSON."
+    }
+  },
+  "hybrid_ranking_contract_v2": {
+    "object_required": true,
+    "required_fields": {
+      "ranked_candidate_keys": "nonempty list of unique eligible string keys",
+      "reason_code": "string",
+      "brief_justification": "string"
+    },
+    "partial_rankings_allowed": true,
+    "markdown_json_fences_allowed": true,
+    "prose_salvage_allowed": false,
+    "invalid_response": "semantic_component_valid=false; no semantic scores; explicit SYMBOLIC_ONLY fallback",
+    "single_candidate": "No provider call; SINGLE_CANDIDATE skip; semantic_component_valid=false; zero semantic contribution; no failure fallback."
+  },
+  "unchanged_controls": {
+    "provider_model": "User-selected configuration unchanged; fixture identity is not a configuration override.",
+    "inference_configuration": "CONTROLLED_INFERENCE_CONFIG_V1",
+    "weights_hash_v1": "68e55385e064cb2867d07207022b665a9660b87938318efa355488d67bc2c799",
+    "frozen_weights_hash": "0e595f7294af58a8f635376e8beedb6688cee6784479ae2eb39c21f5c7213aa8",
+    "candidate_generation": "UNCHANGED",
+    "scoring_formula": "UNCHANGED",
+    "held_out_scenario_bytes": "UNCHANGED"
+  },
+  "effective_request_fixture": {
+    "classification": "DEVELOPMENT_ONLY_SOURCE_RECONSTRUCTION_NOT_HISTORICAL_WIRE_CAPTURE",
+    "scenario": "runtime/simulation/fixtures/scenarios/scenario_s1_straight.json",
+    "seed": 1001,
+    "step_index": 0,
+    "max_steps": 10,
+    "current_phase": "RECON",
+    "remaining_budget": 10,
+    "max_budget": 10,
+    "objective_statement": "Access target crown jewels",
+    "provider_type": "openai-compatible",
+    "model": "ag/gemini-3.8-flash",
+    "api_base": "http://localhost:20128/v1",
+    "request_hash_representation": "SHA-256 of exact adapter json.dumps(payload).encode('utf-8') body, no headers or trailing newline",
+    "pure_llm": {
+      "run_id": "SMOKE_S1_LLM_001",
+      "effective_prompt_sha256_v1": "72d12d91bda5b0989f6c231b229decb21d0f4742d34f173e0840b5de5ea94059",
+      "effective_prompt_sha256_v2": "72d12d91bda5b0989f6c231b229decb21d0f4742d34f173e0840b5de5ea94059",
+      "request_body_sha256_v1": "d492a8db9c075b76147854500d5b13eb34a75bce29d225727851acb15f68bffd",
+      "request_body_sha256_v2": "d492a8db9c075b76147854500d5b13eb34a75bce29d225727851acb15f68bffd"
+    },
+    "hybrid": {
+      "run_id": "SMOKE_S1_HYBRID_001",
+      "effective_prompt_sha256_v1": "9a3428f2c8df14d2507b0faa6cfa46261b21b8e942a73e373181c62c9e8bd0a3",
+      "effective_prompt_sha256_v2": "13773c11256632e5fd41c518b692f6e1d6287879da43e0b623e7f787547e0b90",
+      "request_body_sha256_v1": "6f2e9917eab3a3c0d8696e3340f698b5c45fd102442b622828835f2785d95870",
+      "request_body_sha256_v2": "c69ca183bd82d24e90af45282ee23a299c1a247f57d9b47e11be47975c308a64"
+    }
+  }
+}

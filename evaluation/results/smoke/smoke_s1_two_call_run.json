@@ -1,0 +1,109 @@
+{
+  "smoke_run_id": "smoke_s1_independent_episodes_authorized",
+  "timestamp_utc": "2026-10-20T02:22:54Z",
+  "authorization": "USER_OPERATIONAL_LIMITS_TWO_INDEPENDENT_EPISODES",
+  "operational_limits": {
+    "max_logical_calls": 2,
+    "max_retries": 0,
+    "max_http_attempts": 2,
+    "sequential_execution": true,
+    "episodes_independent": true
+  },
+  "provider_configuration": {
+    "provider_type": "openai-compatible",
+    "model_id": "ag/gemini-3.8-flash",
+    "base_url": "http://localhost:20128/v1",
+    "adapter_protocol_version": "RT-07B0A_UNIFIED_ADAPTER_V1",
+    "inference_parameters": {
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "max_output_tokens": 512,
+      "timeout_seconds": 30.0,
+      "max_retries": 2,
+      "backoff_factor": 1.5
+    },
+    "provider_seed_supported": false,
+    "requested_seed": null,
+    "api_key_redacted": "[REDACTED]",
+    "configuration_source": "PERSISTED_PROFILE",
+    "is_local_endpoint": true,
+    "requires_api_key": false,
+    "allow_keyless": false,
+    "authoritative_input_tokens": null,
+    "is_configured": true,
+    "model_metadata": {
+      "context_window": null,
+      "parameter_count": null,
+      "weights_hash": null
+    }
+  },
+  "episodes": [
+    {
+      "episode": "A",
+      "planner": "Pure LLM",
+      "scenario": "S1 Straight",
+      "seed": 1001,
+      "step_index": 0,
+      "classification": "LIVE_SEMANTIC_SMOKE_PASS",
+      "upstream_9router_row_id": 43482,
+      "latency_ms": 15645.04,
+      "decision_valid": true,
+      "selected_candidate_key": "CAND-001",
+      "action_id": "ACTION-DISCOVERY-001",
+      "target_id": "lab-dmz-entry",
+      "simulator_step_success": true,
+      "upstream_tokens": {
+        "prompt_tokens": 1274,
+        "completion_tokens": 67,
+        "reasoning_tokens": 298,
+        "total_tokens": 1341,
+        "cost_usd": 0.005766
+      }
+    },
+    {
+      "episode": "B",
+      "planner": "Hybrid Full",
+      "scenario": "S1 Straight",
+      "seed": 1001,
+      "step_index": 0,
+      "initial_state_equivalent_to_a": true,
+      "classification": "HYBRID_SEMANTIC_SMOKE_TIMEOUT_FALLBACK_PASS",
+      "upstream_9router_row_id": 43483,
+      "client_latency_ms": 34060.44,
+      "client_timeout_enforced_sec": 30.0,
+      "decision_valid": true,
+      "semantic_valid": false,
+      "semantic_consumed": false,
+      "fallback_mode": "SYMBOLIC_ONLY",
+      "action_id": "ACTION-DISCOVERY-001",
+      "target_id": "lab-dmz-entry",
+      "action_selection_source": "EXCLUSIVE_SYMBOLIC_SCORING",
+      "simulator_step_success": true,
+      "notes": "Real model request attempted. Client timed out at frozen 30.0s boundary. Upstream 9router completed ~34s with 3,771 reasoning tokens (status ok). ProviderBudgetGuard halted retry amplification at 2 HTTP attempts. Response arrived too late for client to consume. Hybrid semantic ranking was not parsed. Selected action came exclusively from symbolic scoring.",
+      "upstream_tokens": {
+        "prompt_tokens": 1274,
+        "completion_tokens": 34,
+        "reasoning_tokens": 3771,
+        "total_tokens": 1308,
+        "cost_usd": 0.044590
+      }
+    }
+  ],
+  "accounting_summary": {
+    "logical_provider_calls": 2,
+    "http_attempts": 2,
+    "retry_attempts": 0,
+    "provider_reported_input_tokens": 2548,
+    "provider_reported_output_tokens": 101,
+    "provider_reported_total_tokens": 2649,
+    "total_reasoning_tokens": 4069,
+    "total_monetary_spend_usd": 0.050356,
+    "circuit_breaker_protection": "RETRY_AMPLIFICATION_HALTED_AT_CEILING"
+  },
+  "smoke_status": "PARTIAL_LIVE_SMOKE_SUCCESS_WITH_HYBRID_FALLBACK",
+  "hybrid_semantic_status": "HYBRID_SEMANTIC_LIVE_VERIFICATION_PENDING",
+  "held_out_protection": {
+    "h01_to_h12_accessed": false,
+    "held_out_contamination": false
+  }
+}

@@ -1429,6 +1429,11 @@ class AutonomousRunner:
         if self.gate.kill_switch.is_active() or self._stop_requested.is_set():
             self.lifecycle_state = "STOPPED"
             self._emit_event("RUN_STOPPED", payload={"stop_reason": stop_reason})
+        elif stop_reason.startswith("provider_unavailable_halt"):
+            self.lifecycle_state = "FAILED"
+            self._emit_event("RUN_FAILED", payload={"stop_reason": stop_reason,
+                "error": last_provenance.get("fallback_reason"),
+                "provider": last_provenance.get("provider"), "model": last_provenance.get("model")})
         else:
             self.lifecycle_state = "COMPLETED"
             self._emit_event(

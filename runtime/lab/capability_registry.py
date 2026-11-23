@@ -261,7 +261,7 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
       - Bounded cyber-range test vectors only; zero arbitrary SQL generation.
       - Strictly dispatches through CentralizedSafetyGate.
       - Differential analysis: compares baseline response with syntax probe vectors.
-      - Classification: NEGATIVE, SIGNAL, VERIFIED_IN_LAB, INCONCLUSIVE.
+      - Classification: NEGATIVE, SIGNAL, VERIFIED_IN_LAB, INCONCLUSIVE, REFUSED.
     """
 
     SQL_SYNTAX_ERROR_PATTERNS = [
@@ -294,8 +294,11 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
 
         responses: dict[str, DispatchResponse] = {}
         last_intent_id = None
-        last_result_id = None
+        result_ids: list[str] = []
+        initial_dispatch_count = gate.network_dispatch_count
         dispatches_made = 0
+        classification = "INCONCLUSIVE"
+        reason = "Incomplete response set during bounded differential probe"
 
         for label, vector_val in vectors:
             parsed = urllib.parse.urlsplit(resource)
@@ -313,46 +316,58 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
                 method="GET",
                 approval=approval,
             )
+            initial_artifact_count = len(recorder.artifacts)
             resp = gate.dispatch(req)
-            dispatches_made += 1
+            dispatches_made = gate.network_dispatch_count - initial_dispatch_count
 
+            # A pre-dispatch refusal has no dispatched result to confirm durably.
             if gate.halted_due_to_evidence or (
-                not resp.durable_confirmed and "EVIDENCE" in (resp.refusal_reason or "")
+                not resp.durable_confirmed and (
+                    resp.outcome != "DENIED" or "EVIDENCE" in (resp.refusal_reason or "")
+                )
             ):
                 raise EvidenceFailure(resp.refusal_reason or "Gate halted due to evidence failure")
 
             responses[label] = resp
 
-            # Track latest artifact refs
-            for art in reversed(recorder.artifacts):
+            # Each control/probe must refer to its own newly recorded evidence.
+            for art in recorder.artifacts[initial_artifact_count:]:
                 ev = art.get("evidence_id", "")
-                if not last_result_id and "result" in ev.lower():
-                    last_result_id = ev
-                elif not last_intent_id and "intent" in ev.lower():
+                if ev.startswith("EV-RESULT-"):
+                    result_ids.append(ev)
+                elif ev.startswith("EV-INTENT-"):
                     last_intent_id = ev
-                if last_intent_id and last_result_id:
+
+            if resp.outcome == "DENIED" or resp.refusal_reason:
+                classification = "REFUSED"
+                reason = "Safety Gate refused bounded SQL syntax probe: " + (resp.refusal_reason or resp.outcome)
+                break
+            if resp.outcome not in {"SUCCESS", "FAILURE"} or resp.error_message or not 100 <= resp.status_code <= 599:
+                reason = f"Incomplete {label} response during bounded SQL syntax probe"
+                break
+            if resp.truncated:
+                reason = f"Truncated {label} response during bounded SQL syntax probe"
+                break
+            if label in {"baseline", "balance"}:
+                if resp.status_code != 200 or resp.outcome != "SUCCESS" or any(
+                    p.search(resp.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS
+                ):
+                    reason = f"Invalid {label} control during bounded SQL syntax probe"
                     break
-
-        # Differential analysis
-        resp_base = responses.get("baseline")
-        resp_quote = responses.get("quote")
-        resp_balance = responses.get("balance")
-
-        if not resp_base or not resp_quote or not resp_balance:
-            classification = "INCONCLUSIVE"
-            reason = "Incomplete response set during bounded differential probe"
+            elif not (resp.status_code == 200 and resp.outcome == "SUCCESS" or 500 <= resp.status_code <= 599):
+                reason = "Invalid quote response during bounded SQL syntax probe"
+                break
         else:
-            base_has_err = any(p.search(resp_base.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS)
+            # ponytail: verifies syntax-error differentials only; impact needs a separately approved capability.
+            resp_quote = responses["quote"]
             quote_has_err = any(p.search(resp_quote.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS)
-            bal_has_err = any(p.search(resp_balance.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS)
 
-            if quote_has_err and not base_has_err and not bal_has_err:
-                # Differential syntax error confirmed and balanced recovery verified
+            if quote_has_err:
                 classification = "VERIFIED_IN_LAB"
                 reason = "Differential SQL syntax error observed on unescaped quote with recovery on balanced quote"
-            elif resp_quote.status_code >= 500 and resp_base.status_code == 200:
+            elif resp_quote.status_code >= 500:
                 classification = "SIGNAL"
-                reason = "HTTP 500 status differential observed on probe quote; syntax error signature unverified"
+                reason = "HTTP 5xx status differential observed on probe quote; syntax error signature unverified"
             else:
                 # Bounded differential probe observed no syntax errors
                 classification = "NEGATIVE"
@@ -368,9 +383,12 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
             input_ref=param,
             source_observation_refs=proposal.get("evidence_refs", []),
             verification_action="ACTION-WEB-001",
-            result_evidence_refs=[last_result_id] if last_result_id else [],
+            result_evidence_refs=result_ids,
             confidence=conf,
-            limitations=["Bounded differential probing with harmless syntax vectors only; zero arbitrary SQL execution"],
+            limitations=[
+                "Bounded differential probing with harmless syntax vectors only; zero arbitrary SQL execution",
+                "Syntax-error differential only; does not demonstrate data access or authentication bypass",
+            ],
             reason=reason,
         )
 
@@ -398,7 +416,9 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
         return CapabilityExecutionResult(
             action_id="ACTION-WEB-001",
             target_id=target_id,
-            outcome="SUCCESS",
+            outcome="DENIED" if classification == "REFUSED" else (
+                "FAILURE" if classification == "INCONCLUSIVE" else "SUCCESS"
+            ),
             classification=classification,
             findings=[finding],
             new_facts=[fact],

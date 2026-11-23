@@ -46,10 +46,13 @@ def main():
         if job["active"]:
             api("ascan", "action", "enableScanners", ids="40012,40018")
             api("ascan", "action", "setOptionThreadPerHost", Integer=1)
+            # ponytail: GET query inputs only; add other insertion points only with approved scope.
+            api("ascan", "action", "setOptionTargetParamsInjectable", Integer=1)
+            api("ascan", "action", "setOptionTargetParamsEnabledRPC", Integer=0)
         for url in job["urls"]:
             api("core", "action", "accessUrl", url=url, followRedirects="false")
         for url in job["urls"]:
-            if job["active"]:
+            if job["active"] and urllib.parse.urlsplit(url).query:
                 # ZAP inserts accessed messages into its site tree asynchronously.
                 for _ in range(50):
                     if url in api("core", "view", "urls")["urls"]:

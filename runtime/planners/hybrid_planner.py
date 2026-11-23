@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -25,6 +26,8 @@ from runtime.evaluation.usage_costs import MeteredReviewResponse, TokenUsage
 from runtime.planners.candidate_generator import compute_candidate_key, compute_candidate_signature
 from runtime.planners.llm_planner import (
     LLMProvider,
+    LLM_CONTEXT_SERIALIZER_V2,
+    LLM_SELECTION_FOOTER_V1,
     _scan_for_forbidden_llm_data,
     parse_llm_decision_json,
     serialize_llm_context,
@@ -39,6 +42,9 @@ from runtime.planners.symbolic_scorer import (
 
 HYBRID_PLANNER_PROMPT_V1 = "HYBRID_ATTACK_PLANNER_V1"
 HYBRID_OUTPUT_SCHEMA_VERSION = "HYBRID_OUTPUT_SCHEMA_V1"
+HYBRID_PLANNER_PROMPT_V2 = "HYBRID_ATTACK_PLANNER_V2"
+HYBRID_OUTPUT_SCHEMA_V2 = "HYBRID_OUTPUT_SCHEMA_V2"
+HYBRID_RANKING_FOOTER_V2 = "Rank candidates from 'eligible_candidates' above from best to worst and return your ranking JSON."
 
 HYBRID_PLANNER_SYSTEM_PROMPT = """You are an advanced AI Attack Planning Assistant operating under strict Fog-of-War rules.
 Your task is to rank the available eligible attack candidate proposals by strategic and operational priority from best to worst.
@@ -84,6 +90,63 @@ def parse_hybrid_ranking_json(text: str) -> dict[str, Any] | None:
                     return data
             except Exception:
                 pass
+    return None
+
+
+def parse_hybrid_ranking_json_v2(text: str) -> dict[str, Any] | None:
+    """Parse one JSON object, optionally fenced, without salvaging surrounding prose."""
+    if not isinstance(text, str):
+        return None
+    cleaned = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1)
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON field")
+            result[key] = value
+        return result
+
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("nonfinite JSON number")
+        return number
+
+    def reject_constant(value):
+        raise ValueError("nonfinite JSON constant")
+
+    try:
+        parsed = json.loads(cleaned, object_pairs_hook=unique_object,
+                            parse_float=finite_float, parse_constant=reject_constant)
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def validate_hybrid_ranking_v2(
+    response: dict[str, Any] | None,
+    eligible_candidates: Mapping[str, Any],
+) -> str | None:
+    """Return a static rejection reason; partial nonempty rankings are supported."""
+    if not isinstance(response, dict):
+        return "INVALID_JSON_OBJECT"
+    keys = response.get("ranked_candidate_keys")
+    if not isinstance(keys, list) or not keys:
+        return "INVALID_RANKED_CANDIDATE_KEYS"
+    if any(not isinstance(key, str) for key in keys):
+        return "INVALID_CANDIDATE_KEY_TYPE"
+    if any(key not in eligible_candidates for key in keys):
+        return "UNKNOWN_CANDIDATE_KEY"
+    if len(set(keys)) != len(keys):
+        return "DUPLICATE_CANDIDATE_KEY"
+    if not isinstance(response.get("reason_code"), str):
+        return "INVALID_REASON_CODE_TYPE"
+    if not isinstance(response.get("brief_justification"), str):
+        return "INVALID_BRIEF_JUSTIFICATION_TYPE"
     return None
 
 
@@ -216,6 +279,8 @@ class HybridPlanner(Planner):
         prompt_version: str = HYBRID_PLANNER_PROMPT_V1,
         count_tokens: Callable[[str], int] | None = None,
     ):
+        if prompt_version not in (HYBRID_PLANNER_PROMPT_V1, HYBRID_PLANNER_PROMPT_V2):
+            raise ValueError(f"Unsupported Hybrid prompt_version: {prompt_version!r}")
         self.provider = provider
         self.scoring_config = scoring_config or HybridScoringConfig.full()
         self.scorer = SymbolicScorer(self.scoring_config)
@@ -257,6 +322,13 @@ class HybridPlanner(Planner):
         """Core episode runner entry point using PlannerDecisionContext."""
         self._metrics["total_decisions"] += 1
         t_start = time.perf_counter()
+        is_v2 = self.prompt_version == HYBRID_PLANNER_PROMPT_V2
+        version_metadata = {
+            "prompt_version": self.prompt_version,
+            "output_schema_version": HYBRID_OUTPUT_SCHEMA_V2,
+            "context_serializer_version": LLM_CONTEXT_SERIALIZER_V2,
+            "system_prompt_hash": hashlib.sha256(HYBRID_PLANNER_SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+        } if is_v2 else {}
 
         # Handle empty eligible proposals
         if not context.eligible_proposals:
@@ -271,12 +343,20 @@ class HybridPlanner(Planner):
                     "scoring_version": self.scoring_config.version,
                     "reason_code": "NO_VALID_CANDIDATE",
                     "valid": True,
+                    **version_metadata,
+                    **({"semantic_component_valid": False,
+                        "semantic_contribution_used": False,
+                        "semantic_validation_error": None,
+                        "semantic_call_skipped_reason": "NO_ELIGIBLE_CANDIDATES",
+                        "semantic_fallback_mode": "NONE",
+                        "fallback_used": False} if is_v2 else {}),
                 },
             )
 
         # 1. Prepare candidate map & prompt
         prompt_text, prompt_hash, context_hash, candidate_map = serialize_llm_context(
-            context, system_prompt=HYBRID_PLANNER_SYSTEM_PROMPT
+            context, system_prompt=HYBRID_PLANNER_SYSTEM_PROMPT,
+            task_footer=HYBRID_RANKING_FOOTER_V2 if is_v2 else LLM_SELECTION_FOOTER_V1,
         )
         total_candidates = len(context.eligible_proposals)
 
@@ -290,15 +370,17 @@ class HybridPlanner(Planner):
         justification = "Decision derived from hybrid semantic-symbolic fusion"
         tokens_used: dict[str, int] = {}
         response_hash = ""
+        semantic_validation_error = None
 
         # 2. Check for single candidate short-circuit (Section 6)
         if total_candidates == 1:
             self._metrics["semantic_skipped_single_candidate"] += 1
             skipped_reason = "SINGLE_CANDIDATE"
-            semantic_valid = True
             only_key = list(candidate_map.keys())[0]
-            ranked_keys = [only_key]
-            semantic_rank_map[only_key] = (0, 1.0)
+            if not is_v2:
+                semantic_valid = True
+                ranked_keys = [only_key]
+                semantic_rank_map[only_key] = (0, 1.0)
             justification = f"Single eligible candidate {only_key}; semantic ranking short-circuited."
 
         # 3. Call LLM Provider for semantic ranking if multiple candidates
@@ -325,8 +407,29 @@ class HybridPlanner(Planner):
                 response_hash = hashlib.sha256(response_text.encode("utf-8")).hexdigest()
 
                 # Parse JSON
-                parsed_json = parse_hybrid_ranking_json(response_text)
-                if not parsed_json or not isinstance(parsed_json, dict):
+                parsed_json = (parse_hybrid_ranking_json_v2(response_text) if is_v2
+                               else parse_hybrid_ranking_json(response_text))
+                if is_v2:
+                    semantic_validation_error = validate_hybrid_ranking_v2(parsed_json, candidate_map)
+                    if semantic_validation_error:
+                        self._metrics["invalid_semantic_rankings"] += 1
+                        if semantic_validation_error == "UNKNOWN_CANDIDATE_KEY":
+                            self._metrics["unknown_candidate_keys"] += 1
+                        elif semantic_validation_error == "DUPLICATE_CANDIDATE_KEY":
+                            self._metrics["duplicate_candidate_keys"] += 1
+                        else:
+                            self._metrics["malformed_semantic_responses"] += 1
+                        fallback_mode = "SYMBOLIC_ONLY"
+                        fallback_used = True
+                        justification = f"Invalid semantic response ({semantic_validation_error}); falling back to SYMBOLIC_ONLY"
+                    else:
+                        self._metrics["valid_semantic_rankings"] += 1
+                        semantic_valid = True
+                        ranked_keys = parsed_json["ranked_candidate_keys"]
+                        reason_code = parsed_json["reason_code"]
+                        justification = parsed_json["brief_justification"]
+
+                elif not parsed_json or not isinstance(parsed_json, dict):
                     self._metrics["invalid_semantic_rankings"] += 1
                     self._metrics["malformed_semantic_responses"] += 1
                     fallback_mode = "SYMBOLIC_ONLY"
@@ -446,6 +549,10 @@ class HybridPlanner(Planner):
             "valid": True,
             "all_candidate_scores": [b.to_dict() for b in breakdowns],
         }
+        if is_v2:
+            metadata.update(version_metadata)
+            metadata["semantic_contribution_used"] = bool(semantic_rank_map) and active_scorer.config.w_semantic > 0
+            metadata["semantic_validation_error"] = semantic_validation_error
 
         # STOP action rationale adjustment if STOP won
         if winner.canonical_action_id in ("ACTION-STOP-001", "ACTION-END-001"):

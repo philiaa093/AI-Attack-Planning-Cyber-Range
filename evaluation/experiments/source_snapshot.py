@@ -34,6 +34,14 @@ if str(REPO_ROOT) not in sys.path:
 
 # Pinned Constants from Sealed Protocol V1
 FROZEN_PROTOCOL_ID = "BENCHMARK_PROTOCOL_FREEZE_V1"
+PROPOSED_PROTOCOL_ID_V2 = "BENCHMARK_PROTOCOL_FREEZE_V2"
+PROTOCOL_AMENDMENT_V2_PATH = REPO_ROOT / "evaluation/experiments/protocol_amendment_v2.json"
+
+def validate_protocol_version(protocol_version: str) -> str:
+    if protocol_version not in (FROZEN_PROTOCOL_ID, PROPOSED_PROTOCOL_ID_V2):
+        raise ValueError(f"Unsupported protocol_version: {protocol_version!r}")
+    return protocol_version
+
 FROZEN_SEAL_COMMIT = "6129ba6f8edbacfc1ceec129bb4d76eda344a518"
 
 # Canonical Frozen Prompt SHA-256 Digests (evaluated over raw UTF-8 bytes with canonical LF newlines)
@@ -190,7 +198,7 @@ def get_git_status(repo_root: Path = REPO_ROOT) -> tuple[bool, list[str], list[s
             text=True,
             check=True,
         )
-        lines = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+        lines = [line for line in res.stdout.splitlines() if line.strip()]
         is_dirty = len(lines) > 0
         tracked_modified: list[str] = []
         staged_modified: list[str] = []
@@ -201,12 +209,11 @@ def get_git_status(repo_root: Path = REPO_ROOT) -> tuple[bool, list[str], list[s
             filename = line[3:].strip()
             if status_prefix in ("??", "? "):
                 untracked.append(filename)
-            elif status_prefix[0] in ("M", "A", "D", "R", "C"):
-                staged_modified.append(filename)
-            elif status_prefix[1] in ("M", "D"):
-                tracked_modified.append(filename)
             else:
-                tracked_modified.append(filename)
+                if status_prefix[0] != " ":
+                    staged_modified.append(filename)
+                if status_prefix[1] != " ":
+                    tracked_modified.append(filename)
 
         return is_dirty, tracked_modified, staged_modified, untracked
     except Exception as exc:
@@ -252,15 +259,24 @@ class SourceSnapshotManifest:
         }
 
 
-def build_source_snapshot(repo_root: Path = REPO_ROOT) -> SourceSnapshotManifest:
+def build_source_snapshot(
+    repo_root: Path = REPO_ROOT, *, protocol_version: str = FROZEN_PROTOCOL_ID,
+) -> SourceSnapshotManifest:
     """Build deterministic source snapshot manifest over relevant benchmark files."""
+    validate_protocol_version(protocol_version)
+    relevant_files = RELEVANT_SOURCE_FILES
+    if protocol_version == PROPOSED_PROTOCOL_ID_V2:
+        relevant_files += (
+            "evaluation/experiments/protocol_amendment_v2.json",
+            "evaluation/results/result_v2.schema.json",
+        )
     source_commit = get_git_commit_head(repo_root)
     is_dirty, tracked_mod, staged_mod, untracked = get_git_status(repo_root)
 
     manifest_map: dict[str, str] = {}
     missing_files: list[str] = []
 
-    for rel_path in sorted(RELEVANT_SOURCE_FILES):
+    for rel_path in sorted(relevant_files):
         full_path = repo_root / rel_path
         if full_path.exists():
             manifest_map[rel_path] = compute_file_sha256(full_path)
@@ -284,6 +300,8 @@ def build_source_snapshot(repo_root: Path = REPO_ROOT) -> SourceSnapshotManifest
         "LLM_ATTACK_PLANNER_PROMPT_V1": LLM_PROMPT_HASH_V1,
         "HYBRID_PLANNER_PROMPT_V1": HYBRID_PROMPT_HASH_V1,
     }
+    if protocol_version == PROPOSED_PROTOCOL_ID_V2:
+        prompt_hashes["HYBRID_PLANNER_SYSTEM_PROMPT_V2"] = HYBRID_PROMPT_HASH_V1
     weights_hashes = {
         "HYBRID_SCORING_V1_FROZEN": HYBRID_FROZEN_WEIGHTS_HASH,
         "HYBRID_SCORING_V1": HYBRID_V1_WEIGHTS_HASH,
@@ -307,7 +325,7 @@ def build_source_snapshot(repo_root: Path = REPO_ROOT) -> SourceSnapshotManifest
     all_changed = set(tracked_mod) | set(staged_mod) | set(untracked)
     # Normalize paths to forward slashes for cross-platform comparison
     normalized_changed = {p.replace("\\", "/") for p in all_changed}
-    relevant_set = set(RELEVANT_SOURCE_FILES)
+    relevant_set = set(relevant_files)
     dirty_relevant = normalized_changed.intersection(relevant_set)
 
     if dirty_relevant:
@@ -330,7 +348,7 @@ def build_source_snapshot(repo_root: Path = REPO_ROOT) -> SourceSnapshotManifest
         untracked_file_hashes=untracked_hashes,
         relevant_files_manifest=manifest_map,
         source_tree_digest=source_tree_digest,
-        protocol_version=FROZEN_PROTOCOL_ID,
+        protocol_version=protocol_version,
         dataset_manifest_hash=dataset_manifest_hash,
         prompt_hashes=prompt_hashes,
         weights_hashes=weights_hashes,
