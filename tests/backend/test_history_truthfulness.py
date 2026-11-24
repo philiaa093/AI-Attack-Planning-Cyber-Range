@@ -126,6 +126,15 @@ class HistoryTruthfulnessTests(unittest.TestCase):
         self.assertEqual([e.type for e in events], ["TRACE_RECORDED"])
         self.assertEqual(events[0].timestamp_utc, "")
 
+    def test_inconclusive_stop_is_not_described_as_clean(self):
+        event = dict(event_id="EVT-1", run_id=self.run.name, type="RUN_COMPLETED",
+                     timestamp_utc="2026-11-24T00:00:00Z",
+                     payload={"stop_reason": "unresolved_inconclusive_surface"})
+        (self.run / "events.jsonl").write_text(json.dumps(event) + "\n", encoding="utf-8")
+        description = self.index.get_run_timeline(self.run.name).events[0].description
+        self.assertIn("unresolved_inconclusive_surface", description)
+        self.assertNotIn("cleanly", description)
+
     def test_configured_key_is_not_provider_verification(self):
         manager = RunManager(output_root=self.root / "readiness")
         with patch.dict("os.environ", {"OPENAI_API_KEY": "fixture-key"}), \

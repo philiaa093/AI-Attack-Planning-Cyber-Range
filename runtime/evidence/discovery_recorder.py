@@ -51,6 +51,8 @@ _EMAIL_PATTERN = re.compile(
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,7}\b"
 )
 
+BODY_SNIPPET_OMITTED = "[BODY_SNIPPET_OMITTED]"
+
 
 class EvidenceFailure(RuntimeError):
     """Raised when evidence recording fails or cannot be confirmed durable."""
@@ -73,7 +75,11 @@ def redact_secrets(obj: Any) -> Any:
         redacted = {}
         for k, v in obj.items():
             k_lower = str(k).lower().strip()
-            if k_lower in _SENSITIVE_PARAM_NAMES or k_lower in _SENSITIVE_HEADER_NAMES:
+            # Response bodies are untrusted and may contain secrets in formats
+            # that a pattern-based redactor cannot reliably recognize.
+            if k_lower == "body_snippet":
+                redacted[k] = BODY_SNIPPET_OMITTED
+            elif k_lower in _SENSITIVE_PARAM_NAMES or k_lower in _SENSITIVE_HEADER_NAMES:
                 redacted[k] = "[REDACTED]"
             elif any(s in k_lower for s in ("password", "secret", "token", "session", "csrf", "credential", "passwd")):
                 redacted[k] = "[REDACTED]"

@@ -19,7 +19,7 @@ from shared.schema_validation import _actual_type, _format_errors, _resolve_ref,
 ROOT = Path(__file__).resolve().parents[2]
 STATUSES = {"SPEC_ONLY", "TBD", "UNRESOLVED", "IMPLEMENTED", "VALIDATED", "DEFERRED", "BLOCKED"}
 ACTION_IDS = {f"ACTION-{group}-{number:03d}" for group, numbers in {
-    "RECON": (1, 2), "SCAN": (1, 2), "WEB": (1, 2, 3), "AUTH": (1,), "FLOW": (1, 2), "PLAN": (1, 2, 3), "END": (1, 2, 3)
+    "RECON": (1, 2), "SCAN": (1, 2), "WEB": (1, 2, 3), "AUTH": (1,), "FLOW": (1, 2), "LOGIC": (1,), "PLAN": (1, 2, 3), "END": (1, 2, 3)
 }.items() for number in numbers}
 ACTION_CLASSES = {
     **{f"ACTION-RECON-{number:03d}": "RECON" for number in (1, 2)},
@@ -28,6 +28,7 @@ ACTION_CLASSES = {
     "ACTION-AUTH-001": "WEB_TEST",
     "ACTION-FLOW-001": "WEB_TEST",
     "ACTION-FLOW-002": "WEB_TEST",
+    "ACTION-LOGIC-001": "WEB_TEST",
     **{f"ACTION-PLAN-{number:03d}": "PLAN" for number in (1, 2, 3)},
     **{f"ACTION-END-{number:03d}": "STOP" for number in (1, 2, 3)},
 }

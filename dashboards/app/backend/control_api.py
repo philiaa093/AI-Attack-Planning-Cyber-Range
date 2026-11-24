@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from dashboards.app.backend.event_sink import EventSink
+from dashboards.app.backend.coverage import build_coverage
 from dashboards.app.backend.models import (
     AgentEvent,
     ControlResponse,
@@ -376,6 +377,18 @@ async def get_run_timeline(run_id: str) -> RunTimelineResponse:
     if res is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found")
     return res
+
+
+@app.get("/api/runs/{run_id}/coverage")
+def get_run_coverage(run_id: str) -> Dict[str, Any]:
+    """Project verified run-local records without modifying historical evidence."""
+    try:
+        run_dir = run_index.find_run_dir(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if run_dir is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found")
+    return build_coverage(run_dir, run_id)
 
 
 

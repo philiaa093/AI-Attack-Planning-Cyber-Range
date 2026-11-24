@@ -46,12 +46,14 @@ class ProfilePlannerTests(unittest.TestCase):
             manager = RunManager(Path(directory), model_profiles=self.store)
             config = self.store.snapshot()
             with patch("dashboards.app.backend.run_manager.lab.new_recorder"), \
+                 patch("runtime.lab.workflow_lab.WorkflowLab", side_effect=RuntimeError("fixture isolation stop")) as lab, \
                  patch("dashboards.app.backend.run_manager.AutonomousRunner") as runner:
-                # Stop before report persistence; no target/provider dispatch occurs.
-                runner.return_value.run.side_effect = RuntimeError("fixture stop")
+                # Stop before entering isolation; no Docker, target or provider is contacted.
                 manager._worker("RUN-FIXTURE-001", StartRunRequest(planner="llm"),
                                 Path(directory), EventSink(), config)
             self.assertEqual(runner.call_args.kwargs["planner_provider_config"], config)
+            lab.assert_called_once()
+            runner.return_value.run.assert_not_called()
 
     def test_protocols_use_saved_key_model_and_endpoint(self):
         for protocol in ("openai-compatible", "anthropic"):

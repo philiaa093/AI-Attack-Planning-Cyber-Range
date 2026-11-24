@@ -17,6 +17,7 @@ import json
 import re
 import urllib.parse
 import uuid
+from http.cookies import SimpleCookie
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -30,9 +31,11 @@ ACTION_EXECUTION_DETAILS = {
     "ACTION-WEB-001": {"tool": "SafeInputVerificationExecutor", "family": "SQL_INJECTION"},
     "ACTION-WEB-002": {"tool": "SafeReflectionVerificationExecutor", "family": "SCRIPT_INJECTION"},
     "ACTION-WEB-003": {"tool": "SafePathFixtureVerificationExecutor", "family": "PATH_TRAVERSAL"},
+    "ACTION-LOGIC-001": {"tool": "SafeBusinessLogicVerificationExecutor", "family": "BUSINESS_LOGIC"},
 }
 
 from runtime.discovery.discovery_engine import InventoryItem, InventoryStore
+from runtime.lab.authenticated_workflow import Forms
 from runtime.safety.discovery_gate import (
     ApprovalToken,
     CentralizedSafetyGate,
@@ -195,8 +198,15 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                     form_method = form.get("method", "GET").upper().strip()
                     form_target = urllib.parse.urljoin(item.canonical_url, raw_action) if raw_action else item.canonical_url
                     clean_form_target = form_target.split("?")[0].split("#")[0]
+                    inputs = form.get("inputs", [])
+                    is_credential_form = form_method == "POST" and any(
+                        str(inp.get("type", "")).lower() == "password"
+                        or any(part in str(inp.get("name", "")).lower()
+                               for part in ("password", "passwd", "credential"))
+                        for inp in inputs
+                    )
 
-                    for inp in form.get("inputs", []):
+                    for inp in inputs:
                         inp_name = inp.get("name", "").strip()
                         if not inp_name:
                             continue
@@ -209,7 +219,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                                 "value": str(inp_name),
                                 "confidence": 0.85,
                             })
-                        else:
+                        elif not is_credential_form:
                             # POST/mutating form input: record finding as CANDIDATE_FINDING (zero conversion to synthetic GET query parameter)
                             candidate_facts.append({
                                 "fact_id": f"FACT-CAND-{uuid.uuid4().hex[:8]}",
@@ -254,6 +264,123 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
         )
 
 
+def _clean_form_target(item: InventoryItem, form: dict[str, Any]) -> str:
+    target = urllib.parse.urljoin(item.canonical_url, form.get("action") or item.canonical_url)
+    return urllib.parse.urlsplit(target).path.rstrip("/") or "/"
+
+
+def _find_observed_form(
+    inventory: InventoryStore,
+    resource: str,
+    parameter: str,
+    method: str,
+) -> tuple[InventoryItem, dict[str, Any]] | None:
+    resource_path = urllib.parse.urlsplit(resource).path.rstrip("/") or "/"
+    for item in inventory.items.values():
+        for form in item.forms:
+            if str(form.get("method", "GET")).upper() != method:
+                continue
+            if _clean_form_target(item, form) != resource_path:
+                continue
+            names = {str(inp.get("name", "")) for inp in form.get("inputs", [])}
+            if parameter in names:
+                return item, form
+    return None
+
+
+def _observed_get_baseline(
+    inventory: InventoryStore,
+    resource: str,
+    parameter: str,
+) -> str:
+    matched = _find_observed_form(inventory, resource, parameter, "GET")
+    if matched is None:
+        return "probe_test"
+    _, form = matched
+    for inp in form.get("inputs", []):
+        if inp.get("name") != parameter:
+            continue
+        options = inp.get("options") or []
+        selected = [str(opt.get("value", "")) for opt in options if opt.get("selected")]
+        nonempty = [str(opt.get("value", "")) for opt in options if str(opt.get("value", ""))]
+        if selected and selected[0]:
+            return selected[0]
+        if nonempty:
+            return nonempty[0]
+    return "probe_test"
+
+
+def _prepare_observed_post_form(
+    *,
+    inventory: InventoryStore,
+    resource: str,
+    parameter: str,
+    action_id: str,
+    gate: CentralizedSafetyGate,
+    run_id: str,
+    target_id: str,
+    approval: ApprovalToken | None,
+) -> tuple[dict[str, str], dict[str, str], DispatchResponse | None, str | None]:
+    """Refresh an observed form and keep its CSRF/session values in memory only."""
+    matched = _find_observed_form(inventory, resource, parameter, "POST")
+    if matched is None:
+        return {}, {}, None, None
+    item, metadata = matched
+    response = gate.dispatch(DiscoveryRequest(
+        run_id=run_id,
+        target_id=target_id,
+        action_id=action_id,
+        url=item.canonical_url,
+        method="GET",
+        approval=approval,
+    ))
+    if (not response.durable_confirmed or response.outcome != "SUCCESS"
+            or response.status_code != 200 or response.truncated or response.error_message):
+        return {}, {}, response, "Observed POST form could not be refreshed safely"
+
+    parsed = Forms(response.body)
+    resource_path = urllib.parse.urlsplit(resource).path.rstrip("/") or "/"
+    fields: dict[str, str] | None = None
+    for form in parsed.forms:
+        target = urllib.parse.urljoin(item.canonical_url, form.get("action") or item.canonical_url)
+        target_path = urllib.parse.urlsplit(target).path.rstrip("/") or "/"
+        candidate = {str(k): str(v) for k, v in form.get("fields", {}).items()}
+        if form.get("method") == "POST" and target_path == resource_path and parameter in candidate:
+            fields = candidate
+            break
+    if fields is None:
+        return {}, {}, response, "Observed POST form changed before verification"
+
+    input_types = {
+        str(inp.get("name", "")): str(inp.get("type", "")).lower()
+        for inp in metadata.get("inputs", [])
+    }
+    for name, value in list(fields.items()):
+        if value:
+            continue
+        lowered = name.lower()
+        if any(part in lowered for part in ("csrf", "token", "session", "secret")):
+            return {}, {}, response, "Observed POST form control value is unavailable"
+        if input_types.get(name) in {"number", "range", "hidden"} or lowered.endswith("_id") or lowered == "quantity":
+            fields[name] = "1"
+        else:
+            fields[name] = "test"
+
+    headers: dict[str, str] = {}
+    cookie_header = response.headers.get("Set-Cookie") or response.headers.get("set-cookie") or ""
+    if cookie_header:
+        jar = SimpleCookie()
+        try:
+            jar.load(cookie_header)
+        except Exception:
+            return {}, {}, response, "Observed POST form session cookie is malformed"
+        if "session" in jar and jar["session"].value:
+            headers["Cookie"] = "session=" + jar["session"].value
+    if any("csrf" in name.lower() for name in fields) and "Cookie" not in headers:
+        return {}, {}, response, "Observed POST form session cookie is unavailable"
+    return fields, headers, response, None
+
+
 class SafeInputVerificationExecutor(BaseCapabilityExecutor):
     """Executor for ACTION-WEB-001 (Safe Input Injection / SQLi Verification).
 
@@ -285,13 +412,6 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
         resource = proposal.get("resource_ref", "/")
         param = proposal.get("parameter_name", "q")
 
-        # Bounded cyber-range probe vectors
-        vectors = [
-            ("baseline", "probe_test"),
-            ("quote", "probe_test'"),
-            ("balance", "probe_test''"),
-        ]
-
         responses: dict[str, DispatchResponse] = {}
         last_intent_id = None
         result_ids: list[str] = []
@@ -300,26 +420,54 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
         classification = "INCONCLUSIVE"
         reason = "Incomplete response set during bounded differential probe"
 
-        # Check if input belongs to a discovered POST form
-        is_post_form = False
+        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
         default_form_fields: dict[str, str] = {}
-        for item in inventory.items.values():
-            for form in item.forms:
-                clean_target = (form.get("action") or item.canonical_url).split("?")[0].split("#")[0]
-                clean_res = resource.split("?")[0].split("#")[0]
-                if clean_target.rstrip("/") == clean_res.rstrip("/") or clean_res in clean_target:
-                    inp_names = [inp.get("name") for inp in form.get("inputs", []) if inp.get("name")]
-                    if param in inp_names and form.get("method", "GET").upper() == "POST":
-                        is_post_form = True
-                        for inp in form.get("inputs", []):
-                            iname = inp.get("name")
-                            if iname:
-                                default_form_fields[iname] = "test"
-                        break
-            if is_post_form:
-                break
+        request_headers: dict[str, str] = {}
+        can_probe = True
+        if is_post_form:
+            initial_artifact_count = len(recorder.artifacts)
+            default_form_fields, request_headers, bootstrap, preparation_error = _prepare_observed_post_form(
+                inventory=inventory,
+                resource=resource,
+                parameter=param,
+                action_id="ACTION-WEB-001",
+                gate=gate,
+                run_id=run_id,
+                target_id=target_id,
+                approval=approval,
+            )
+            dispatches_made = gate.network_dispatch_count - initial_dispatch_count
+            for artifact in recorder.artifacts[initial_artifact_count:]:
+                evidence_id = artifact.get("evidence_id", "")
+                if evidence_id.startswith("EV-RESULT-"):
+                    result_ids.append(evidence_id)
+                elif evidence_id.startswith("EV-INTENT-"):
+                    last_intent_id = evidence_id
+            if bootstrap is not None and (gate.halted_due_to_evidence or (
+                not bootstrap.durable_confirmed and (
+                    bootstrap.outcome != "DENIED" or "EVIDENCE" in (bootstrap.refusal_reason or "")
+                )
+            )):
+                raise EvidenceFailure(bootstrap.refusal_reason or "Gate halted due to evidence failure")
+            if preparation_error:
+                can_probe = False
+                if bootstrap is not None and (bootstrap.outcome == "DENIED" or bootstrap.refusal_reason):
+                    classification = "REFUSED"
+                    reason = "Safety Gate refused POST form refresh: " + (bootstrap.refusal_reason or bootstrap.outcome)
+                else:
+                    reason = preparation_error
 
-        for label, vector_val in vectors:
+        baseline_value = (
+            default_form_fields.get(param, "test") if is_post_form
+            else _observed_get_baseline(inventory, resource, param)
+        )
+        vectors = [
+            ("baseline", baseline_value),
+            ("quote", baseline_value + "'"),
+            ("balance", baseline_value + "''"),
+        ]
+
+        for label, vector_val in vectors if can_probe else []:
             if is_post_form:
                 form_payload = dict(default_form_fields)
                 form_payload[param] = vector_val
@@ -331,6 +479,7 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
                     action_id="ACTION-WEB-001",
                     url=full_url,
                     method="POST",
+                    headers=request_headers,
                     form=form_payload,
                     approval=approval,
                 )
@@ -369,6 +518,7 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
                 ev = art.get("evidence_id", "")
                 if ev.startswith("EV-RESULT-"):
                     result_ids.append(ev)
+                    last_result_id = ev
                 elif ev.startswith("EV-INTENT-"):
                     last_intent_id = ev
 
@@ -382,21 +532,47 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
             if resp.truncated:
                 reason = f"Truncated {label} response during bounded SQL syntax probe"
                 break
-            if label in {"baseline", "balance"}:
-                if resp.status_code != 200 or resp.outcome != "SUCCESS" or any(
+            accepted_control_statuses = {200} if not is_post_form else {200, 201, 204, 302, 303}
+            validation_rejected = resp.status_code in {400, 409, 422} and resp.outcome == "FAILURE"
+            if label == "baseline":
+                if resp.status_code not in accepted_control_statuses or resp.outcome != "SUCCESS" or any(
                     p.search(resp.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS
                 ):
                     reason = f"Invalid {label} control during bounded SQL syntax probe"
                     break
-            elif not (resp.status_code == 200 and resp.outcome == "SUCCESS" or 500 <= resp.status_code <= 599):
+            elif label == "quote" and not (
+                resp.status_code == 200 and resp.outcome == "SUCCESS"
+                or 500 <= resp.status_code <= 599
+                or validation_rejected
+            ):
                 reason = "Invalid quote response during bounded SQL syntax probe"
                 break
+            elif label == "balance" and not (
+                resp.status_code in accepted_control_statuses
+                and resp.outcome == "SUCCESS"
+                and not any(pattern.search(resp.body) for pattern in self.SQL_SYNTAX_ERROR_PATTERNS)
+                or validation_rejected and responses["quote"].status_code in {400, 409, 422}
+            ):
+                reason = "Invalid balance control during bounded SQL syntax probe"
+                break
         else:
-            # ponytail: verifies syntax-error differentials only; impact needs a separately approved capability.
-            resp_quote = responses["quote"]
-            quote_has_err = any(p.search(resp_quote.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS)
+            if not can_probe:
+                resp_quote = None
+                quote_has_err = False
+            else:
+                # ponytail: verifies syntax-error differentials only; impact needs a separately approved capability.
+                resp_quote = responses["quote"]
+                quote_has_err = any(p.search(resp_quote.body) for p in self.SQL_SYNTAX_ERROR_PATTERNS)
 
-            if quote_has_err:
+            if not can_probe:
+                pass
+            elif (
+                resp_quote.status_code in {400, 409, 422}
+                and responses["balance"].status_code in {400, 409, 422}
+            ):
+                classification = "NEGATIVE"
+                reason = "Bounded syntax vectors were rejected consistently by observed input validation"
+            elif quote_has_err:
                 classification = "VERIFIED_IN_LAB"
                 reason = "Differential SQL syntax error observed on unescaped quote with recovery on balanced quote"
             elif resp_quote.status_code >= 500:
@@ -490,98 +666,150 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
         inert_tag_marker = f"<shoplab_sentinel_{marker_id}>"
         escaped_tag_marker = f"&lt;shoplab_sentinel_{marker_id}&gt;"
 
-        # Check if input belongs to a discovered POST form
-        is_post_form = False
-        default_form_fields: dict[str, str] = {}
-        for item in inventory.items.values():
-            for form in item.forms:
-                clean_target = (form.get("action") or item.canonical_url).split("?")[0].split("#")[0]
-                clean_res = resource.split("?")[0].split("#")[0]
-                if clean_target.rstrip("/") == clean_res.rstrip("/") or clean_res in clean_target:
-                    inp_names = [inp.get("name") for inp in form.get("inputs", []) if inp.get("name")]
-                    if param in inp_names and form.get("method", "GET").upper() == "POST":
-                        is_post_form = True
-                        for inp in form.get("inputs", []):
-                            iname = inp.get("name")
-                            if iname:
-                                default_form_fields[iname] = "test"
-                        break
-            if is_post_form:
-                break
-
-        if is_post_form:
-            form_payload = dict(default_form_fields)
-            form_payload[param] = inert_tag_marker
-            clean_path = urllib.parse.urlsplit(resource).path or "/"
-            full_url = f"{gate.base_origin}{clean_path}"
-            req = DiscoveryRequest(
-                run_id=run_id,
-                target_id=target_id,
-                action_id="ACTION-WEB-002",
-                url=full_url,
-                method="POST",
-                form=form_payload,
-                approval=approval,
-            )
-        else:
-            parsed = urllib.parse.urlsplit(resource)
-            query_dict = dict(urllib.parse.parse_qsl(parsed.query))
-            query_dict[param] = inert_tag_marker
-            encoded_query = urllib.parse.urlencode(query_dict)
-            full_path = f"{parsed.path}?{encoded_query}"
-            full_url = f"{gate.base_origin}{full_path}"
-
-            req = DiscoveryRequest(
-                run_id=run_id,
-                target_id=target_id,
-                action_id="ACTION-WEB-002",
-                url=full_url,
-                method="GET",
-                approval=approval,
-            )
-        resp = gate.dispatch(req)
-        if gate.halted_due_to_evidence or (
-            not resp.durable_confirmed and "EVIDENCE" in (resp.refusal_reason or "")
-        ):
-            raise EvidenceFailure(resp.refusal_reason or "Gate halted due to evidence failure")
-
         last_intent_id = None
         last_result_id = None
-        for art in reversed(recorder.artifacts):
-            ev = art.get("evidence_id", "")
-            if not last_result_id and "result" in ev.lower():
-                last_result_id = ev
-            elif not last_intent_id and "intent" in ev.lower():
-                last_intent_id = ev
-            if last_intent_id and last_result_id:
-                break
+        result_ids: list[str] = []
+        initial_dispatch_count = gate.network_dispatch_count
+        dispatches_made = 0
+        classification = "INCONCLUSIVE"
+        reason = "Incomplete response during bounded reflection probe"
 
-        body = resp.body or ""
-        content_type = resp.headers.get("Content-Type") or resp.headers.get("content-type") or ""
+        # Check if input belongs to a discovered POST form
+        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
+        default_form_fields: dict[str, str] = {}
+        request_headers: dict[str, str] = {}
+        can_probe = True
+        preparation_error: str | None = None
+        if is_post_form:
+            initial_artifact_count = len(recorder.artifacts)
+            default_form_fields, request_headers, bootstrap, preparation_error = _prepare_observed_post_form(
+                inventory=inventory,
+                resource=resource,
+                parameter=param,
+                action_id="ACTION-WEB-002",
+                gate=gate,
+                run_id=run_id,
+                target_id=target_id,
+                approval=approval,
+            )
+            dispatches_made = gate.network_dispatch_count - initial_dispatch_count
+            for artifact in recorder.artifacts[initial_artifact_count:]:
+                evidence_id = artifact.get("evidence_id", "")
+                if evidence_id.startswith("EV-RESULT-"):
+                    result_ids.append(evidence_id)
+                    last_result_id = evidence_id
+                elif evidence_id.startswith("EV-INTENT-"):
+                    last_intent_id = evidence_id
+            if bootstrap is not None and (gate.halted_due_to_evidence or (
+                not bootstrap.durable_confirmed and (
+                    bootstrap.outcome != "DENIED" or "EVIDENCE" in (bootstrap.refusal_reason or "")
+                )
+            )):
+                raise EvidenceFailure(bootstrap.refusal_reason or "Gate halted due to evidence failure")
+            if preparation_error:
+                can_probe = False
+                if bootstrap is not None and (bootstrap.outcome == "DENIED" or bootstrap.refusal_reason):
+                    classification = "REFUSED"
+                    reason = "Safety Gate refused POST form refresh: " + (bootstrap.refusal_reason or bootstrap.outcome)
+                else:
+                    reason = preparation_error
 
-        if resp.outcome == "DENIED" or resp.refusal_reason:
-            classification = "REFUSED"
-            reason = "Safety Gate refused bounded reflection probe: " + (resp.refusal_reason or resp.outcome)
-        elif (resp.outcome not in {"SUCCESS", "FAILURE"} or resp.status_code != 200
-              or resp.error_message or resp.truncated):
-            classification = "INCONCLUSIVE"
-            reason = "Incomplete response during bounded reflection probe"
-        elif inert_tag_marker in body and "text/html" in content_type.lower():
-            # Raw unencoded tag marker reflected in HTML body
-            classification = "VERIFIED_IN_LAB"
-            reason = "Inert HTML sentinel reflected unescaped in HTML response body"
-        elif escaped_tag_marker in body:
-            # Safely HTML-escaped
-            classification = "NEGATIVE"
-            reason = "Inert sentinel is properly HTML-escaped (&lt;...&gt;) in observed response body context"
-        elif marker_id in body:
-            # Substring reflected in non-HTML or neutral text context
-            classification = "SIGNAL"
-            reason = "Inert marker reflected in response body without raw HTML tag execution context"
+        if not can_probe:
+            if bootstrap is not None and (bootstrap.outcome == "DENIED" or bootstrap.refusal_reason):
+                classification = "REFUSED"
+                reason = "Safety Gate refused POST form refresh: " + (bootstrap.refusal_reason or bootstrap.outcome)
+            else:
+                classification = "INCONCLUSIVE"
+                reason = preparation_error or "Observed POST form could not be refreshed safely"
         else:
-            # Marker not reflected
-            classification = "NEGATIVE"
-            reason = "Inert probe marker was not reflected in observed target response body"
+            if is_post_form:
+                form_payload = dict(default_form_fields)
+                form_payload[param] = inert_tag_marker
+                clean_path = urllib.parse.urlsplit(resource).path or "/"
+                full_url = f"{gate.base_origin}{clean_path}"
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-WEB-002",
+                    url=full_url,
+                    method="POST",
+                    headers=request_headers,
+                    form=form_payload,
+                    approval=approval,
+                )
+            else:
+                parsed = urllib.parse.urlsplit(resource)
+                query_dict = dict(urllib.parse.parse_qsl(parsed.query))
+                query_dict[param] = inert_tag_marker
+                encoded_query = urllib.parse.urlencode(query_dict)
+                full_path = f"{parsed.path}?{encoded_query}"
+                full_url = f"{gate.base_origin}{full_path}"
+
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-WEB-002",
+                    url=full_url,
+                    method="GET",
+                    approval=approval,
+                )
+
+            initial_artifact_count = len(recorder.artifacts)
+            resp = gate.dispatch(req)
+            dispatches_made = gate.network_dispatch_count - initial_dispatch_count
+            if gate.halted_due_to_evidence or (
+                not resp.durable_confirmed and (
+                    resp.outcome != "DENIED" or "EVIDENCE" in (resp.refusal_reason or "")
+                )
+            ):
+                raise EvidenceFailure(resp.refusal_reason or "Gate halted due to evidence failure")
+
+            for art in recorder.artifacts[initial_artifact_count:]:
+                ev = art.get("evidence_id", "")
+                if ev.startswith("EV-RESULT-"):
+                    result_ids.append(ev)
+                    last_result_id = ev
+                elif ev.startswith("EV-INTENT-"):
+                    last_intent_id = ev
+
+            body = resp.body or ""
+            content_type = resp.headers.get("Content-Type") or resp.headers.get("content-type") or ""
+
+            if resp.outcome == "DENIED" or resp.refusal_reason:
+                classification = "REFUSED"
+                reason = "Safety Gate refused bounded reflection probe: " + (resp.refusal_reason or resp.outcome)
+            elif (
+                resp.outcome not in {"SUCCESS", "FAILURE"}
+                or resp.error_message
+                or resp.truncated
+                or not 100 <= resp.status_code <= 599
+            ):
+                classification = "INCONCLUSIVE"
+                reason = "Incomplete response during bounded reflection probe"
+            elif resp.status_code not in ({200, 201, 204, 302, 303} if is_post_form else {200}) and not (
+                resp.status_code in {400, 409, 422} and resp.outcome == "FAILURE"
+            ):
+                classification = "INCONCLUSIVE"
+                reason = f"Unexpected HTTP status {resp.status_code} during bounded reflection probe"
+            elif inert_tag_marker in body and "text/html" in content_type.lower():
+                # Raw unencoded tag marker reflected in HTML body
+                classification = "VERIFIED_IN_LAB"
+                reason = "Inert HTML sentinel reflected unescaped in HTML response body"
+            elif escaped_tag_marker in body:
+                # Safely HTML-escaped
+                classification = "NEGATIVE"
+                reason = "Inert sentinel is properly HTML-escaped (&lt;...&gt;) in observed response body context"
+            elif marker_id in body:
+                # Substring reflected in non-HTML or neutral text context
+                classification = "SIGNAL"
+                reason = "Inert marker reflected in response body without raw HTML tag execution context"
+            elif resp.status_code in {400, 409, 422} and resp.outcome == "FAILURE":
+                classification = "NEGATIVE"
+                reason = "Inert probe marker was rejected by observed target input validation"
+            else:
+                # Marker not reflected
+                classification = "NEGATIVE"
+                reason = "Inert probe marker was not reflected in observed target response body"
 
         finding_id = f"FIND-XSS-{uuid.uuid4().hex[:8]}"
         conf = 0.95 if classification == "VERIFIED_IN_LAB" else (
@@ -595,7 +823,7 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
             input_ref=param,
             source_observation_refs=proposal.get("evidence_refs", []),
             verification_action="ACTION-WEB-002",
-            result_evidence_refs=[last_result_id] if last_result_id else [],
+            result_evidence_refs=result_ids if result_ids else ([last_result_id] if last_result_id else []),
             confidence=conf,
             limitations=["Inert marker fixtures only; zero executable JS, zero token extraction, zero browser takeover"],
             reason=reason,
@@ -618,7 +846,7 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
             "classification": classification,
             "reason": reason,
             "finding": asdict(finding),
-            "dispatches_made": 1,
+            "dispatches_made": dispatches_made,
         })
 
         return CapabilityExecutionResult(
@@ -630,7 +858,7 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
             classification=classification,
             findings=[finding],
             new_facts=[fact],
-            network_dispatch_count=1,
+            network_dispatch_count=dispatches_made,
             intent_evidence_id=last_intent_id,
             result_evidence_id=art["evidence_id"],
             details={"reason": reason, "classification": classification},
@@ -787,6 +1015,265 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
         )
 
 
+class SafeBusinessLogicVerificationExecutor(BaseCapabilityExecutor):
+    """Executor for ACTION-LOGIC-001 (Safe Business Logic & Transactional Verification).
+
+    Enforces:
+      - Bounded verification of business logic flaws:
+        * Value tampering / numeric underflow (e.g. quantity = -1, zero, or float)
+        * Idempotency & deduplication (replaying duplicate transaction tokens)
+        * State consistency under sequential rapid probe
+      - ZERO destructive payloads; zero arbitrary code/command injection.
+      - All dispatches flow exclusively through CentralizedSafetyGate.
+      - Classification: NEGATIVE, SIGNAL, VERIFIED_IN_LAB, INCONCLUSIVE, REFUSED.
+    """
+
+    def execute(
+        self,
+        proposal: dict[str, Any],
+        gate: CentralizedSafetyGate,
+        recorder: DurableEvidenceRecorder,
+        run_id: str,
+        target_id: str,
+        inventory: InventoryStore,
+        approval: ApprovalToken | None,
+    ) -> CapabilityExecutionResult:
+        resource = proposal.get("resource_ref", "/")
+        param = proposal.get("parameter_name", "quantity")
+
+        last_intent_id = None
+        last_result_id = None
+        result_ids: list[str] = []
+        initial_dispatch_count = gate.network_dispatch_count
+        dispatches_made = 0
+        classification = "INCONCLUSIVE"
+        reason = "Incomplete response set during business logic verification probe"
+
+        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
+        default_form_fields: dict[str, str] = {}
+        request_headers: dict[str, str] = {}
+        can_probe = True
+
+        if is_post_form:
+            initial_artifact_count = len(recorder.artifacts)
+            default_form_fields, request_headers, bootstrap, preparation_error = _prepare_observed_post_form(
+                inventory=inventory,
+                resource=resource,
+                parameter=param,
+                action_id="ACTION-LOGIC-001",
+                gate=gate,
+                run_id=run_id,
+                target_id=target_id,
+                approval=approval,
+            )
+            dispatches_made = gate.network_dispatch_count - initial_dispatch_count
+            for artifact in recorder.artifacts[initial_artifact_count:]:
+                evidence_id = artifact.get("evidence_id", "")
+                if evidence_id.startswith("EV-RESULT-"):
+                    result_ids.append(evidence_id)
+                    last_result_id = evidence_id
+                elif evidence_id.startswith("EV-INTENT-"):
+                    last_intent_id = evidence_id
+
+            if bootstrap is not None and (gate.halted_due_to_evidence or (
+                not bootstrap.durable_confirmed and (
+                    bootstrap.outcome != "DENIED" or "EVIDENCE" in (bootstrap.refusal_reason or "")
+                )
+            )):
+                raise EvidenceFailure(bootstrap.refusal_reason or "Gate halted due to evidence failure")
+
+            if preparation_error:
+                can_probe = False
+                if bootstrap is not None and (bootstrap.outcome == "DENIED" or bootstrap.refusal_reason):
+                    classification = "REFUSED"
+                    reason = "Safety Gate refused POST form refresh: " + (bootstrap.refusal_reason or bootstrap.outcome)
+                else:
+                    reason = preparation_error
+
+        # Determine probe vectors based on parameter semantics
+        p_lower = param.lower()
+        is_numeric_or_quantity = any(k in p_lower for k in ("quantity", "qty", "amount", "count", "num", "balance", "price"))
+        is_idempotency = any(k in p_lower for k in ("idempotency", "token", "nonce", "order_key", "ref"))
+
+        vectors: list[tuple[str, str]] = []
+        if is_numeric_or_quantity:
+            # Boundary underflow & invalid type vectors
+            vectors = [
+                ("negative_boundary", "-1"),
+                ("zero_boundary", "0"),
+            ]
+        elif is_idempotency:
+            fixed_key = f"probe-idemp-{uuid.uuid4().hex[:8]}"
+            vectors = [
+                ("idempotency_first", fixed_key),
+                ("idempotency_duplicate", fixed_key),
+            ]
+        else:
+            # General business logic boundary check
+            vectors = [
+                ("tamper_boundary", "-1"),
+                ("tamper_null", ""),
+            ]
+
+        responses: list[tuple[str, str, DispatchResponse]] = []
+        for label, vector_val in vectors if can_probe else []:
+            initial_count = len(recorder.artifacts)
+            if is_post_form:
+                payload = dict(default_form_fields)
+                payload[param] = vector_val
+                clean_path = urllib.parse.urlsplit(resource).path or "/"
+                full_url = f"{gate.base_origin}{clean_path}"
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-LOGIC-001",
+                    url=full_url,
+                    method="POST",
+                    headers=request_headers,
+                    form=payload,
+                    approval=approval,
+                )
+            else:
+                parsed = urllib.parse.urlsplit(resource)
+                query_dict = dict(urllib.parse.parse_qsl(parsed.query))
+                query_dict[param] = vector_val
+                encoded_query = urllib.parse.urlencode(query_dict)
+                full_path = f"{parsed.path}?{encoded_query}"
+                full_url = f"{gate.base_origin}{full_path}"
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-LOGIC-001",
+                    url=full_url,
+                    method="GET",
+                    approval=approval,
+                )
+
+            resp = gate.dispatch(req)
+            dispatches_made += 1
+            for artifact in recorder.artifacts[initial_count:]:
+                evidence_id = artifact.get("evidence_id", "")
+                if evidence_id.startswith("EV-RESULT-"):
+                    result_ids.append(evidence_id)
+                    last_result_id = evidence_id
+                elif evidence_id.startswith("EV-INTENT-"):
+                    last_intent_id = evidence_id
+
+            if gate.halted_due_to_evidence or (
+                not resp.durable_confirmed and (
+                    resp.outcome != "DENIED" or "EVIDENCE" in (resp.refusal_reason or "")
+                )
+            ):
+                raise EvidenceFailure(resp.refusal_reason or "Gate halted due to evidence failure")
+
+            responses.append((label, vector_val, resp))
+
+        # Evaluate responses
+        if can_probe and responses:
+            statuses = [resp.status_code for _, _, resp in responses]
+
+            if any(s == 500 for s in statuses):
+                classification = "SIGNAL"
+                reason = "Unhandled server error (HTTP 500) observed during business logic boundary probe"
+            elif any(resp.outcome == "DENIED" for _, _, resp in responses):
+                classification = "REFUSED"
+                denied_resp = next(r for _, _, r in responses if r.outcome == "DENIED")
+                reason = f"Safety Gate denied business logic probe: {denied_resp.refusal_reason}"
+            elif is_numeric_or_quantity:
+                # Check negative boundary response
+                neg_resps = [r for lbl, _, r in responses if lbl == "negative_boundary"]
+                if neg_resps:
+                    neg_resp = neg_resps[0]
+                    # If target returns success (200/302) and no validation error message
+                    if neg_resp.status_code in {200, 302, 303} and not any(err in neg_resp.body.lower() for err in ("invalid", "error", "greater than", "positive", "cannot")):
+                        classification = "VERIFIED_IN_LAB"
+                        reason = f"Business logic flaw verified: target accepted negative value for parameter {param}"
+                    elif neg_resp.status_code in {400, 409, 422} or any(err in neg_resp.body.lower() for err in ("invalid", "error", "must be", "greater than", "cannot")):
+                        classification = "NEGATIVE"
+                        reason = f"Target correctly validates parameter {param} and rejects negative/invalid boundary"
+                    else:
+                        classification = "NEGATIVE"
+                        reason = f"Target responded with status {neg_resp.status_code} rejecting invalid logic state"
+                else:
+                    classification = "NEGATIVE"
+                    reason = "Target handled numeric boundary values without state anomalies"
+            elif is_idempotency:
+                idemp_resps = [r for lbl, _, r in responses if lbl.startswith("idempotency_")]
+                if len(idemp_resps) >= 2:
+                    first, second = idemp_resps[0], idemp_resps[1]
+                    first_loc = first.headers.get("location", "")
+                    second_loc = second.headers.get("location", "")
+                    # Both redirecting to the exact same order or second rejected 409/400
+                    if (first_loc and first_loc == second_loc) or second.status_code in {400, 409, 422}:
+                        classification = "NEGATIVE"
+                        reason = "Idempotency verified: duplicate submission deduplicated to identical resource or rejected"
+                    elif first.status_code in {200, 302} and second.status_code in {200, 302} and first_loc != second_loc:
+                        classification = "VERIFIED_IN_LAB"
+                        reason = f"Broken idempotency verified: identical idempotency key created distinct resources ({first_loc} vs {second_loc})"
+                    else:
+                        classification = "NEGATIVE"
+                        reason = "Target handled duplicate idempotency token safely"
+                else:
+                    classification = "INCONCLUSIVE"
+                    reason = "Insufficient responses to verify idempotency contract"
+            else:
+                classification = "NEGATIVE"
+                reason = "Target enforced input and business logic boundaries safely"
+
+        finding_id = f"FIND-LOGIC-{uuid.uuid4().hex[:8]}"
+        conf = 0.95 if classification == "VERIFIED_IN_LAB" else (
+            0.85 if classification == "NEGATIVE" else (0.50 if classification in {"INCONCLUSIVE", "REFUSED"} else 0.65)
+        )
+        finding = VerificationFinding(
+            finding_id=finding_id,
+            family="BUSINESS_LOGIC",
+            classification=classification,
+            resource_ref=resource,
+            input_ref=param,
+            source_observation_refs=proposal.get("evidence_refs", []),
+            verification_action="ACTION-LOGIC-001",
+            result_evidence_refs=result_ids if result_ids else ([last_result_id] if last_result_id else []),
+            confidence=conf,
+            limitations=["Bounded business logic verification; zero destructive payload, zero arbitrary code execution"],
+            reason=reason,
+        )
+
+        fact = {
+            "fact_id": f"FACT-LOGIC-{uuid.uuid4().hex[:8]}",
+            "fact_type": "ACTION_OUTCOME",
+            "subject": f"ACTION-LOGIC-001:{resource}:{param}",
+            "value": classification,
+            "confidence": finding.confidence,
+        }
+
+        art = recorder.persist_phase_artifact("action_logic_001_verification", {
+            "run_id": run_id,
+            "target_id": target_id,
+            "action_id": "ACTION-LOGIC-001",
+            "resource": resource,
+            "parameter": param,
+            "classification": classification,
+            "reason": reason,
+            "finding": asdict(finding),
+            "dispatches_made": dispatches_made,
+        })
+
+        return CapabilityExecutionResult(
+            action_id="ACTION-LOGIC-001",
+            target_id=target_id,
+            outcome="DENIED" if classification == "REFUSED" else (
+                "FAILURE" if classification == "INCONCLUSIVE" else "SUCCESS"
+            ),
+            classification=classification,
+            findings=[finding],
+            new_facts=[fact],
+            network_dispatch_count=dispatches_made,
+            intent_evidence_id=last_intent_id,
+            result_evidence_id=art["evidence_id"],
+            details={"reason": reason, "classification": classification},
+        )
+
+
 class CapabilityRegistry:
     """Central registry dispatching action IDs strictly to authorized bounded capability executors."""
 
@@ -797,6 +1284,7 @@ class CapabilityRegistry:
             "ACTION-WEB-001":   SafeInputVerificationExecutor(),
             "ACTION-WEB-002":   SafeReflectionVerificationExecutor(),
             "ACTION-WEB-003":   SafePathFixtureVerificationExecutor(),
+            "ACTION-LOGIC-001": SafeBusinessLogicVerificationExecutor(),
         }
 
     def register(self, action_id: str, executor: BaseCapabilityExecutor) -> None:

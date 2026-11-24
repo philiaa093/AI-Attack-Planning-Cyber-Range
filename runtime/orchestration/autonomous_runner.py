@@ -63,10 +63,16 @@ from runtime.evidence.discovery_recorder import (
 )
 from runtime.planners.observed_planner import (
     ACTION_CATALOG,
+    PLANNABLE_ACTIONS,
     ObservedStatePlanner,
     PlannerResult,
     ProviderConfig,
 )
+
+RUNNER_ACTION_CATALOG = {
+    **ACTION_CATALOG,
+    "ACTION-LOGIC-001": {"name": "TEST_BUSINESS_LOGIC", "class": "WEB_TEST"},
+}
 from runtime.planners.planner_adapter import (
     PlannerStateAdapter,
 )
@@ -353,7 +359,7 @@ class AutonomousRunner:
             return True
 
         if self.control_mode == "ASSISTED":
-            action_class = ACTION_CATALOG.get(action_id, {}).get("class", "")
+            action_class = RUNNER_ACTION_CATALOG.get(action_id, {}).get("class", "")
             # Safe read-only actions: RECON, passive SCAN, PLAN
             # Approval-required actions: active WEB_TEST and active SCAN
             if action_class in ("WEB_TEST",) or action_id == "ACTION-SCAN-002":
@@ -405,7 +411,7 @@ class AutonomousRunner:
         action = proposal.get("action_id")
 
         # 1. Action catalog check
-        if action not in ACTION_CATALOG:
+        if action not in RUNNER_ACTION_CATALOG:
             return "DENIED", f"UNKNOWN_ACTION_ID_{action}"
 
         # 2. Lab mode check
@@ -875,7 +881,7 @@ class AutonomousRunner:
                     outcome="SUCCESS",
                 )
 
-        elif action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-SCAN-002"):
+        elif action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-LOGIC-001", "ACTION-SCAN-002"):
             executor = self.capability_registry.get_executor(action_id)
             if not executor:
                 obs_id = f"OBS-NOEXEC-{uuid.uuid4().hex[:8]}"
@@ -928,7 +934,8 @@ class AutonomousRunner:
                 inventory=self.inventory,
                 approval=self.approval,
             )
-            self.active_verifications_count += 1
+            if action_id != "ACTION-SCAN-002":
+                self.active_verifications_count += 1
             if cap_res.intent_evidence_id:
                 self.evidence_refs.append(cap_res.intent_evidence_id)
             if cap_res.result_evidence_id:
@@ -1275,8 +1282,8 @@ class AutonomousRunner:
                     payload={
                         "plan_id": proposal.get("plan_id"),
                         "action_id": action_id,
-                        "action_name": ACTION_CATALOG.get(action_id, {}).get("name", action_id),
-                        "action_class": ACTION_CATALOG.get(action_id, {}).get("class", "UNKNOWN"),
+                        "action_name": RUNNER_ACTION_CATALOG.get(action_id, {}).get("name", action_id),
+                        "action_class": RUNNER_ACTION_CATALOG.get(action_id, {}).get("class", "UNKNOWN"),
                         "target_id": proposal.get("target_id"),
                         "reason_code": proposal.get("reason_code"),
                         "confidence": proposal.get("confidence"),

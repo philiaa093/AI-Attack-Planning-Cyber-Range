@@ -44,8 +44,8 @@ export const PresentationHero: React.FC<PresentationHeroProps> = ({ system, late
   const description = !hasRun
     ? vi ? 'Mở một phiên đã lưu để xem lại diễn biến, quyết định và bằng chứng.' : 'Open a saved run to review its timeline, decisions and evidence.'
     : (run?.error || run?.stop_reason ? displayValue(run.error || run.stop_reason, lang) : null) || (vi
-      ? 'Thông tin dưới đây phản ánh trạng thái và sự kiện đã nhận của phiên này.'
-      : 'The information below reflects the received status and events for this run.');
+      ? 'Theo dõi diễn biến, quyết định an toàn và bằng chứng đã ghi nhận của phiên này.'
+      : 'Follow the recorded timeline, safety decisions and evidence for this run.');
   const DecisionIcon = isDenied ? ShieldAlert : isPermitted ? ShieldCheck : Lock;
 
   return (
@@ -73,10 +73,10 @@ export const PresentationHero: React.FC<PresentationHeroProps> = ({ system, late
       <div className={`cc-decision ${isDenied ? 'cc-decision-denied' : ''}`}>
         <DecisionIcon size={18} aria-hidden="true" />
         <div>
-          <span className="cc-decision-label">{vi ? 'Quyết định cho hành động' : 'Action decision'}: <strong>{displayValue(decision, lang)}</strong></span>
+          <span className="cc-decision-label">{vi ? 'Quyết định trong sự kiện mới nhất' : 'Decision in latest event'}: <strong>{displayValue(decision, lang)}</strong></span>
           <p>{isDenied ? (vi ? 'Quyết định từ chối đã ghi nhận' : 'Recorded refusal for this action')
             : isPermitted ? (vi ? 'Quyết định cho phép đã ghi nhận' : 'Recorded permission for this action')
-              : vi ? 'Chưa ghi nhận quyết định cho hành động hiện tại.' : 'No recorded decision for the current action.'}</p>
+              : vi ? 'Sự kiện mới nhất không cho biết quyết định an toàn.' : 'The latest event does not establish a safety decision.'}</p>
           {actionId && <p className="cc-code">{actionId}</p>}
           {isDenied && <p>{displayValue(text(eventPayload.reason) || text(eventPayload.rule) || 'UNKNOWN', lang)}</p>}
           {isPermitted && <p><span>{vi ? 'Số lần phát lệnh ghi nhận của lượt chạy:' : 'Recorded run dispatches:'}</span>{' '}<span>{run?.network_dispatches ?? '—'}</span></p>}

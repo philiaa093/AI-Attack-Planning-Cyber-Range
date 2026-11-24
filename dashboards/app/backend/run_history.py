@@ -434,7 +434,7 @@ class RunIndex:
                         elif ev_type == "EVIDENCE_VERIFIED":
                             desc = "Hash integrity verified against canonical records."
                         elif ev_type == "RUN_COMPLETED":
-                            desc = f"Execution completed cleanly. Reason: {payload.get('stop_reason', 'FINISHED')}."
+                            desc = f"Execution ended. Reason: {payload.get('stop_reason', 'FINISHED')}."
                         else:
                             desc = f"Execution step {ev_type} logged."
 

@@ -20,6 +20,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from runtime.discovery.discovery_engine import (
     ObservationDrivenDiscovery,
@@ -420,6 +421,33 @@ class DiscoverySafetyTests(unittest.TestCase):
             self.assertEqual(res2.stop_reason, "EVIDENCE_FAILURE: RESULT_EVIDENCE_WRITE_FAILED")
         finally:
             server.close()
+
+    def test_gate_omits_truncated_response_from_evidence_but_keeps_it_in_memory(self) -> None:
+        secret = "syntheticTruncatedCsrf123456789"
+        body = f"<input name='csrf_token' value='{secret}'><p>fixture data</p>".encode()
+        limit = len(body) - 4
+        engine, gate, recorder = self._setup_engine(18088, budget=BudgetTracker(max_body_bytes=limit))
+        request = DiscoveryRequest(self.run_id, self.target_id, self.action_id,
+                                   "http://127.0.0.1:18088/", approval=engine.approval)
+        with patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = [("Content-Type", "text/html"), ("Set-Cookie", "session=" + secret)]
+            response.read.side_effect = [body[:limit], body[limit:limit + 1]]
+            result = gate.dispatch(request)
+        self.assertEqual(result.body, body[:limit].decode())
+        self.assertTrue(result.truncated)
+        self.assertTrue(result.durable_confirmed)
+        self.assertEqual(gate.network_dispatch_count, 1)
+        connection.assert_called_once()
+        payload = json.loads(Path(recorder.artifacts[-1]["payload_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(payload["body_snippet"], "[BODY_SNIPPET_OMITTED]")
+        self.assertEqual(payload["status_code"], 200)
+        self.assertTrue(payload["truncated"])
+        self.assertEqual(payload["headers"]["Set-Cookie"], "[REDACTED]")
+        for path in self.evidence_dir.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(secret.encode(), path.read_bytes())
 
     def test_d09_prompt_like_content_and_secret_redaction(self) -> None:
         """D09: Prompt-like content / session data -> no policy effect; no secret leak."""

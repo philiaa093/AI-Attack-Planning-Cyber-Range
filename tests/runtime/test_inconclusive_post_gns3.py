@@ -29,6 +29,7 @@ from runtime.safety.discovery_gate import (
     BudgetTracker,
     CentralizedSafetyGate,
     DiscoveryRequest,
+    DispatchResponse,
     TokenBucketRateLimiter,
 )
 from scripts.validation.validate_scaffold import ROOT
@@ -283,6 +284,201 @@ class PostFormSupportTests(unittest.TestCase):
         plan_res = planner.propose(state)
         self.assertIn(plan_res.proposal["action_id"], ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"))
         self.assertEqual(plan_res.proposal["parameter_name"], "message")
+
+    def test_passive_analyzer_skips_credential_form_candidates(self) -> None:
+        inventory = InventoryStore()
+        inventory.record_item(InventoryItem(
+            canonical_url="http://127.0.0.1:18088/login",
+            path="/login",
+            method="GET",
+            source_observation_id="OBS-CREDENTIAL-1",
+            parent_url=None,
+            depth=1,
+            status_code=200,
+            content_type="text/html",
+            body_bytes=500,
+            truncated=False,
+            forms=[{
+                "action": "/login",
+                "method": "POST",
+                "inputs": [
+                    {"name": "csrf_token", "type": "hidden"},
+                    {"name": "username", "type": "text"},
+                    {"name": "password", "type": "password"},
+                ],
+            }],
+            links_found=[],
+            redirect_to=None,
+            discovered_at_utc="2026-11-24T00:00:00Z",
+            redacted=True,
+        ))
+        result = PassiveSurfaceAnalyzer().execute(
+            proposal={"target_id": "lab-ecommerce"},
+            gate=self.gate,
+            recorder=self.recorder,
+            run_id="RUN-POST-1",
+            target_id="lab-ecommerce",
+            inventory=inventory,
+            approval=self.approval,
+        )
+        values = {fact.get("value") for fact in result.new_facts}
+        self.assertNotIn("post_form_input_username", values)
+        self.assertNotIn("post_form_input_password", values)
+        self.assertNotIn("post_form_input_csrf_token", values)
+
+    def test_sql_post_probe_refreshes_observed_session_and_csrf(self) -> None:
+        inventory = InventoryStore()
+        inventory.record_item(InventoryItem(
+            canonical_url="http://127.0.0.1:18088/products",
+            path="/products",
+            method="GET",
+            source_observation_id="OBS-CART-1",
+            parent_url=None,
+            depth=1,
+            status_code=200,
+            content_type="text/html",
+            body_bytes=1000,
+            truncated=False,
+            forms=[{
+                "action": "/cart/add",
+                "method": "POST",
+                "inputs": [
+                    {"name": "csrf_token", "type": "hidden"},
+                    {"name": "product_id", "type": "hidden"},
+                    {"name": "quantity", "type": "hidden"},
+                ],
+            }],
+            links_found=[],
+            redirect_to=None,
+            discovered_at_utc="2026-11-24T00:00:00Z",
+            redacted=True,
+        ))
+        session = "a" * 64
+        csrf = "b" * 64
+        responses = [
+            DispatchResponse(200, {"Content-Type": "text/html", "Set-Cookie": f"session={session}; HttpOnly"},
+                             f"<form method='POST' action='/cart/add'><input name='csrf_token' value='{csrf}'>"
+                             "<input name='product_id' value='1'><input name='quantity' value='1'></form>",
+                             300, False, "SUCCESS", True, "http://127.0.0.1:18088/products"),
+            DispatchResponse(302, {"Location": "/cart"}, "", 0, False, "SUCCESS", True,
+                             "http://127.0.0.1:18088/cart/add"),
+            DispatchResponse(400, {"Content-Type": "text/html"}, "invalid", 7, False, "FAILURE", True,
+                             "http://127.0.0.1:18088/cart/add"),
+            DispatchResponse(400, {"Content-Type": "text/html"}, "invalid", 7, False, "FAILURE", True,
+                             "http://127.0.0.1:18088/cart/add"),
+        ]
+
+        def dispatch(request):
+            self.gate.network_dispatch_count += 1
+            return responses.pop(0)
+
+        with patch.object(self.gate, "dispatch", side_effect=dispatch) as mocked_dispatch:
+            result = SafeInputVerificationExecutor().execute(
+                proposal={"resource_ref": "/cart/add", "parameter_name": "quantity", "evidence_refs": []},
+                gate=self.gate,
+                recorder=self.recorder,
+                run_id="RUN-POST-1",
+                target_id="lab-ecommerce",
+                inventory=inventory,
+                approval=self.approval,
+            )
+
+        self.assertEqual(result.classification, "NEGATIVE")
+        self.assertEqual(result.network_dispatch_count, 4)
+        calls = [call.args[0] for call in mocked_dispatch.call_args_list]
+        self.assertEqual(calls[0].method, "GET")
+        self.assertEqual(calls[1].headers["Cookie"], "session=" + session)
+        self.assertEqual(calls[1].form["csrf_token"], csrf)
+        self.assertEqual(calls[1].form["product_id"], "1")
+        self.assertEqual(calls[1].form["quantity"], "1")
+
+    def test_reflection_probe_refreshes_csrf_for_post_form(self) -> None:
+        csrf = "csrf_secret_xss_test"
+        session = "session_token_xss_test"
+        html = f"""
+        <html><body>
+          <form method="POST" action="/cart/add">
+            <input type="hidden" name="csrf_token" value="{csrf}">
+            <input type="hidden" name="product_id" value="1">
+            <input type="number" name="quantity" value="1">
+            <button type="submit">Add</button>
+          </form>
+        </body></html>
+        """
+        inventory = InventoryStore()
+        inventory.items["/cart/add"] = InventoryItem(
+            canonical_url="http://127.0.0.1:8080/cart/add",
+            path="/cart/add",
+            method="POST",
+            source_observation_id="EV-SRC-POST",
+            parent_url="http://127.0.0.1:8080/products",
+            depth=1,
+            status_code=200,
+            content_type="text/html",
+            body_bytes=len(html),
+            truncated=False,
+            forms=[{
+                "action": "/cart/add",
+                "method": "POST",
+                "inputs": [
+                    {"name": "csrf_token", "type": "hidden"},
+                    {"name": "product_id", "type": "hidden"},
+                    {"name": "quantity", "type": "number"},
+                ],
+            }],
+            links_found=[],
+            redirect_to=None,
+            discovered_at_utc="2026-11-24T00:00:00Z",
+            redacted=False,
+        )
+
+        responses = [
+            Mock(
+                outcome="SUCCESS",
+                refusal_reason=None,
+                durable_confirmed=True,
+                status_code=200,
+                error_message=None,
+                truncated=False,
+                body=html,
+                headers={"Content-Type": "text/html", "Set-Cookie": f"session={session}; Path=/"},
+            ),
+            Mock(
+                outcome="SUCCESS",
+                refusal_reason=None,
+                durable_confirmed=True,
+                status_code=302,
+                error_message=None,
+                truncated=False,
+                body="",
+                headers={"Location": "/cart"},
+            ),
+        ]
+
+        def dispatch(request):
+            self.gate.network_dispatch_count += 1
+            return responses.pop(0)
+
+        with patch.object(self.gate, "dispatch", side_effect=dispatch) as mocked_dispatch:
+            result = SafeReflectionVerificationExecutor().execute(
+                proposal={"resource_ref": "/cart/add", "parameter_name": "quantity", "evidence_refs": []},
+                gate=self.gate,
+                recorder=self.recorder,
+                run_id="RUN-POST-XSS-1",
+                target_id="lab-ecommerce",
+                inventory=inventory,
+                approval=self.approval,
+            )
+
+        self.assertEqual(result.classification, "NEGATIVE")
+        self.assertEqual(result.network_dispatch_count, 2)
+        calls = [call.args[0] for call in mocked_dispatch.call_args_list]
+        self.assertEqual(calls[0].method, "GET")
+        self.assertEqual(calls[1].method, "POST")
+        self.assertEqual(calls[1].headers["Cookie"], "session=" + session)
+        self.assertEqual(calls[1].form["csrf_token"], csrf)
+        self.assertEqual(calls[1].form["product_id"], "1")
+        self.assertTrue(calls[1].form["quantity"].startswith("<shoplab_sentinel_"))
 
     def test_reflection_probe_does_not_report_negative_on_incomplete_http_response(self) -> None:
         inventory = InventoryStore()

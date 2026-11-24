@@ -245,6 +245,30 @@
       }
     },
     {
+      "action_id": "ACTION-LOGIC-001",
+      "name": "TEST_BUSINESS_LOGIC",
+      "action_class": "WEB_TEST",
+      "description": "Probe web application endpoints for business logic flaws such as race conditions, balance underflow, tampering, or broken idempotency",
+      "target_kind": "ENDPOINT",
+      "classification": "LEGACY_WEB_COMPAT",
+      "preconditions": {
+        "target_visible": true,
+        "service_observed": true
+      },
+      "expected_effects": {
+        "potential_facts": ["CONFIRMED_FINDING", "ACTION_OUTCOME"],
+        "description": "Verify transactional integrity, concurrency limits, or business logic bounds"
+      },
+      "step_cost": 2,
+      "noise_cost": 3.0,
+      "required_capability": "HTTP_PROBE",
+      "mitre_attack": {
+        "tactic": "Defense Evasion",
+        "technique_id": "T1565",
+        "technique_name": "Data Manipulation"
+      }
+    },
+    {
       "action_id": "ACTION-PLAN-001",
       "name": "CHANGE_TARGET",
       "action_class": "PLAN",

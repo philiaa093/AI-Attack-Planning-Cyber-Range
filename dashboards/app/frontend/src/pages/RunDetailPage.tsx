@@ -17,6 +17,7 @@ import type {
 import { useLanguage } from '../i18n/LanguageContext';
 import { historyLabel } from '../i18n/historyLabels';
 import { displayTool, displayValue } from '../i18n/displayValue';
+import { CoveragePanel } from '../components/coverage/CoveragePanel';
 
 interface RunDetailPageProps {
   runId: string;
@@ -238,36 +239,9 @@ export const RunDetailPage: React.FC<RunDetailPageProps> = ({
         </div>
       </div>
 
+      <CoveragePanel runId={runId} />
+
       {/* Interactive Replay Player Bar */}
-      {timeline.filter(event => event.type === 'WORKFLOW_COMPLETED').map(event => (
-        <section key={event.event_id} className="rounded-lg border border-amber-800 p-4 text-sm text-slate-200">
-          <h3>{lang === 'vi' ? 'Workflow đăng nhập và nghiệp vụ (cố định)' : 'Authenticated business workflow (fixed)'}</h3>
-          <p>{String(event.payload.status)} · {lang === 'vi' ? 'Kiểm tra không đạt: ' : 'Failed checks: '}{String(event.payload.failed_checks)}</p>
-          <p>{lang === 'vi' ? 'Đã khôi phục volume gốc: ' : 'Original volume restored: '}{String(event.payload.original_volume_restored === true)}</p>
-          {Array.isArray(event.payload.checks) && event.payload.checks.map((check: Record<string, unknown>, index: number) => (
-            <p key={index}>{String(check.check)}: {String(check.status)}</p>
-          ))}
-        </section>
-      ))}
-      {timeline.some(event => event.type === 'SCANNER_COMPLETED') && (
-        <section className="rounded-lg border border-slate-700 bg-[#111724] p-4 space-y-2" aria-label="Scanner results">
-          <h3 className="text-sm font-semibold text-slate-200">{lang === 'vi' ? 'Kết quả scanner' : 'Scanner results'}</h3>
-          {timeline.filter(event => event.type === 'SCANNER_COMPLETED').map((event, index) => (
-            <p key={index} className="break-all text-xs text-slate-300">
-              {String(event.payload.tool)}: {displayValue(String(event.payload.status), lang)}
-              {' · '}{String(event.payload.coverage ?? '')}
-              {event.payload.candidate_count !== undefined ? ` · ${String(event.payload.candidate_count)} candidates` : ''}
-              {Boolean(event.payload.seed_coverage) && <span>
-                {lang === 'vi' ? ' · URL đầu vào đã gửi / tổng số: ' : ' · Seed URLs requested / total: '}
-                {String((event.payload.seed_coverage as Record<string, unknown>).requested_seed_count)} / {String((event.payload.seed_coverage as Record<string, unknown>).observed_seed_count)}
-                {(event.payload.seed_coverage as Record<string, unknown>).options_truncated === true && (lang === 'vi' ? ' · Danh sách option bị giới hạn' : ' · Option list truncated')}
-              </span>}
-              {event.payload.reason ? ` · ${String(event.payload.reason)}` : ''}
-            </p>
-          ))}
-          <p className="text-xs text-amber-200">{lang === 'vi' ? 'Candidate chưa phải lỗ hổng đã xác minh. Không có kết quả không chứng minh website an toàn.' : 'Candidates are unconfirmed. No findings do not establish that the website is safe.'}</p>
-        </section>
-      )}
       <div className="bg-[#111724] border border-slate-800 rounded-lg p-4 space-y-4 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           {/* Controls: Play/Pause, Step Prev/Next, Reset */}

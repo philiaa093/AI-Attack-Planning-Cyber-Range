@@ -18,8 +18,9 @@ if str(ROOT) not in sys.path:
 
 from runtime.lab import control_support as lab
 from runtime.orchestration.autonomous_runner import AutonomousRunner, AutonomousRunReport
-from runtime.safety.discovery_gate import CentralizedSafetyGate, ApprovalToken, BudgetTracker, TokenBucketRateLimiter
-from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
+from runtime.safety.discovery_gate import CentralizedSafetyGate, ApprovalToken, BudgetTracker, TokenBucketRateLimiter, DispatchResponse
+from runtime.evidence import discovery_recorder
+from runtime.evidence.discovery_recorder import BODY_SNIPPET_OMITTED, DurableEvidenceRecorder, EvidenceFailure
 from runtime.evidence.evidence_package import EvidenceVerifier
 import json
 import os
@@ -52,6 +53,7 @@ from dashboards.app.backend.models import (
     SafetyStatus,
     StartRunRequest,
     StepState,
+    validate_isolated_lab_target,
 )
 
 
@@ -64,6 +66,38 @@ if hasattr(sys.stdout, "reconfigure"):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _scan_redaction_ready() -> bool:
+    """Fail closed unless response snippets are omitted in representative cases."""
+    marker = "fixturecsrfvalue1234567890"
+    examples = (
+        f"<input type='hidden' name='csrf_token' value='{marker}'>",
+        f'<input value="{marker}" name="csrf_token" type="hidden">',
+        f'<input name=csrf_token value={marker}>',
+        f'{{"csrf_token":"{marker}"}}',
+        f"<input name='csrf_token' value='{marker}",
+    )
+    try:
+        return all(discovery_recorder.redact_secrets({"body_snippet": example}) == {"body_snippet": BODY_SNIPPET_OMITTED}
+                   for example in examples)
+    except Exception:
+        return False
+
+
+class _ReadOnlyScanGate(CentralizedSafetyGate):
+    """Narrow non-isolated scans to read-only requests before any transport."""
+
+    def dispatch(self, req):
+        method = getattr(req, "method", None)
+        form = getattr(req, "form", None)
+        if type(method) is not str or method.strip().upper() not in ("GET", "HEAD") or form:
+            return DispatchResponse(
+                status_code=0, headers={}, body="", raw_bytes_len=0, truncated=False,
+                outcome="DENIED", durable_confirmed=False, canonical_url="",
+                refusal_reason="SCAN_READ_ONLY_METHOD_REQUIRED",
+            )
+        return super().dispatch(req)
 
 
 def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
@@ -96,7 +130,7 @@ def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
     )
     rate_limiter = TokenBucketRateLimiter(requests_per_second=2.0, burst=1)
 
-    action_allowlist = {
+    action_allowlist = set() if req.execution_scope == "workflow" else {
         lab.ACTION,
         "ACTION-RECON-001",
         "ACTION-SCAN-001",
@@ -108,10 +142,11 @@ def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
         action_allowlist |= {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
         if req.external_scanners:
             action_allowlist |= {"ACTION-SCAN-002"}
-        if req.approve_authenticated_workflow:
-            action_allowlist |= {"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"}
+    if req.approve_authenticated_workflow:
+        action_allowlist |= {"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"}
 
-    gate = CentralizedSafetyGate(
+    gate_type = CentralizedSafetyGate if req.approve_authenticated_workflow else _ReadOnlyScanGate
+    gate = gate_type(
         base_origin=origin,
         target_registry=registry,
         target_allowlist={target_id},
@@ -479,8 +514,18 @@ class RunManager:
 
     def start_run(self, req: StartRunRequest, event_sink: EventSink) -> ControlResponse:
         """Start a new execution run in a dedicated background worker thread."""
+        # Decouple the worker's request from the caller's mutable model.
+        req = req.model_copy(deep=True)
+        if req.mode != "deny-demo":
+            try:
+                req.target_origin = validate_isolated_lab_target(req.target, req.target_origin)
+            except (TypeError, ValueError):
+                return ControlResponse(success=False, message="ISOLATED_LAB_TARGET_UNSUPPORTED", timestamp_utc=_utc_now_iso())
+        if req.execution_scope != "workflow" and req.mode != "deny-demo" and not _scan_redaction_ready():
+            return ControlResponse(success=False, message="SCAN_REDACTION_UNSAFE", timestamp_utc=_utc_now_iso())
         provider_config = (self.model_profiles.snapshot()
-                           if self.model_profiles is not None and req.planner == "llm" else None)
+                           if self.model_profiles is not None and req.planner == "llm"
+                           and req.execution_scope != "workflow" else None)
         with self._lock:
             if (self._active_thread is not None and self._active_thread.is_alive()) or self._run_status.state in (
                     AgentState.RUNNING, AgentState.STARTING, AgentState.PAUSED, AgentState.STOPPING,
@@ -507,13 +552,17 @@ class RunManager:
             self._active_dir = run_dir
 
             # Initialize states
-            planner_mode_str = "LLM" if req.planner in ("llm", "llm-unavailable") else ("HYBRID" if req.planner == "hybrid" else "RULE")
+            planner_mode_str = ("NONE" if req.execution_scope == "workflow" else
+                                "LLM" if req.planner in ("llm", "llm-unavailable") else
+                                "HYBRID" if req.planner == "hybrid" else "RULE")
+            self._active_runner = None
             self._run_status = RunStatus(
                 run_id=run_id,
                 state=AgentState.STARTING,
                 mode=req.mode,
-                planner=req.planner,
+                planner="none" if req.execution_scope == "workflow" else req.planner,
                 control_mode=req.control_mode,
+                execution_scope=req.execution_scope,
                 scenario=req.scenario,
                 target=req.target,
                 target_origin=req.target_origin or "http://127.0.0.1:18088",
@@ -522,9 +571,11 @@ class RunManager:
             self._agent_status = AgentStatus(
                 state=AgentState.STARTING,
                 mode=req.mode,
-                planner=req.planner,
+                planner="none" if req.execution_scope == "workflow" else req.planner,
                 control_mode=req.control_mode,
                 requested_mode=planner_mode_str,
+                provider=None if req.execution_scope == "workflow" else "rule_engine",
+                model=None if req.execution_scope == "workflow" else "none",
                 scanner_status={tool: {"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED"}
                                 for tool in req.external_scanners},
             )
@@ -693,6 +744,13 @@ class RunManager:
 
             elif ev_type in ("WORKFLOW_STARTED", "WORKFLOW_COMPLETED"):
                 self._agent_status.current_execution = {**payload, "tool": "Authenticated lab workflow"}
+                if self._run_status.execution_scope == "workflow":
+                    if ev_type == "WORKFLOW_STARTED":
+                        self._pipeline_status.steps["EXECUTE"] = StepState.RUNNING
+                    elif payload.get("failed_checks") == 0:
+                        self._pipeline_status.steps["EXECUTE"] = StepState.PASS
+                    else:
+                        self._pipeline_status.steps["EXECUTE"] = StepState.FAILED
 
             elif ev_type in ("SCANNER_STARTED", "SCANNER_COMPLETED"):
                 tool = payload.get("tool", "scanner")
@@ -1030,12 +1088,18 @@ class RunManager:
         """Background execution worker for active run."""
         recorder = None
         gate = None
+        runner = None
         try:
+            if req.mode != "deny-demo":
+                req.target_origin = validate_isolated_lab_target(req.target, req.target_origin)
+            if req.execution_scope != "workflow" and req.mode != "deny-demo" and not _scan_redaction_ready():
+                raise RuntimeError("SCAN_REDACTION_UNSAFE")
             recorder = lab.new_recorder(run_dir / "assessment", run_id)
             gate = _run_gate(req, recorder)
             approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, req.target, "*",
                                       time.time(), time.time() + 900)
-                        if req.approve_read_only or req.approve_active_verification else None)
+                        if req.approve_read_only or req.approve_active_verification
+                        or req.approve_authenticated_workflow else None)
 
             with self._lock:
                 if self._safety_status.kill_switch_active or self._run_status.state == AgentState.BLOCKED:
@@ -1046,11 +1110,16 @@ class RunManager:
                 self._run_status.state = AgentState.RUNNING
                 self._agent_status.state = AgentState.RUNNING
                 self._pipeline_status.steps["RANGE"] = StepState.PASS
-                self._pipeline_status.steps["OBSERVE"] = StepState.RUNNING
+                if req.execution_scope == "workflow":
+                    for step in ("OBSERVE", "STATE", "PLAN"):
+                        self._pipeline_status.steps[step] = StepState.NOT_RUN
+                else:
+                    self._pipeline_status.steps["OBSERVE"] = StepState.RUNNING
 
             recorder.persist_phase_artifact("dashboard_run_scope", {
                 "run_id": run_id,
                 "mode": req.mode,
+                "execution_scope": req.execution_scope,
                 "planner": req.planner,
                 "target_id": req.target,
                 "target_origin": req.target_origin or lab.ORIGIN,
@@ -1136,14 +1205,13 @@ class RunManager:
 
             # Autonomous / Presentation closed-loop execution
             deferred_completion = []
-            workflow_restored = not req.approve_authenticated_workflow
             def on_runtime_event(ev: dict[str, Any]) -> None:
-                if ev.get("type") in ("RUN_COMPLETED", "RUN_FAILED") and not workflow_restored:
+                if ev.get("type") in ("RUN_COMPLETED", "RUN_FAILED", "RUN_STOPPED"):
                     deferred_completion.append(ev)
                     return
                 self._on_runtime_event(ev, event_sink)
 
-            runner = AutonomousRunner(
+            runner = None if req.execution_scope == "workflow" else AutonomousRunner(
                 target_id=req.target,
                 gate=gate,
                 recorder=recorder,
@@ -1168,30 +1236,68 @@ class RunManager:
             if req.approve_authenticated_workflow:
                 from runtime.lab.workflow_lab import WorkflowLab
                 from runtime.lab.authenticated_workflow import AuthenticatedWorkflow
-                is_gns3 = ("10.0.0.2" in (req.target_origin or "")) or ("gns3" in str(req.target).lower())
+                is_gns3 = req.target_origin == "http://10.0.0.2:8080"
                 on_runtime_event({"type": "WORKFLOW_STARTED", "payload": {"status": "RUNNING", "executor": "FIXED_WORKFLOW_NOT_LLM", "provider": "GNS3" if is_gns3 else "DOCKER"}})
                 with WorkflowLab(run_id, recorder, is_gns3=is_gns3, target_origin=req.target_origin) as workflow_lab:
                     workflow_result = AuthenticatedWorkflow(gate, recorder, approval, workflow_lab).execute()
-                    report = runner.run()
-                workflow_restored = True
+                    if runner is not None:
+                        report = runner.run()
                 workflow_result["original_volume_restored"] = True
                 on_runtime_event({"type": "WORKFLOW_COMPLETED", "payload": workflow_result})
-                for ev in deferred_completion:
-                    self._on_runtime_event(ev, event_sink)
+                if runner is None:
+                    if type(workflow_result) is not dict or workflow_result.get("status") != "COMPLETED":
+                        raise RuntimeError("WORKFLOW_RESULT_INVALID")
+                    failed_checks = workflow_result.get("failed_checks")
+                    if type(failed_checks) is not int or failed_checks < 0:
+                        raise RuntimeError("WORKFLOW_RESULT_INVALID")
+                    report = AutonomousRunReport(
+                        run_id=run_id, target_id=req.target, requested_planner_mode="NONE",
+                        actual_planner_mode="NONE", provider="none", model="none",
+                        decisions_count=0, approved_actions_count=0, denied_actions_count=0,
+                        network_dispatch_count=gate.network_dispatch_count, unsafe_dispatch_count=0,
+                        observations_added_count=0,
+                        stop_reason=("STOP_REQUESTED" if gate.kill_switch.is_active() else
+                                     "WORKFLOW_CHECKS_FAILED" if failed_checks else "WORKFLOW_COMPLETED"),
+                        traces=[], final_state={"observed_facts": []},
+                        evidence_refs=[art["evidence_id"] for art in recorder.artifacts],
+                        control_mode=req.control_mode,
+                    )
             else:
-                report = runner.run()
-            scanner_results = list(runner.scanner_executor.results) if runner.scanner_executor else []
+                if runner is None:
+                    raise RuntimeError("WORKFLOW_APPROVAL_REQUIRED")
+                if req.execution_scope in ("scan", "combined"):
+                    if approval is None:
+                        raise RuntimeError("SCAN_APPROVAL_REQUIRED")
+                    from runtime.lab.workflow_lab import WorkflowLab
+                    is_gns3 = req.target_origin == "http://10.0.0.2:8080"
+                    with WorkflowLab(run_id, recorder, is_gns3=is_gns3, target_origin=req.target_origin):
+                        report = runner.run()
+                else:
+                    report = runner.run()
+            if gate.halted_due_to_evidence:
+                raise EvidenceFailure("RUN_EVIDENCE_HALTED")
+            scanner_results = list(runner.scanner_executor.results) if runner and runner.scanner_executor else []
             for tool in req.external_scanners:
                 if not any(result["tool"] == tool for result in scanner_results):
                     missing = {"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED",
-                               "reason": report.stop_reason}
+                               "reason": report.stop_reason, "run_id": run_id}
+                    missing["evidence_id"] = recorder.persist_phase_artifact("scanner_result", missing)["evidence_id"]
                     scanner_results.append(missing)
                     on_runtime_event({"type": "SCANNER_COMPLETED", "payload": missing})
 
-            # Persist report.json
-            try:
-                (run_dir / "report.json").write_text(json.dumps({
+            # Verify before reporting completion; never replace an existing report.
+            verify_res = lab.verify(recorder)
+            terminal_type = deferred_completion[-1].get("type") if deferred_completion else None
+            recorded_state = {"RUN_COMPLETED": "COMPLETED", "RUN_FAILED": "FAILED",
+                              "RUN_STOPPED": "STOPPED"}.get(terminal_type, "INCOMPLETE")
+            if gate.kill_switch.is_active():
+                recorded_state = "STOPPED"
+                if req.execution_scope == "workflow":
+                    report.stop_reason = "STOP_REQUESTED"
+            with (run_dir / "report.json").open("x", encoding="utf-8") as report_stream:
+                json.dump({
                     "workflow_result": workflow_result,
+                    "execution_scope": req.execution_scope,
                     "run_id": report.run_id,
                     "target_id": report.target_id,
                     "target_origin": req.target_origin or lab.ORIGIN,
@@ -1213,14 +1319,14 @@ class RunManager:
                     "findings": report.findings,
                     "active_verifications_count": report.active_verifications_count,
                     "scanner_results": scanner_results,
-                    "evidence_refs": report.evidence_refs,
+                    "evidence_refs": [art["evidence_id"] for art in recorder.artifacts],
                     "final_state": report.final_state,
-                }, indent=2), encoding="utf-8")
-            except Exception:
-                pass
+                    **({"state": "STOPPED" if report.stop_reason == "STOP_REQUESTED" else
+                       "FAILED" if report.stop_reason == "WORKFLOW_CHECKS_FAILED" else "COMPLETED"}
+                       if req.execution_scope == "workflow" else {"state": recorded_state}),
+                }, report_stream, indent=2)
 
             # Verify evidence integrity post-run
-            verify_res = lab.verify(recorder)
             self._on_runtime_event({
                 "run_id": run_id,
                 "type": "EVIDENCE_VERIFIED",
@@ -1244,6 +1350,20 @@ class RunManager:
                 self._safety_status.permits_count = report.approved_actions_count
                 self._safety_status.denials_count = report.denied_actions_count
 
+            if req.execution_scope == "workflow":
+                failed = report.stop_reason == "WORKFLOW_CHECKS_FAILED"
+                stopped = report.stop_reason == "STOP_REQUESTED" or gate.kill_switch.is_active()
+                self._on_runtime_event({
+                    "type": "RUN_STOPPED" if stopped else "RUN_FAILED" if failed else "RUN_COMPLETED",
+                    "payload": {"stop_reason": report.stop_reason,
+                                **({"error": "Workflow checks failed"} if failed else {})},
+                }, event_sink)
+            else:
+                for ev in deferred_completion:
+                    if gate.kill_switch.is_active() and ev.get("type") == "RUN_COMPLETED":
+                        ev = {"type": "RUN_STOPPED", "payload": {"stop_reason": "STOP_REQUESTED"}}
+                    self._on_runtime_event(ev, event_sink)
+
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             dispatches = gate.network_dispatch_count if gate is not None else 0
@@ -1257,19 +1377,33 @@ class RunManager:
                     verification = {"state": "VERIFIED", "records": verified.get("records", 0)}
                 except Exception:
                     verification = {"state": "FAILED", "records": 0}
+            failure_reason = "WORKFLOW_FAILED" if req.approve_authenticated_workflow else "RUN_FAILED"
+            scanner_executor = getattr(runner, "scanner_executor", None)
+            observed_scanners = getattr(scanner_executor, "results", [])
+            if type(observed_scanners) is not list:
+                observed_scanners = []
+            failure_scanners = []
+            for tool in req.external_scanners:
+                observed = next((item for item in observed_scanners
+                                 if type(item) is dict and item.get("tool") == tool), None)
+                failure_scanners.append(observed if observed is not None else {
+                    "tool": tool, "status": "NOT_RUN" if runner is None else "UNKNOWN",
+                    "coverage": "NOT_TESTED" if runner is None else "NOT_RECORDED",
+                    "reason": failure_reason,
+                })
             failure_report = {
                 "workflow_result": None,
                 "run_id": run_id,
                 "target_id": req.target,
                 "target_origin": req.target_origin or lab.ORIGIN,
-                "requested_planner_mode": "HYBRID" if req.planner == "hybrid" else ("RULE" if req.planner == "rule" else "LLM"),
+                "requested_planner_mode": "NONE" if req.execution_scope == "workflow" else ("HYBRID" if req.planner == "hybrid" else ("RULE" if req.planner == "rule" else "LLM")),
                 "actual_planner_mode": "NONE",
                 "control_mode": req.control_mode,
-                "provider": "rule_engine" if req.planner == "rule" else None,
-                "model": "none" if req.planner == "rule" else None,
+                "provider": "rule_engine" if req.execution_scope != "workflow" and req.planner == "rule" else None,
+                "model": "none" if req.execution_scope != "workflow" and req.planner == "rule" else None,
                 "state": "FAILED",
                 "error": error,
-                "stop_reason": "WORKFLOW_FAILED" if req.approve_authenticated_workflow else "RUN_FAILED",
+                "stop_reason": failure_reason,
                 "decisions_count": 0,
                 "approved_actions_count": 0,
                 "denied_actions_count": 0,
@@ -1281,9 +1415,7 @@ class RunManager:
                 "operator_rejections_count": 0,
                 "findings": [],
                 "active_verifications_count": 0,
-                "scanner_results": [{"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED",
-                                     "reason": "WORKFLOW_FAILED"}
-                                    for tool in req.external_scanners],
+                "scanner_results": failure_scanners,
                 "evidence_refs": evidence_refs,
                 "evidence_verification": verification,
                 "final_state": {},
@@ -1309,17 +1441,14 @@ class RunManager:
                 self._evidence_status.integrity_status = verification["state"]
                 self._pipeline_status.steps["COMPLETE"] = StepState.FAILED
 
-            event_sink.publish(AgentEvent(
-                event_id=f"EVT-{uuid.uuid4().hex[:12]}",
-                run_id=run_id,
-                type="RUN_FAILED",
-                timestamp_utc=_utc_now_iso(),
-                payload={"error": str(exc), "type": type(exc).__name__,
-                         "stop_reason": failure_report["stop_reason"],
-                         "network_dispatches": dispatches,
-                         "evidence_count": len(artifacts),
-                         "evidence_verification": verification["state"]},
-            ))
+            self._on_runtime_event({
+                "run_id": run_id, "type": "RUN_FAILED",
+                "payload": {"error": str(exc), "type": type(exc).__name__,
+                            "stop_reason": failure_report["stop_reason"],
+                            "network_dispatches": dispatches,
+                            "evidence_count": len(artifacts),
+                            "evidence_verification": verification["state"]},
+            }, event_sink)
         finally:
             with self._lock:
                 self._run_status.ended_at_utc = _utc_now_iso()

@@ -434,6 +434,7 @@ class CentralizedSafetyGate:
             "ACTION-WEB-002",
             "ACTION-WEB-003",
             "ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002",
+            "ACTION-LOGIC-001",
         )
         if req.action_id not in self.action_allowlist or req.action_id not in dispatchable_actions:
             return DispatchResponse(
@@ -454,8 +455,8 @@ class CentralizedSafetyGate:
         # Bounded form POSTs allowed for authenticated workflows or approved lab active verification
         norm_method = req.method.upper().strip()
         is_verification_post = (
-            req.action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003")
-            and norm_method == "POST"
+            req.action_id in ("ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-LOGIC-001")
+            and norm_method in ("POST", "GET")
             and self.lab_mode
             and bool(req.form)
         )
@@ -680,10 +681,12 @@ class CentralizedSafetyGate:
             dispatch_status = res.status
             response_headers = res.getheaders()
             resp_headers = dict(response_headers)
-            if authenticated:
-                for key, value in response_headers:
-                    if key.lower() == "set-cookie" and value.lower().startswith("session="):
-                        resp_headers["Set-Cookie"] = value
+            # Preserve the session cookie selected from repeated Set-Cookie
+            # headers for both the fixed workflow and bounded form verification.
+            # Non-workflow evidence still passes through redact_secrets below.
+            for key, value in response_headers:
+                if key.lower() == "set-cookie" and value.lower().startswith("session="):
+                    resp_headers["Set-Cookie"] = value
 
             raw_bytes = res.read(self.budget_tracker.max_body_bytes)
             raw_len = len(raw_bytes)

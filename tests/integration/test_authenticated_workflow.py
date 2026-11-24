@@ -11,7 +11,7 @@ from unittest.mock import call, patch
 
 from test_ecommerce_storage import load_app
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
-from runtime.lab.authenticated_workflow import AuthenticatedWorkflow
+from runtime.lab.authenticated_workflow import AuthenticatedWorkflow, _order_badge
 from runtime.lab.workflow_policy import WorkflowPolicy, WORKFLOW_ACTIONS, AUTH_ACTION
 from runtime.lab.workflow_lab import WorkflowLab
 from runtime.safety.discovery_gate import CentralizedSafetyGate, ApprovalToken, BudgetTracker, TokenBucketRateLimiter, DiscoveryRequest
@@ -46,6 +46,10 @@ class AuthenticatedWorkflowTests(unittest.TestCase):
             self.assertEqual(self.gate.dispatch(req).outcome, "DENIED")
             transport.assert_not_called()
 
+    def test_order_status_requires_actual_badge_not_css_declaration(self):
+        self.assertIsNone(_order_badge("<style>.badge-shipped { color: green; }</style>"))
+        self.assertEqual(_order_badge("<span class='badge badge-shipped'>shipped</span>"), "shipped")
+
     def test_request_model_requires_separate_write_opt_in(self):
         with self.assertRaises(ValueError):
             StartRunRequest(approve_authenticated_workflow=True)
@@ -74,6 +78,15 @@ class AuthenticatedWorkflowTests(unittest.TestCase):
             result = AuthenticatedWorkflow(self.gate, self.recorder, self.approval, lab).execute()
         self.assertEqual(result["failed_checks"], 0, result)
         self.assertGreaterEqual(len(result["checks"]), 10)
+        for check in result["checks"]:
+            self.assertTrue({"route", "method", "role", "auth_state", "case", "negative", "expected"} <= set(check))
+        peer = next(check for check in result["checks"] if check["check"] == "peer_cannot_read_order")
+        self.assertEqual((peer["route"], peer["role"], peer["auth_state"], peer["negative"]),
+                         ("/orders/{id}", "OTHER_USER", "AUTHENTICATED", True))
+        by_name = {check["check"]: check for check in result["checks"]}
+        for name in ("guest_order_denied", "guest_admin_denied", "checkout_missing_csrf_denied",
+                     "peer_csrf_control", "user_admin_order_change_denied"):
+            self.assertEqual(by_name[name]["status"], "PASS", name)
         self.assertIsNone(self.gate.workflow_policy)
         evidence = "".join(path.read_text(encoding="utf-8") for path in (self.root / "evidence").glob("*.json"))
         self.assertNotIn("workflow-password-not-for-evidence", evidence)

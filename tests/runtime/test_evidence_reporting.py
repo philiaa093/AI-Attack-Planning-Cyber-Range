@@ -25,6 +25,7 @@ import time
 import unittest
 from dataclasses import asdict
 from pathlib import Path
+from unittest.mock import patch
 
 from runtime.safety.discovery_gate import (
     ApprovalToken,
@@ -326,6 +327,73 @@ class EvidenceReportingTests(unittest.TestCase):
         # Verification check should pass secrets_clean
         v_res = EvidenceVerifier.verify_directory(ev_dir)
         self.assertTrue(v_res.secrets_clean)
+
+    def test_response_snippet_omitted_before_temporary_write_and_hash(self) -> None:
+        """Do not persist response bodies, including malformed or truncated secret markup."""
+        ev_dir = self.base_dir / "response_redaction_evidence"
+        recorder = DurableEvidenceRecorder(run_id="RUN-BODY-REDACTION", base_dir=ev_dir)
+        secret = "syntheticCsrfSecret123456789"
+        examples = (
+            f"<input type='hidden' name='csrf_token' value='{secret}'>",
+            f'<input value="{secret}" type="hidden" name="csrf_token">',
+            f'<input value={secret} name=csrf_token>',
+            json.dumps({"csrf_token": secret}),
+            f"<input name='csrf_token' value='{secret}",
+        )
+        real_replace = os.replace
+        temporary_writes = []
+        def observe_temporary_file(src, dst):
+            temporary_writes.append(Path(src).read_bytes())
+            real_replace(src, dst)
+
+        for index, body in enumerate(examples):
+            with self.subTest(body_type=index):
+                original = {"run_id": "RUN-BODY-REDACTION", "body_snippet": body,
+                            "status_code": 200, "body_bytes": len(body), "truncated": True,
+                            "headers": {"Set-Cookie": "session=" + secret, "Content-Type": "text/html"},
+                            "nested": [{" BoDy_SnIpPeT ": {"value": secret}}]}
+                with patch("runtime.evidence.discovery_recorder.os.replace", side_effect=observe_temporary_file):
+                    artifact = recorder.persist_result(original)
+                raw_payload = Path(artifact["payload_path"]).read_bytes()
+                payload = json.loads(raw_payload)
+                self.assertEqual(payload["body_snippet"], "[BODY_SNIPPET_OMITTED]")
+                self.assertEqual(payload["nested"][0][" BoDy_SnIpPeT "], "[BODY_SNIPPET_OMITTED]")
+                self.assertEqual(payload["status_code"], 200)
+                self.assertEqual(payload["body_bytes"], len(body))
+                self.assertTrue(payload["truncated"])
+                self.assertEqual(payload["headers"]["Content-Type"], "text/html")
+                self.assertEqual(payload["headers"]["Set-Cookie"], "[REDACTED]")
+                self.assertEqual(hashlib.sha256(raw_payload).hexdigest(), artifact["sha256"])
+                self.assertEqual(original["body_snippet"], body)
+
+        self.assertEqual(len(temporary_writes), 2 * len(examples))
+        for raw in temporary_writes:
+            self.assertNotIn(secret.encode(), raw)
+        for path in ev_dir.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(secret.encode(), path.read_bytes())
+
+    def test_failed_partial_response_write_leaves_no_raw_snippet(self) -> None:
+        ev_dir = self.base_dir / "partial_response_evidence"
+        recorder = DurableEvidenceRecorder(run_id="RUN-BODY-PARTIAL", base_dir=ev_dir)
+        recorder.inject_partial_write()
+        secret = "syntheticPartialCsrf123456789"
+        original_unlink = Path.unlink
+        temporary_writes = []
+        def observe_temporary_file(path, *args, **kwargs):
+            if path.parent == ev_dir and path.suffix == ".tmp" and path.exists():
+                temporary_writes.append(path.read_bytes())
+            return original_unlink(path, *args, **kwargs)
+        with patch("pathlib.Path.unlink", autospec=True, side_effect=observe_temporary_file):
+            with self.assertRaises(EvidenceFailure):
+                recorder.persist_result({"body_snippet": f"<input name='csrf_token' value='{secret}'>"})
+        self.assertEqual(len(temporary_writes), 1)
+        self.assertNotIn(b"<input", temporary_writes[0])
+        self.assertNotIn(b"syntheticPartial", temporary_writes[0])
+        for path in ev_dir.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(secret.encode(), path.read_bytes())
+        self.assertFalse(list(ev_dir.glob("*.tmp")))
 
     # -------------------------------------------------------------------------
     # E05: Expected differs observed

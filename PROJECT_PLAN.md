@@ -6,6 +6,38 @@ Roadmap hiện hành: `PLAN-ENTERPRISE-REDTEAM-001`, nền tảng nghiên cứu 
 
 Tái dùng contracts, normalizer, belief/state management, bounded actions, Safety Gate, recorder và evaluator hiện có. Không viết lại thành phần chỉ vì roadmap mới; xác định khoảng thiếu bằng source và checks trước khi thêm code.
 
+### Đợt tích hợp kiểm tra logic nghiệp vụ và phân tích bất thường giao dịch (ACTION-LOGIC-001)
+
+Theo yêu cầu mở rộng chiều sâu kiểm thử vào lỗ hổng logic nghiệp vụ (Race conditions, Idempotency, Logic Tampering, Numeric Underflow) ngày 2026-11-24. Allowlist: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/safety/discovery_gate.py`, `configs/safety/action-allowlist.yaml`, `scripts/validation/validate_scaffold.py`, `actions/catalog/action-catalog.json`, `actions/catalog/ACTION-LOGIC-001.json`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `tests/runtime/test_business_logic_executor.py`, `tests/runtime/test_observed_planner.py`.
+
+Acceptance:
+- `SafeBusinessLogicVerificationExecutor` thực thi kiểm tra có giới hạn (bounded probes) đối với các trường form logic/giao dịch (`quantity`, `product_id`, `idempotency_key`, `amount`) thông qua `CentralizedSafetyGate`.
+- Phân loại chuẩn xác: `VERIFIED_IN_LAB` khi server chấp nhận số âm hoặc broken idempotency; `SIGNAL` khi gặp HTTP 500 server crash; `NEGATIVE` khi server từ chối hợp lệ (400/409/422); `REFUSED` khi gate từ chối.
+- Planner tự động lập kế hoạch `ACTION-LOGIC-001` với prefix `HYPO-LOGIC` trên các form giỏ hàng / checkout.
+- Toàn bộ dispatches và artifacts tuân thủ Section 16 confirmation semantics và ghi durable evidence.
+
+### Đợt coverage, tách workflow và matrix kiểm tra
+
+Người dùng duyệt specification và allowlist ngày 2026-11-24. Phạm vi duy nhất: `PROJECT_PLAN.md`; `dashboards/app/backend/models.py`, `dashboards/app/backend/run_manager.py`, `dashboards/app/backend/run_history.py`, `dashboards/app/backend/control_api.py`, `dashboards/app/backend/coverage.py`; `runtime/lab/authenticated_workflow.py`; `dashboards/app/frontend/src/api/types.ts`, `dashboards/app/frontend/src/api/client.ts`, `dashboards/app/frontend/src/components/controls/StartRunModal.tsx`, `dashboards/app/frontend/src/components/activity/CurrentActivity.tsx`, `dashboards/app/frontend/src/components/coverage/CoveragePanel.tsx`, `dashboards/app/frontend/src/pages/ControlCenter.tsx`, `dashboards/app/frontend/src/pages/RunDetailPage.tsx`; `tests/backend/test_runtime_events.py`, `tests/backend/test_history_truthfulness.py`, `tests/backend/test_coverage.py`, `tests/integration/test_authenticated_workflow.py`, `tests/integration/test_workflow_coverage_matrix.py`, `dashboards/app/frontend/src/__tests__/RunBudgetAndVerification.test.tsx`, `dashboards/app/frontend/src/__tests__/CoveragePanel.test.tsx`.
+
+Acceptance: hiển thị coverage và lý do bỏ qua có nguồn, trạng thái thiếu evidence phải là chưa biết/chưa chạy; phân biệt scanner, kiểm tra nội bộ và workflow cố định. Cho phép chạy scan hoặc workflow riêng, giữ approval, gate, ngân sách, cô lập và restore; tương thích request cũ trong phạm vi lab-ecommerce. Scan không có workflow dùng snapshot/bản sao và restore độc lập, không chạy workflow nghiệp vụ; chỉ được dispatch GET/HEAD, POST bị từ chối trước network và ghi kết quả chưa kiểm tra. Matrix route × role × auth-state × negative case chỉ đánh dấu kết quả theo evidence của run, phân biệt với test fixture; không suy coverage của run từ source/test hoặc tạo evidence lịch sử. Không sửa catalog, Safety Gate, planner, evidence cũ hoặc phần `ACTION-LOGIC-001` do agent khác phụ trách.
+
+Checks: focused backend/frontend regressions, matrix fixtures cô lập hoặc mock, integrity và missing/partial evidence, refusal/no-side-effect khi thiếu approval, workflow-only/scan-only và restore-on-failure; scoped diff và repository checker đối chiếu baseline. Để tránh chọn sai provider snapshot, các run có dispatch chỉ nhận `lab-ecommerce` tại Docker `http://127.0.0.1:18088` hoặc GNS3 `http://10.0.0.2:8080`; deny-demo không dispatch. Scan fail-closed nếu phép thử synthetic cho thấy redactor còn để lộ giá trị CSRF trong HTML; không chạy live lab/provider hay nâng task status; handoff/review độc lập pending.
+
+### Đợt sửa bộ đếm kiểm tra nội bộ
+
+Người dùng duyệt specification và allowlist: `PROJECT_PLAN.md`, `runtime/orchestration/autonomous_runner.py`, `tests/runtime/test_external_scanners.py`, `tests/backend/test_coverage.py`. `active_verifications_count` chỉ tăng sau khi executor kiểm tra nội bộ trả kết quả; không tăng cho `ACTION-SCAN-002` của bất kỳ scanner nào. Giữ nguyên cách đếm `ACTION-WEB-001/002/003` và `ACTION-LOGIC-001`, kết quả scanner và coverage; không sửa report/evidence cũ hoặc phần logic nghiệp vụ của agent khác.
+
+Checks: fixtures/mock cho scanner-only, từng action nội bộ, scanner cộng kiểm tra nội bộ và trường hợp lỗi; đối chiếu report mới với coverage từ evidence. Kiểm thử offline, scoped diff và repository checker; chỉ restart backend của launcher khi đã xác minh không có run hoặc khóa hoạt động theo yêu cầu trước đó; không tự chạy lại lab/provider hoặc nâng task status; independent review pending.
+
+### Đợt gỡ chặn scan do redaction response
+
+Người dùng duyệt specification và allowlist ngày 2026-11-25. Phạm vi duy nhất: `PROJECT_PLAN.md`, `runtime/evidence/discovery_recorder.py`, `dashboards/app/backend/run_manager.py`, `tests/runtime/test_evidence_reporting.py`, `tests/runtime/test_discovery_safety.py`, `tests/backend/test_profile_planner.py`, `tests/backend/test_coverage.py`.
+
+Acceptance: recorder thay toàn bộ giá trị `body_snippet` bằng marker cố định trước serialize, ghi file tạm và hash; vẫn giữ metadata kết quả, response trong bộ nhớ cho parser, ordering và failure-stop. Không chỉnh evidence đã tồn tại. Chốt scan chỉ cho phép tiếp tục khi kiểm tra synthetic chứng minh đúng marker cố định; lỗi redactor hoặc cấu trúc khác phải fail-closed. Không sửa Safety Gate hoặc phần `ACTION-LOGIC-001` của agent khác; không tuyên bố việc bỏ snippet chứng minh mọi nguồn dữ liệu đều không lộ secret.
+
+Checks: recorder và Gate trên fixtures HTML/JSON/truncation, thứ tự thuộc tính, headers nhạy cảm, structured metadata, integrity/hash, failure-stop, và không ghi marker bí mật vào bất kỳ file tạm/evidence; mô phỏng snapshot/runner trong profile tests để tránh Docker/GNS3 thật. Chạy focused regressions, scoped diff và repository checker; không chạy live lab/provider, không nâng task status, review độc lập pending.
+
 ### Phạm vi đợt chuẩn hóa tài liệu
 
 Người dùng yêu cầu bắt đầu sau đề xuất chuẩn hóa ba file. Allowlist duy nhất: `PROJECT_CONTEXT.md`, `PROJECT_PLAN.md`, `TASKS.md`. Đợt này thu gọn bối cảnh/kế hoạch, đưa RT lên đầu đường đọc, giữ nguyên task IDs/status/dependencies và receipts độc nhất. Không sửa code, contracts, catalog, configs, scenarios, evidence, README hoặc validator; không chạy lab/provider, tự approve, finalize, append history hoặc commit.
@@ -30,11 +62,17 @@ Checks: hồi quy snapshot ownership/content và failure-stop, kiểm command sc
 
 ### Đợt hoàn thiện workflow xác thực GNS3 và báo cáo lỗi
 
-Theo yêu cầu sửa phiên `RUN-DASH-b0a195f649124040af9be4b3f3fda816` và kết quả live `RUN-DASH-5c14497403454aaf9487854751992c7d`, allowlist duy nhất: `PROJECT_PLAN.md`, `cyber-range/targets/ecommerce/app.py`, `runtime/lab/workflow_lab.py`, `runtime/lab/authenticated_workflow.py`, `runtime/lab/capability_registry.py`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `dashboards/app/backend/run_manager.py`, `tests/integration/test_authenticated_workflow.py`, `tests/integration/test_ecommerce_workflow_control.py`, `tests/runtime/test_inconclusive_post_gns3.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_autonomous_runner.py`.
+Theo yêu cầu sửa phiên `RUN-DASH-b0a195f649124040af9be4b3f3fda816` và kết quả live `RUN-DASH-5c14497403454aaf9487854751992c7d`, allowlist duy nhất: `PROJECT_PLAN.md`, `cyber-range/targets/ecommerce/app.py`, `runtime/lab/workflow_lab.py`, `runtime/lab/authenticated_workflow.py`, `runtime/lab/capability_registry.py`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `runtime/safety/discovery_gate.py`, `dashboards/app/backend/run_manager.py`, `tests/integration/test_authenticated_workflow.py`, `tests/integration/test_ecommerce_workflow_control.py`, `tests/runtime/test_inconclusive_post_gns3.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_autonomous_runner.py`.
 
 Acceptance: GNS3 không được ghi `ADMIN_PROVISIONED`, `SNAPSHOT` hoặc `RESTORED` nếu chưa có thao tác management-plane tương ứng. ShopLab control API chạy trên cổng riêng chỉ khi có bearer token từ environment; chỉ nhận fixed health/snapshot/promote/restore routes, run ID và username workflow được canonicalize, body bị giới hạn, không proxy/redirect/arbitrary path hoặc planner visibility. Snapshot phải có hash từ dữ liệu thật; promotion phải đổi role và vô hiệu session; restore phải khôi phục database/invoice baseline trước khi phát terminal event. Workflow xác minh quyền admin sau login và dùng lỗi cố định theo stage/status. Mọi failure trước `runner.run()` vẫn ghi failure report, dispatch/evidence counters và evidence verification; không báo scanner/planner đã chạy. Planner phải canonicalize resource quan sát được, ưu tiên query/GET trước form POST, không chọn control/secret fields làm probe, và không ghi `discovery_surface_complete` khi candidate chưa được đánh giá vì gate từ chối. Safety preflight chỉ chấp nhận POST input có provenance từ form cùng origin đã quan sát; phản hồi POST không đủ điều kiện phải là `INCONCLUSIVE`, không được ghi negative sạch.
 
 Checks: control API authentication, route/body/schema closure, snapshot/promote/session invalidation/restore round trip, wrong-run/no-snapshot refusal, GNS3 client no-proxy/no-redirect và restore-on-error; existing authenticated workflow, ecommerce auth/admin, backend runtime/history và focused scanner/planner regressions. Live GNS3 cần target được redeploy với control port/token matching backend environment; không suy ra validation từ mocks hoặc synthetic hashes, không tự thay topology/credential hay chạy workflow ghi dữ liệu trước khi control health đạt.
+
+### Đợt bổ sung launcher demo Windows
+
+Theo yêu cầu tạo BAT khởi chạy toàn bộ demo ngày 2026-11-24, allowlist duy nhất: `PROJECT_PLAN.md`, `demo.bat`. Launcher chỉ quản lý backend/frontend local của repository, đọc `SHOPLAB_GNS3_CONTROL_TOKEN` từ User environment vào process backend mà không ghi giá trị ra file/log, và chỉ kiểm tra trạng thái hai cổng ShopLab từ xa. Không tự điều khiển VM, thay token, sửa cấu hình, xóa evidence hoặc kết luận dịch vụ từ xa đã sẵn sàng khi kết nối chưa thành công.
+
+Acceptance/checks: hỗ trợ `start`, `restart`, `stop`, `status`, `open` và menu tương tác; giữ PID/start-time để chỉ dừng process do launcher tạo; chờ health của backend/frontend có giới hạn; log nằm ngoài repository; kiểm tra dependency rõ ràng và không in secret. Xác minh cú pháp, start/status/restart/stop/start trên local app, sau đó mở giao diện và quan sát DOM sau `networkidle`. Không nâng task status, tự approve, commit hoặc sửa artifacts phiên cũ.
 
 ### Đợt sửa phạm vi ZAP và batch scanner
 

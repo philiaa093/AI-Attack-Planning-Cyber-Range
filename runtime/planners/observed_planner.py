@@ -32,6 +32,8 @@ from shared.schema_validation import validate_shape
 
 from agent.planner.action_catalog import ACTION_CATALOG
 
+PLANNABLE_ACTIONS = frozenset(set(ACTION_CATALOG) | {"ACTION-LOGIC-001"})
+
 
 def _load_env_if_present() -> None:
     """Safely load local .env if present without committing secrets."""
@@ -65,8 +67,9 @@ Output ONLY a JSON object matching this schema:
   "reason_code": "<snake_case_label>",
   "confidence": 1.0
 }
-For ACTION-WEB-001/002/003 also include resource_ref, parameter_name and source_observation_id,
+For ACTION-WEB-001/002/003 and ACTION-LOGIC-001 also include resource_ref, parameter_name and source_observation_id,
 copied exactly from observed parameter metadata. These optional fields are allowed by the plan contract.
+Use ACTION-LOGIC-001 for observed transactional, shopping cart, checkout, quantity, or idempotency inputs.
 ACTION-SCAN-001 analyzes discovered metadata without network requests and identifies observed GET and POST/form inputs.
 ACTION-SCAN-002 runs the operator-selected isolated ZAP/Nuclei scanners on observed GET inputs.
 When approved in the run catalog, propose ACTION-SCAN-002 once after surface discovery and passive analysis.
@@ -276,7 +279,7 @@ class ObservedStatePlanner:
         self.configured_provider = configured_provider
         self.configured_model = configured_model
         self.provider_config = provider_config
-        self.effective_actions = (set(ACTION_CATALOG) - {"ACTION-SCAN-002"}) if effective_actions is None else set(effective_actions) & set(ACTION_CATALOG)
+        self.effective_actions = (set(PLANNABLE_ACTIONS) - {"ACTION-SCAN-002"}) if effective_actions is None else set(effective_actions) & PLANNABLE_ACTIONS
         if provider_config is not None:
             self.configured_provider = provider_config.protocol
             self.configured_model = provider_config.model
@@ -608,7 +611,7 @@ class ObservedStatePlanner:
 
         def canonical_outcome_subject(subject: str) -> str:
             action_id, separator, remainder = subject.partition(":")
-            if not separator or action_id not in {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}:
+            if not separator or action_id not in {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-LOGIC-001"}:
                 return subject
             resource, param_separator, param = remainder.rpartition(":")
             if not param_separator or not resource or not param:
@@ -652,6 +655,7 @@ class ObservedStatePlanner:
         path_candidates: list[dict[str, str]] = []
         reflection_candidates: list[dict[str, str]] = []
         injection_candidates: list[dict[str, str]] = []
+        logic_candidates: list[dict[str, str]] = []
 
         path_keywords = (
             "file", "path", "doc", "invoice", "template", "dir", "include", "view",
@@ -661,10 +665,17 @@ class ObservedStatePlanner:
             "name", "author", "comment", "title", "msg", "message", "body", "content",
             "review", "text", "description", "feedback", "email", "input", "prompt", "val", "data"
         )
+        logic_keywords = (
+            "quantity", "qty", "amount", "price", "count", "num", "balance", "cart",
+            "checkout", "order", "idempotency", "token", "nonce", "coupon", "discount"
+        )
 
         for cand in candidate_inputs:
             p_lower = cand["param"].lower()
-            if any(k in p_lower for k in path_keywords):
+            res_lower = cand["resource"].lower()
+            if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
+                logic_candidates.append(cand)
+            elif any(k in p_lower for k in path_keywords):
                 path_candidates.append(cand)
             elif any(k in p_lower for k in reflection_keywords):
                 reflection_candidates.append(cand)
@@ -672,17 +683,25 @@ class ObservedStatePlanner:
                 injection_candidates.append(cand)
 
         candidate_proposals: list[tuple[int, dict[str, str], str, str, str, float]] = []
+        for cand in logic_candidates:
+            candidate_proposals.append((0, cand, "ACTION-LOGIC-001", "HYPO-LOGIC",
+                                        "verify_business_logic_candidate", 0.85))
         for cand in path_candidates:
-            candidate_proposals.append((0, cand, "ACTION-WEB-003", "HYPO-PATH",
+            candidate_proposals.append((1, cand, "ACTION-WEB-003", "HYPO-PATH",
                                         "verify_path_handling_candidate", 0.85))
         for cand in reflection_candidates:
-            candidate_proposals.append((1, cand, "ACTION-WEB-002", "HYPO-XSS",
+            candidate_proposals.append((2, cand, "ACTION-WEB-002", "HYPO-XSS",
                                         "verify_script_reflection_candidate", 0.80))
         for cand in injection_candidates:
-            candidate_proposals.append((2, cand, "ACTION-WEB-001", "HYPO-SQLI",
+            candidate_proposals.append((3, cand, "ACTION-WEB-001", "HYPO-SQLI",
                                         "verify_input_injection_candidate", 0.80))
-            if any(k in cand["param"].lower() for k in ("q", "query", "search", "keyword")):
-                candidate_proposals.append((3, cand, "ACTION-WEB-002", "HYPO-XSS",
+            param_lower = cand["param"].lower()
+            is_search_input = (
+                param_lower in {"q", "query", "search", "keyword"}
+                or param_lower.endswith(("_query", "_search", "_keyword"))
+            )
+            if is_search_input:
+                candidate_proposals.append((4, cand, "ACTION-WEB-002", "HYPO-XSS",
                                             "verify_script_reflection_candidate", 0.75))
 
         # Read-only/query candidates are evaluated before POST forms. Within a
@@ -749,7 +768,10 @@ class ObservedStatePlanner:
         unresolved_blocked = False
         for cand in candidate_inputs:
             p_lower = cand["param"].lower()
-            if any(k in p_lower for k in path_keywords):
+            res_lower = cand["resource"].lower()
+            if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
+                action_id = "ACTION-LOGIC-001"
+            elif any(k in p_lower for k in path_keywords):
                 action_id = "ACTION-WEB-003"
             elif any(k in p_lower for k in reflection_keywords):
                 action_id = "ACTION-WEB-002"
@@ -806,7 +828,7 @@ class ObservedStatePlanner:
             return None, f"SCHEMA_VALIDATION_ERROR_{errors[0]}"
 
         # Action catalog check
-        if data.get("action_id") not in ACTION_CATALOG:
+        if data.get("action_id") not in PLANNABLE_ACTIONS:
             return None, f"UNKNOWN_ACTION_ID_{data.get('action_id')}"
 
         # Target visibility check

@@ -548,6 +548,28 @@ class ReplanPreflightTests(unittest.TestCase):
         self.assertEqual(res.proposal["reason_code"], "reverify_inconclusive_candidate")
         self.assertTrue(res.proposal["hypothesis_id"].startswith("HYPO-REVERIFY-"))
 
+    def test_quantity_candidate_does_not_schedule_search_reflection(self) -> None:
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001", "ACTION-WEB-001"],
+            "discovered_endpoints": ["/cart/add"],
+            "observed_facts": [
+                {"fact_type": "CANDIDATE_FINDING", "subject": "/cart/add", "value": "post_form_input_quantity"},
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-001:/cart/add:quantity", "value": "NEGATIVE"},
+            ],
+        }
+        proposal = self.planner.propose(state).proposal
+        self.assertNotEqual(proposal["action_id"], "ACTION-WEB-002")
+        self.assertEqual(proposal["action_id"], "ACTION-LOGIC-001")
+
+        # Once ACTION-LOGIC-001 is evaluated, no more hypotheses remain -> ACTION-END-001
+        state["observed_facts"].append(
+            {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-LOGIC-001:/cart/add:quantity", "value": "NEGATIVE"}
+        )
+        proposal_completed = self.planner.propose(state).proposal
+        self.assertEqual(proposal_completed["action_id"], "ACTION-END-001")
+
     def test_p10_inconclusive_prevents_action_end_001_and_halts_with_003(self) -> None:
         """When reverification attempts are exhausted and INCONCLUSIVE remains, planner halts with ACTION-END-003, NEVER ACTION-END-001."""
         planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")

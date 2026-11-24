@@ -126,6 +126,7 @@ export interface RunStatus {
   mode: string;
   planner: string;
   control_mode?: string;
+  execution_scope?: 'scan' | 'workflow' | 'combined';
   scenario: string;
   target: string;
   target_origin?: string;
@@ -220,8 +221,50 @@ export interface StartRunRequest {
   approve_read_only?: boolean;
   approve_active_verification?: boolean;
   approve_authenticated_workflow?: boolean;
+  execution_scope?: 'scan' | 'workflow' | 'combined';
   external_scanners?: ('zap-passive' | 'zap-active' | 'nuclei')[];
   preview_one_page?: boolean;
+}
+
+export interface CoverageScanner {
+  tool: string;
+  status: string;
+  coverage: string;
+  reason: string | null;
+  seed_coverage: Record<string, number | boolean>;
+  refused_requests?: number | null;
+  candidate_count?: number | null;
+  evidence_id: string | null;
+}
+
+export interface CoverageMatrixRow {
+  check: string;
+  route: string;
+  method: string;
+  role: string;
+  auth_state: string;
+  case: string;
+  negative: boolean;
+  expected: string;
+  status: string;
+  reason: string | null;
+  evidence_id: string | null;
+  http_status: number | null;
+}
+
+export interface RunCoverage {
+  run_id: string;
+  integrity: string;
+  record_count: number;
+  scope: { execution_scope: string; workflow_approved: boolean | null;
+    active_verification_approved: boolean | null; selected_scanners: string[] | null } | null;
+  workflow: { status: string; restore: string; recorded_checks: number; reason?: string | null };
+  scan_isolation?: { restore: string };
+  scanners: CoverageScanner[];
+  verifications: { action: string; resource: string; parameter: string; attempts: number;
+    classification: string; reason: string | null; evidence_id: string }[];
+  matrix: CoverageMatrixRow[];
+  legacy_workflow_checks: { check: string; status: string; evidence_id: string }[];
 }
 
 export interface AgentEvent {

@@ -19,6 +19,7 @@ from dashboards.app.backend.models import StartRunRequest
 from dashboards.app.backend.run_manager import _run_gate
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure
 from runtime.discovery.discovery_engine import HTMLMetadataParser
+from runtime.lab.capability_registry import CapabilityExecutionResult
 from runtime.lab.external_scanners import ExternalScannerExecutor, ScannerRelay, isolated_scan, load_config, preflight, parse_runtime_nuclei
 from runtime.orchestration.autonomous_runner import AutonomousRunner
 from runtime.safety.discovery_gate import ApprovalToken, BudgetTracker, CentralizedSafetyGate, TokenBucketRateLimiter
@@ -393,6 +394,51 @@ class ExternalScannerTests(unittest.TestCase):
         self.assertEqual(trace.outcome, "SUCCESS")
         self.assertIn("ACTION-SCAN-002", runner.state_manager.get_state()["previous_actions"])
         self.assertEqual(runner._evaluate_safety(proposal)[1], "SCANNER_ALREADY_EXECUTED")
+
+    def test_external_scanners_do_not_increment_internal_verification_count(self):
+        def scan(tool, relay, *args):
+            self.gate.network_dispatch_count += 1
+            seed = relay.urls()[0]
+            relay.executed_urls.add(seed)
+            relay.successful_urls.add(seed)
+            return b"" if tool == "nuclei" else json.dumps({"version": "fixture", "report": {"site": []}}).encode()
+
+        for selected in (("zap-passive",), ("zap-active",), ("nuclei",), ("zap-active", "nuclei")):
+            with self.subTest(scanners=selected):
+                runner = AutonomousRunner("lab-ecommerce", self.gate, self.recorder, self.approval,
+                                          max_decisions=1, external_scanners=selected)
+                runner.inventory = self.inventory
+                proposal = {"action_id": "ACTION-SCAN-002", "target_id": "lab-ecommerce"}
+                plan = SimpleNamespace(proposal=proposal, mode_provenance={"actual_mode": "RULE"})
+                with patch.object(runner.planner, "propose", return_value=plan), \
+                     patch("runtime.lab.external_scanners.preflight", return_value={}), \
+                     patch("runtime.lab.external_scanners.isolated_scan", side_effect=scan):
+                    report = runner.run()
+                self.assertEqual(report.decisions_count, 1)
+                self.assertEqual(report.active_verifications_count, 0)
+                self.assertEqual([item["tool"] for item in runner.scanner_executor.results], list(selected))
+                self.assertTrue(all(item["status"] == "COMPLETED" for item in runner.scanner_executor.results))
+
+    def test_internal_executors_still_increment_and_failures_do_not(self):
+        runner = AutonomousRunner("lab-ecommerce", self.gate, self.recorder, self.approval,
+                                  external_scanners=("zap-passive",))
+        executor = Mock()
+        executor.execute.side_effect = lambda proposal, **kwargs: CapabilityExecutionResult(
+            action_id=proposal["action_id"], target_id="lab-ecommerce",
+            outcome="SUCCESS", classification="INCONCLUSIVE")
+        cases = (("ACTION-SCAN-002", 0), ("ACTION-WEB-001", 1), ("ACTION-SCAN-002", 1),
+                 ("ACTION-WEB-002", 2), ("ACTION-WEB-003", 3), ("ACTION-LOGIC-001", 4))
+        with patch.object(runner.capability_registry, "get_executor", return_value=executor):
+            for index, (action, expected) in enumerate(cases, 1):
+                with self.subTest(action=action, expected=expected):
+                    runner._execute_approved_action({"action_id": action, "target_id": "lab-ecommerce"},
+                                                    {"actual_mode": "RULE"}, index, "fixture")
+                    self.assertEqual(runner.active_verifications_count, expected)
+            executor.execute.side_effect = EvidenceFailure("fixture")
+            with self.assertRaises(EvidenceFailure):
+                runner._execute_approved_action({"action_id": "ACTION-WEB-001", "target_id": "lab-ecommerce"},
+                                                {"actual_mode": "RULE"}, 7, "fixture")
+            self.assertEqual(runner.active_verifications_count, 4)
 
     @unittest.skipUnless(os.environ.get("SCANNER_DOCKER_TESTS") == "1", "Opt-in real isolated scanner/fixture test")
     def test_real_scanners_on_local_fixture(self):

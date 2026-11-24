@@ -31,6 +31,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   const [zapMode, setZapMode] = useState<'' | 'zap-passive' | 'zap-active'>('');
   const [useNuclei, setUseNuclei] = useState(false);
   const [approveWorkflow, setApproveWorkflow] = useState(false);
+  const [executionScope, setExecutionScope] = useState<'scan' | 'workflow'>('scan');
   const [previewOnePage, setPreviewOnePage] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -39,11 +40,17 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
+    const normalizedOrigin = targetOrigin.trim().replace(/\/+$/, '');
+    if ((executionScope === 'workflow' || mode !== 'deny-demo') &&
+        (target !== 'lab-ecommerce' || !['http://127.0.0.1:18088', 'http://10.0.0.2:8080'].includes(normalizedOrigin))) {
+      setSubmitError('ISOLATED_LAB_TARGET_UNSUPPORTED');
+      return;
+    }
     try {
       await onSubmit({
-        mode,
+        mode: executionScope === 'workflow' ? 'autonomous' : mode,
         planner,
-        control_mode: controlMode,
+        control_mode: executionScope === 'workflow' ? 'AUTONOMOUS' : controlMode,
         target,
         target_origin: targetOrigin,
         max_decisions: maxDecisions,
@@ -51,12 +58,12 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
         max_pages: maxPages,
         scenario: 'SCN-001',
         approve_read_only: true,
-        approve_active_verification: approveActiveVerification && !previewOnePage,
-        approve_authenticated_workflow: approveWorkflow && approveActiveVerification && !previewOnePage
-          && mode === 'autonomous' && controlMode === 'AUTONOMOUS',
-        external_scanners: approveActiveVerification && !previewOnePage && mode !== 'deny-demo'
+        execution_scope: executionScope,
+        approve_active_verification: executionScope === 'scan' && approveActiveVerification && !previewOnePage,
+        approve_authenticated_workflow: executionScope === 'workflow' && approveWorkflow,
+        external_scanners: executionScope === 'scan' && approveActiveVerification && !previewOnePage && mode !== 'deny-demo'
           ? [...(zapMode ? [zapMode] : []), ...(useNuclei ? ['nuclei' as const] : [])] : [],
-        preview_one_page: previewOnePage,
+        preview_one_page: executionScope === 'scan' && previewOnePage,
         allow_fallback: allowFallback,
       });
       onClose();
@@ -126,12 +133,29 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
             {submitError && (
               <div className="p-3 rounded bg-rose-950/40 border border-rose-900/60 text-rose-300 text-xs flex items-start space-x-2">
                 <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <span>{displayValue(submitError, lang)}</span>
+                <span>{submitError.includes('SCAN_REDACTION_UNSAFE')
+                  ? (lang === 'vi' ? 'Không thể chạy scan: bộ ghi evidence chưa che được giá trị CSRF trong HTML. Cần sửa redaction trước.' : 'Scan blocked: evidence redaction does not yet protect CSRF values in HTML.')
+                  : submitError.includes('ISOLATED_LAB_TARGET_UNSUPPORTED')
+                  ? (lang === 'vi' ? 'Chỉ hỗ trợ lab-ecommerce tại địa chỉ GNS3 hoặc Docker ở trên.' : 'Only lab-ecommerce at the GNS3 or Docker address above is supported.')
+                  : displayValue(submitError, lang)}</span>
               </div>
             )}
 
+            <fieldset className="space-y-2 rounded border border-slate-700 p-3">
+              <legend className="px-1 text-xs font-semibold text-slate-200">{lang === 'vi' ? 'Nội dung phiên' : 'Run scope'}</legend>
+              <label className="flex items-center gap-2 text-xs text-slate-200">
+                <input type="radio" name="execution-scope" checked={executionScope === 'scan'} onChange={() => setExecutionScope('scan')} />
+                {lang === 'vi' ? 'Scan và kiểm tra chủ động' : 'Scan and active verification'}
+              </label>
+              <label className="flex items-center gap-2 text-xs text-slate-200">
+                <input type="radio" name="execution-scope" checked={executionScope === 'workflow'} onChange={() => setExecutionScope('workflow')} />
+                {lang === 'vi' ? 'Workflow nghiệp vụ cố định' : 'Fixed business workflow'}
+              </label>
+              <p className="text-xs text-slate-400">{lang === 'vi' ? 'Mỗi phiên chỉ chạy một phần; workflow không sử dụng planner hoặc scanner. Scan dùng bản sao Docker được giữ lại hoặc snapshot/restore GNS3; lab có thể gián đoạn và GNS3 cần control plane.' : 'Each run uses one scope; the workflow does not use a planner or scanner. Scans retain a Docker volume copy or use GNS3 snapshot/restore; the lab may be interrupted and GNS3 requires the control plane.'}</p>
+            </fieldset>
+
             {/* Mode Selector */}
-            <div className="space-y-2">
+            {executionScope === 'scan' && <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider block">
                 {t.executionScenarioMode}
               </label>
@@ -163,10 +187,10 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
             {/* Control Mode Selector */}
-            <div className="space-y-2">
+            {executionScope === 'scan' && <div className="space-y-2">
               <label className="text-xs font-semibold text-slate-300 uppercase tracking-wider block">
                 {t.executionControlMode}
               </label>
@@ -212,11 +236,11 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
             {/* Advanced Configuration */}
             <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
-              <div>
+              {executionScope === 'scan' ? <div>
                 <label className="text-[11px] font-medium text-slate-400 block mb-1">{t.plannerStrategy}</label>
                 <select
                   value={planner}
@@ -228,11 +252,12 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   <option value="llm-unavailable">{lang === 'vi' ? "LLM không khả dụng (kiểm tra dự phòng)" : "llm-unavailable (Fallback Test)"}</option>
                   <option value="hybrid">{lang === 'vi' ? "Kết hợp (chỉ có đặc tả)" : "hybrid (Hybrid SPEC-ONLY)"}</option>
                 </select>
-              </div>
+              </div> : <div className="text-slate-400">{lang === 'vi' ? 'Workflow cố định, không dùng planner.' : 'Fixed workflow, no planner is used.'}</div>}
 
               <div>
-                <label className="text-[11px] font-medium text-slate-400 block mb-1">{t.labTarget}</label>
+                <label htmlFor="lab-target" className="text-[11px] font-medium text-slate-400 block mb-1">{t.labTarget}</label>
                 <input
+                  id="lab-target"
                   type="text"
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}
@@ -242,7 +267,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
 
               <div className="col-span-2 space-y-1.5 rounded border border-slate-800 bg-slate-900/60 p-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-medium text-slate-300 block">{t.targetOrigin}</label>
+                  <label htmlFor="target-origin" className="text-[11px] font-medium text-slate-300 block">{t.targetOrigin}</label>
                   <div className="flex items-center space-x-1.5">
                     <button
                       type="button"
@@ -269,6 +294,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   </div>
                 </div>
                 <input
+                  id="target-origin"
                   type="text"
                   value={targetOrigin}
                   onChange={(e) => setTargetOrigin(e.target.value)}
@@ -276,6 +302,9 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-hidden focus:border-blue-500"
                 />
                 <p className="text-[10px] text-slate-400">{t.targetOriginDesc}</p>
+                <p className="text-[10px] text-slate-400">{lang === 'vi'
+                  ? 'Cô lập chỉ hỗ trợ lab-ecommerce tại hai địa chỉ GNS3 hoặc Docker ở trên.'
+                  : 'Isolation supports lab-ecommerce only at the GNS3 or Docker addresses above.'}</p>
               </div>
 
               <div>
@@ -283,6 +312,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                 <input
                   type="number"
                   id="max-decisions"
+                  disabled={executionScope === 'workflow'}
                   min={1}
                   max={100}
                   required
@@ -293,17 +323,17 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
               </div>
 
               <label className="text-[11px] text-slate-400">{lang === 'vi' ? 'Giới hạn yêu cầu HTTP' : 'HTTP request budget'}
-                <input type="number" min={1} max={500} required value={maxRequests} onChange={e => setMaxRequests(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
+                <input type="number" min={executionScope === 'workflow' ? 200 : 1} max={500} required value={maxRequests} onChange={e => setMaxRequests(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
               </label>
               <label className="text-[11px] text-slate-400">{lang === 'vi' ? 'Giới hạn trang khám phá' : 'Discovery page budget'}
-                <input type="number" min={1} max={100} required value={maxPages} onChange={e => setMaxPages(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
+                <input type="number" min={1} max={100} required disabled={executionScope === 'workflow'} value={maxPages} onChange={e => setMaxPages(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
               </label>
-              <label className="col-span-2 flex items-start gap-2 rounded border border-amber-900 bg-amber-950/20 p-2 text-xs text-amber-200">
+              {executionScope === 'scan' && <label className="col-span-2 flex items-start gap-2 rounded border border-amber-900 bg-amber-950/20 p-2 text-xs text-amber-200">
                 <input type="checkbox" checked={approveActiveVerification && !previewOnePage} disabled={previewOnePage} onChange={e => setApproveActiveVerification(e.target.checked)} />
-                {lang === 'vi' ? 'Phê duyệt kiểm tra chủ động có giới hạn trong lab: SQLi, XSS, path traversal bằng bộ kiểm tra nội bộ và scanner được chọn bên dưới. Không gửi POST hoặc chạy lệnh tùy ý.' : 'Approve bounded active lab checks: SQLi, XSS and path traversal using internal verifiers and scanners selected below. No POST forms or arbitrary commands.'}
-              </label>
+                {lang === 'vi' ? 'Phê duyệt kiểm tra chủ động có giới hạn trong lab: SQLi, XSS, path traversal. Yêu cầu kiểm tra tới ứng dụng chỉ dùng GET/HEAD; phép thử form cần POST sẽ bị từ chối và báo chưa kiểm tra.' : 'Approve bounded active lab checks: SQLi, XSS and path traversal. Application checks use GET/HEAD only; POST-based form checks are refused and reported as untested.'}
+              </label>}
 
-              <fieldset disabled={!approveActiveVerification || previewOnePage || mode === 'deny-demo'} className="col-span-2 space-y-2 rounded border border-slate-700 p-3 disabled:opacity-50">
+              {executionScope === 'scan' && <fieldset disabled={!approveActiveVerification || previewOnePage || mode === 'deny-demo'} className="col-span-2 space-y-2 rounded border border-slate-700 p-3 disabled:opacity-50">
                 <legend className="px-1 text-xs text-slate-200">{lang === 'vi' ? 'Scanner trong lab' : 'Lab scanners'}</legend>
                 <label className="block text-xs text-slate-300">OWASP ZAP
                   <select aria-label="OWASP ZAP" value={zapMode} onChange={e => setZapMode(e.target.value as typeof zapMode)} className="ml-2 rounded bg-slate-900 p-1">
@@ -319,14 +349,13 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                 <p className="text-[11px] text-slate-400">{lang === 'vi'
                   ? 'Chỉ GET/HEAD đã khám phá, dùng chung ngân sách HTTP. Không kiểm tra đăng nhập, POST hoặc logic nghiệp vụ. Kết quả cần xác minh thêm.'
                   : 'Observed GET/HEAD only, sharing the HTTP budget. No login, POST or business-logic testing. Findings require verification.'}</p>
-              </fieldset>
-              <label className="col-span-2 flex items-start gap-2 rounded border border-amber-700 p-3 text-xs text-amber-200">
-                <input type="checkbox" checked={approveWorkflow && approveActiveVerification && !previewOnePage && mode === 'autonomous' && controlMode === 'AUTONOMOUS'}
-                  disabled={!approveActiveVerification || previewOnePage || mode !== 'autonomous' || controlMode !== 'AUTONOMOUS'}
+              </fieldset>}
+              {executionScope === 'workflow' && <label className="col-span-2 flex items-start gap-2 rounded border border-amber-700 p-3 text-xs text-amber-200">
+                <input type="checkbox" required checked={approveWorkflow}
                   onChange={e => { setApproveWorkflow(e.target.checked); if (e.target.checked) setMaxRequests(Math.max(200, maxRequests)); }} />
-                {lang === 'vi' ? 'Cho phép workflow đăng nhập và POST trên bản sao lab: tạo tài khoản, giỏ hàng, đơn mô phỏng; kiểm tra quyền sở hữu và vai trò. Lab tạm gián đoạn khi chuyển bản sao. Khôi phục volume gốc sau run; giữ bản sao để kiểm tra. Workflow cố định, không do LLM lập kế hoạch.' : 'Approve login and POST on a lab copy: disposable accounts, cart, simulated checkout and ownership/role checks. Lab briefly unavailable during switching. Restore original volume after the run; retain copy for inspection. Fixed workflow, not LLM-planned.'}
-              </label>
-              <div className="space-y-2 pt-1">
+                {lang === 'vi' ? 'Cho phép workflow đăng nhập và POST trong lab cô lập: tạo tài khoản, giỏ hàng, đơn mô phỏng; kiểm tra quyền và CSRF. Docker giữ lại bản sao volume; GNS3 dùng snapshot và restore. Lab có thể tạm gián đoạn. Workflow cố định, không do LLM lập kế hoạch.' : 'Approve login and POST in the isolated lab: disposable accounts, cart, simulated checkout, role and CSRF checks. Docker retains a volume copy; GNS3 uses snapshot and restore. The lab may be briefly unavailable. The workflow is fixed, not LLM-planned.'}
+              </label>}
+              {executionScope === 'scan' && <div className="space-y-2 pt-1">
                 <div className="flex items-center space-x-2">
                   <input
                     type="checkbox"
@@ -351,7 +380,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                     {t.singleStepPreview}
                   </label>
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
 

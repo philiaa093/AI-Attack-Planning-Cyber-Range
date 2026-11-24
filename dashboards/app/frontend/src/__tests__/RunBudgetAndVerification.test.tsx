@@ -24,6 +24,32 @@ describe('Run budget and verification display', () => {
     })));
   });
 
+  it('launches the fixed workflow without enabling scanners or active verification', async () => {
+    const submit = vi.fn().mockResolvedValue(undefined);
+    render(<StartRunModal isOpen onClose={() => {}} onSubmit={submit} isSubmitting={false} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'Fixed business workflow' }));
+    expect(screen.queryByRole('combobox', { name: 'OWASP ZAP' })).not.toBeInTheDocument();
+    const workflow = screen.getByRole('checkbox', { name: /Approve login and POST in the isolated lab/ });
+    expect(workflow).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch Execution' }));
+    expect(submit).not.toHaveBeenCalled();
+    fireEvent.click(workflow);
+    fireEvent.click(screen.getByRole('button', { name: 'Launch Execution' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith(expect.objectContaining({
+      execution_scope: 'workflow', approve_authenticated_workflow: true,
+      approve_active_verification: false, external_scanners: [], max_requests: 200,
+    })));
+  });
+
+  it('rejects a target origin without a matching isolation provider', () => {
+    const submit = vi.fn();
+    render(<StartRunModal isOpen onClose={() => {}} onSubmit={submit} isSubmitting={false} />);
+    fireEvent.change(screen.getByLabelText('Target Origin URL'), { target: { value: 'http://192.168.1.2:8080' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Launch Execution' }));
+    expect(submit).not.toHaveBeenCalled();
+    expect(screen.getByText('Only lab-ecommerce at the GNS3 or Docker address above is supported.')).toBeInTheDocument();
+  });
+
   it('shows the actual internal tool and a signal without claiming exploitation', () => {
     const system = {
       agent: { state: 'RUNNING', current_action: 'ACTION-WEB-001', planner: 'llm', actual_mode: 'LLM',

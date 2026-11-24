@@ -7,6 +7,7 @@ import type {
   PreflightResponse,
   RangeStatus,
   RunComparisonResponse,
+  RunCoverage,
   RunHistoryItem,
   RunHistoryResponse,
   RunSummaryResponse,
@@ -217,6 +218,11 @@ export const apiClient = {
   async getRunSummary(runId: string): Promise<RunSummaryResponse> {
     const res = await fetch(`${API_BASE_URL}/api/runs/${encodeURIComponent(runId)}/summary`);
     return handleResponse<RunSummaryResponse>(res);
+  },
+
+  async getRunCoverage(runId: string): Promise<RunCoverage> {
+    const res = await fetch(`${API_BASE_URL}/api/runs/${encodeURIComponent(runId)}/coverage`, { cache: 'no-store' });
+    return handleResponse<RunCoverage>(res);
   },
 
   async getRunHistory(params?: {

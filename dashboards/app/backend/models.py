@@ -36,6 +36,16 @@ def validate_target_origin(origin_val: Optional[str]) -> str:
     return norm
 
 
+def validate_isolated_lab_target(target: str, origin: Optional[str]) -> str:
+    """Require an origin whose isolation provider is known for ShopLab."""
+    normalized = validate_target_origin(origin)
+    if target != "lab-ecommerce" or normalized not in (
+        "http://127.0.0.1:18088", "http://10.0.0.2:8080",
+    ):
+        raise ValueError("ISOLATED_LAB_TARGET_UNSUPPORTED")
+    return normalized
+
+
 class RangeState(str, Enum):
     STOPPED = "STOPPED"
     STARTING = "STARTING"
@@ -140,6 +150,7 @@ class RunStatus(BaseModel):
     mode: str = "presentation"
     planner: str = "rule"
     control_mode: str = "AUTONOMOUS"
+    execution_scope: str = "combined"
     scenario: str = "SCN-001"
     target: str = "lab-ecommerce"
     target_origin: Optional[str] = "http://127.0.0.1:18088"
@@ -213,20 +224,25 @@ class StartRunRequest(BaseModel):
     preview_one_page: bool = False
     external_scanners: List[Literal["zap-passive", "zap-active", "nuclei"]] = Field(default_factory=list, max_length=2)
     approve_authenticated_workflow: bool = Field(default=False, strict=True)
+    # Existing clients keep their original combined behavior unless they opt
+    # into one of the independently runnable scopes.
+    execution_scope: Literal["combined", "scan", "workflow"] = "combined"
 
     @model_validator(mode="after")
     def validate_scanner_scope(self):
-        if self.target_origin:
+        if self.mode != "deny-demo":
+            self.target_origin = validate_isolated_lab_target(self.target, self.target_origin)
+        elif self.target_origin:
             self.target_origin = validate_target_origin(self.target_origin)
-        is_allowed_target = (
-            self.target in ("lab-ecommerce", "lab-gns3", "gns3")
-            or "gns3" in self.target.lower()
-            or (self.target_origin and "10.0.0.2" in self.target_origin)
-        )
-        if self.approve_authenticated_workflow and (not self.approve_active_verification or self.preview_one_page
-                or self.mode != "autonomous" or self.control_mode != "AUTONOMOUS" or not is_allowed_target
+        if self.execution_scope == "scan" and self.approve_authenticated_workflow:
+            raise ValueError("Scan-only runs cannot execute the authenticated workflow")
+        if self.execution_scope == "workflow" and (not self.approve_authenticated_workflow
+                or self.approve_active_verification or self.external_scanners):
+            raise ValueError("Workflow-only runs require workflow approval and cannot enable scanning")
+        if self.approve_authenticated_workflow and ((self.execution_scope != "workflow" and not self.approve_active_verification) or self.preview_one_page
+                or self.mode != "autonomous" or self.control_mode != "AUTONOMOUS"
                 or self.max_requests < 200):
-            raise ValueError("Authenticated workflow requires autonomous lab-ecommerce or GNS3 target, active approval and at least 200 requests")
+            raise ValueError("Authenticated workflow requires autonomous lab-ecommerce, its scope-specific approval and at least 200 requests")
         selected = set(self.external_scanners)
         if len(selected) != len(self.external_scanners) or {"zap-passive", "zap-active"} <= selected:
             raise ValueError("Choose one ZAP mode and/or Nuclei")

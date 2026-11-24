@@ -141,6 +141,35 @@
 .cc-technical-toggle { cursor: pointer; padding: 18px 4px; font-size: 14px; font-weight: 500; }
 .cc-technical-content { padding: 20px; border-radius: 12px; background: #0b0f17; color: #f1f5f9; }
 .cc-presentation button:focus-visible, .cc-presentation summary:focus-visible { outline: 2px solid #315ac6; outline-offset: 3px; }
+
+/* The process is a reading aid; its states come from received events. */
+.pf-flow { padding: 26px 28px; background: #e9eff8; border: 1px solid #d4dfef; border-radius: 16px; }
+.pf-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; }
+.pf-heading h3 { font-size: 19px; font-weight: 650; color: #182b46; }
+.pf-flow-note { color: #425873; font-size: 13px; line-height: 1.5; margin-top: 8px; }
+.pf-steps { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 20px; list-style: none; padding: 0; }
+.pf-step { min-width: 0; padding: 15px 13px; background: #fff; border-top: 3px solid #aabbd1; border-radius: 5px 5px 9px 9px; }
+.pf-step.pf-recorded { border-top-color: #315ac6; }
+.pf-step.pf-warning { border-top-color: #b45309; background: #fff9ef; }
+.pf-step-icon { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: fit-content; padding: 7px 9px; border-radius: 9px; background: #eaf0ff; color: #315ac6; margin-bottom: 12px; }
+.pf-step-icon span { font-size: 12px; font-weight: 700; }
+.pf-warning .pf-step-icon { color: #92400e; background: #ffedd1; }
+.pf-step-copy { min-width: 0; overflow-wrap: anywhere; }
+.pf-step-copy h4 { color: #182b46; font-weight: 650; font-size: 14px; }
+.pf-step-copy p { color: #536278; font-size: 12px; line-height: 1.45; margin-top: 5px; }
+.pf-step-state { display: block; color: #344b6b; font-size: 12px; font-weight: 600; margin-top: 12px; overflow-wrap: anywhere; }
+.pf-warning .pf-step-state { color: #92400e; }
+.pf-heading p { color: #425873; font-size: 14px; margin-top: 4px; }
+.ps-timeline-intro { color: var(--cc-muted); font-size: 13px; margin: -10px 0 20px; }
+.ps-event-explanation { color: var(--cc-muted); font-size: 13px; line-height: 1.5; margin-top: 5px; }
+.ps-event-fields { display: grid; gap: 8px; margin-bottom: 12px; }
+.ps-event-fields > div { display: grid; grid-template-columns: minmax(90px, 120px) minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.ps-event-fields dt { color: var(--cc-muted); }
+.ps-event-fields dd { overflow-wrap: anywhere; }
+.ps-raw-event { border-top: 1px solid var(--cc-line); margin-top: 10px; padding-top: 8px; font-size: 13px; }
+.ps-show-events { margin-top: 4px; }
+@media (max-width: 1000px) { .pf-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .pf-flow { padding: 20px; } .pf-steps { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 760px) {
   .cc-header { padding: 18px 20px; gap: 16px; }
   .cc-header-tools { gap: 6px; }
@@ -243,6 +272,28 @@
 .workspace-theme :is(pre,code,.cc-code) { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .workspace-theme :is([class*="hover:bg-slate-"]):hover { background-color: #edf1f7; }
 .workspace-theme :is([class*="hover:text-slate-"],[class*="hover:text-white"]):hover { color: #1d2c43; }
+/* Keep control colours paired with their text in the light presentation view. */
+.workspace-theme .cc-presentation :is(.bg-\[\#0f172a\], .bg-\[\#121927\]) { background-color: #fff; }
+.workspace-theme .cc-presentation .bg-slate-900\/30 { background-color: #f3f5f9; }
+.workspace-theme .cc-presentation .cc-controls > div > div > button:not(:disabled):not([class*="bg-blue-600"]):not([class*="bg-rose-"]) {
+  background: #f5f7fb; border-color: #ccd7e5; color: #243b58;
+}
+.workspace-theme .cc-presentation .cc-controls > div > div > button[class*="bg-emerald-"]:not(:disabled) {
+  background: #e8f5ee; border-color: #badccc; color: #17623f;
+}
+.workspace-theme .cc-presentation .cc-controls > div > div > button[class*="bg-amber-"]:not(:disabled) {
+  background: #fff4df; border-color: #ebd5a5; color: #865207;
+}
+.workspace-theme .cc-presentation .cc-controls > div > div > button:disabled {
+  background: #f1f4f8; border-color: #dce3ed; color: #65758a; opacity: 1; box-shadow: none;
+}
+.workspace-theme .cc-presentation .cc-controls > div > div > button:disabled svg { color: #65758a; }
+.workspace-theme .cc-presentation .cc-controls > div > div > button[class*="bg-blue-600"]:not(:disabled):hover,
+.workspace-theme .cc-presentation .cc-controls > div > div > button[class*="bg-rose-"]:not(:disabled):hover { color: #fff; }
+.workspace-theme .cc-presentation .cc-controls [role="dialog"] > div { background: #fff; border-color: #e2a4ae; color: #1d2c43; }
+.workspace-theme .cc-presentation .cc-controls [role="dialog"] h3 { color: #9f1239; }
+.workspace-theme .cc-presentation .cc-controls [role="dialog"] button[class*="bg-slate-"] { background: #f5f7fb; border-color: #ccd7e5; color: #243b58; }
+.workspace-theme .cc-presentation .cc-controls [role="dialog"] button[class*="bg-rose-"] { background: #be123c; color: #fff; }
 .workspace-theme .divide-y > :not([hidden]) ~ :not([hidden]) { border-color: #dce3ed; }
 .workspace-theme ::-webkit-scrollbar-track { background: #edf1f7; }
 .workspace-theme ::-webkit-scrollbar-thumb { background: #b8c4d6; border-radius: 4px; }

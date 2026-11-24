@@ -14,6 +14,7 @@ import { ExecutorCard } from '../components/cards/ExecutorCard';
 import { EvidenceCard } from '../components/cards/EvidenceCard';
 import { Pipeline } from '../components/pipeline/Pipeline';
 import { CurrentActivity } from '../components/activity/CurrentActivity';
+import { CoveragePanel } from '../components/coverage/CoveragePanel';
 import { EventFeed } from '../components/events/EventFeed';
 import { ResearchBoundary } from '../components/boundary/ResearchBoundary';
 import { ControlBar } from '../components/controls/ControlBar';
@@ -23,6 +24,7 @@ import { EvidenceInspectorModal } from '../components/evidence/EvidenceInspector
 import { ProposalReviewCard } from '../components/controls/ProposalReviewCard';
 import { PresentationHero } from '../components/presentation/PresentationHero';
 import { PresentationTimeline, PresentationResults } from '../components/presentation/PresentationSummary';
+import { PresentationFlow } from '../components/presentation/PresentationFlow';
 import { useLanguage } from '../i18n/LanguageContext';
 
 export interface ControlCenterProps {
@@ -153,6 +155,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
     if (preset === 'safe-recon') {
       req = {
         mode: 'autonomous',
+        execution_scope: 'scan',
         planner: 'rule',
         control_mode: 'AUTONOMOUS',
         allow_fallback: true,
@@ -164,6 +167,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
     } else if (preset === 'deny-demo') {
       req = {
         mode: 'deny-demo',
+        execution_scope: 'scan',
         planner: 'rule',
         control_mode: 'AUTONOMOUS',
         allow_fallback: true,
@@ -175,6 +179,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
     } else {
       req = {
         mode: 'presentation',
+        execution_scope: 'scan',
         planner: 'rule',
         control_mode: 'ASSISTED',
         allow_fallback: true,
@@ -369,6 +374,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
               latestEvent={latestEvent}
               onViewHistory={onNavigateTab ? () => onNavigateTab('runs') : undefined}
             />
+            <PresentationFlow events={events} runId={status.run.run_id} />
             <div className="cc-overview-columns">
               <PresentationTimeline events={events} runId={status.run.run_id} connectionStatus={connectionStatus} onReconnect={reconnect} />
               <PresentationResults system={status} onInspect={() => setIsEvidenceModalOpen(true)} />
@@ -383,6 +389,9 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
           </section>
         )}
 
+        <CoveragePanel runId={status.run.run_id}
+          refreshKey={`${status.run.state}:${status.evidence.integrity_status}:${JSON.stringify(status.agent.scanner_status ?? {})}`} />
+
         <details className={presentationMode ? 'cc-technical' : 'space-y-4'} open={presentationMode ? undefined : true}>
           <summary className={presentationMode ? 'cc-technical-toggle' : 'hidden'}>{lang === 'vi' ? 'Chi tiết kỹ thuật' : 'Technical details'}</summary>
           <div className={presentationMode ? 'cc-technical-content space-y-4' : 'space-y-4'}>
@@ -393,6 +402,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
               disabled={['RUNNING', 'STARTING', 'WAITING_FOR_APPROVAL'].includes(status.run.state)}
               onClick={() => handleLaunchPreset(preset)}>{[t.scenarioSafeRecon, t.scenarioSafetyDeny, t.scenarioAssisted][index]}</button>)}
           </div>}
+          {presentationMode && <p className="text-xs text-slate-400">{lang === 'vi' ? 'Các phiên scan nhanh dùng bản sao Docker hoặc snapshot/restore GNS3; lab có thể gián đoạn.' : 'Quick scans use a Docker copy or GNS3 snapshot/restore; the lab may be interrupted.'}</p>}
         {/* Row 1: The 5 Core Operational Cards */}
         <section aria-label={lang === 'vi' ? 'Các thành phần hệ thống' : 'System Components Overview'} className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-3.5">
           <RangeCard range={status.range} />
@@ -433,7 +443,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
         </details>
 
         {/* Row 5: Persistent Control Action Bar */}
-        <section aria-label={lang === 'vi' ? 'Điều khiển phiên' : 'Operational Controls'}>
+        <section className="cc-controls" aria-label={lang === 'vi' ? 'Điều khiển phiên' : 'Operational Controls'}>
           <ControlBar
             system={status}
             onRunPreflight={handleRunPreflight}
