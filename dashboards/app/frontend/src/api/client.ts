@@ -77,6 +77,21 @@ export const apiClient = {
     return handleResponse<RangeStatus>(res);
   },
 
+  async probeTarget(origin?: string): Promise<{ accessible: boolean; healthy: boolean; origin: string; status_code: number }> {
+    const url = origin ? `${API_BASE_URL}/api/range/probe?origin=${encodeURIComponent(origin)}` : `${API_BASE_URL}/api/range/probe`;
+    const res = await fetch(url);
+    return handleResponse(res);
+  },
+
+  async setTarget(target_id: string, origin: string): Promise<RangeStatus> {
+    const res = await fetch(`${API_BASE_URL}/api/range/target`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_id, origin }),
+    });
+    return handleResponse<RangeStatus>(res);
+  },
+
   async startRange(): Promise<RangeStatus> {
     const res = await fetch(`${API_BASE_URL}/api/range/start`, {
       method: 'POST',

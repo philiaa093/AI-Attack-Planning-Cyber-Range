@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import copy
+import ipaddress
 import json
 import queue
 import re
@@ -22,7 +23,7 @@ from tools.parsers.nuclei_parser import parse_nuclei_results, _unique_object, _r
 from tools.parsers.zap_parser import parse_zap_results
 
 TOOLS = {"zap-passive", "zap-active", "nuclei"}
-TEMPLATES = {"lab-sql-error": "sqli", "lab-sentinel-disclosure": "path-traversal"}
+TEMPLATES = {"lab-sql-error": "sqli", "lab-sentinel-disclosure": "path-traversal", "lab-xss-reflection": "xss"}
 FAMILIES = {"sqli": "SQL_INJECTION", "xss": "SCRIPT_INJECTION", "path-traversal": "PATH_TRAVERSAL"}
 ASSETS = ROOT / "tools" / "scanners"
 LIMITATIONS = ["Unauthenticated observed GET/HEAD surface only; no POST or authenticated workflows",
@@ -151,7 +152,12 @@ class ScannerRelay:
             raise RuntimeError("SCANNER_TARGET_REVOKED")
         origin = urllib.parse.urlsplit(self.gate.base_origin)
         registered = self.gate.target_registry.get(self.target_id, {})
-        if (origin.scheme != "http" or origin.hostname != "127.0.0.1"
+        try:
+            origin_ip = ipaddress.ip_address(origin.hostname or "")
+            private_origin = origin_ip.is_private or origin_ip.is_loopback
+        except ValueError:
+            private_origin = False
+        if (origin.scheme != "http" or not private_origin
                 or origin.port != registered.get("port") or origin.username is not None
                 or origin.password is not None or origin.path or origin.query or origin.fragment):
             raise RuntimeError("SCANNER_GATE_ORIGIN_MISMATCH")

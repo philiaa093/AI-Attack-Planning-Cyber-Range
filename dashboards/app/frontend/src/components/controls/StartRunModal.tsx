@@ -23,6 +23,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   const [controlMode, setControlMode] = useState<ControlMode>('AUTONOMOUS');
   const [allowFallback, setAllowFallback] = useState<boolean>(false);
   const [target, setTarget] = useState<string>('lab-ecommerce');
+  const [targetOrigin, setTargetOrigin] = useState<string>('http://10.0.0.2:8080');
   const [maxDecisions, setMaxDecisions] = useState<number>(30);
   const [maxRequests, setMaxRequests] = useState(120);
   const [maxPages, setMaxPages] = useState(30);
@@ -44,6 +45,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
         planner,
         control_mode: controlMode,
         target,
+        target_origin: targetOrigin,
         max_decisions: maxDecisions,
         max_requests: maxRequests,
         max_pages: maxPages,
@@ -236,6 +238,44 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                   onChange={(e) => setTarget(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-hidden focus:border-blue-500"
                 />
+              </div>
+
+              <div className="col-span-2 space-y-1.5 rounded border border-slate-800 bg-slate-900/60 p-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[11px] font-medium text-slate-300 block">{t.targetOrigin}</label>
+                  <div className="flex items-center space-x-1.5">
+                    <button
+                      type="button"
+                      onClick={() => { setTarget('lab-ecommerce'); setTargetOrigin('http://10.0.0.2:8080'); }}
+                      className={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        targetOrigin === 'http://10.0.0.2:8080'
+                          ? 'border-emerald-600 bg-emerald-950/60 text-emerald-300 font-medium'
+                          : 'border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      GNS3 (10.0.0.2:8080)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTarget('lab-ecommerce'); setTargetOrigin('http://127.0.0.1:18088'); }}
+                      className={`text-[10px] px-2 py-0.5 rounded border transition-colors cursor-pointer ${
+                        targetOrigin === 'http://127.0.0.1:18088'
+                          ? 'border-blue-600 bg-blue-950/60 text-blue-300 font-medium'
+                          : 'border-slate-700 bg-slate-800 text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Docker Gateway (127.0.0.1:18088)
+                    </button>
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  value={targetOrigin}
+                  onChange={(e) => setTargetOrigin(e.target.value)}
+                  placeholder="http://10.0.0.2:8080"
+                  className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-hidden focus:border-blue-500"
+                />
+                <p className="text-[10px] text-slate-400">{t.targetOriginDesc}</p>
               </div>
 
               <div>

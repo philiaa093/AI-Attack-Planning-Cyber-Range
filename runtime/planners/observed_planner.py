@@ -67,12 +67,13 @@ Output ONLY a JSON object matching this schema:
 }
 For ACTION-WEB-001/002/003 also include resource_ref, parameter_name and source_observation_id,
 copied exactly from observed parameter metadata. These optional fields are allowed by the plan contract.
-ACTION-SCAN-001 analyzes discovered metadata without network requests and identifies observed GET inputs.
+ACTION-SCAN-001 analyzes discovered metadata without network requests and identifies observed GET and POST/form inputs.
 ACTION-SCAN-002 runs the operator-selected isolated ZAP/Nuclei scanners on observed GET inputs.
 When approved in the run catalog, propose ACTION-SCAN-002 once after surface discovery and passive analysis.
 Scanner outcomes are unconfirmed candidates; a failed or incomplete scan does not prove absence of vulnerabilities.
 Use ACTION-WEB-003 only for observed file/path-like inputs, never generic search or category inputs.
-Never invent endpoints, inputs, tools or payloads. Do not repeat a probe with a recorded result unless new evidence warrants it.
+Never invent endpoints, inputs, tools or payloads. When previous probe results are INCONCLUSIVE, re-verify candidates before considering termination.
+Never terminate with ACTION-END-001 when INCONCLUSIVE findings remain; use ACTION-END-003 if progress cannot be made.
 No extra text, no markdown fences."""
 
 
@@ -334,13 +335,18 @@ class ObservedStatePlanner:
 
         # Stop condition 2: Terminal phase
         if phase == "TERMINAL":
+            has_inconclusive = any(
+                f.get("classification") == "INCONCLUSIVE"
+                or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
+                for f in facts
+            )
             proposal = {
                 "schema_version": "1.0",
                 "plan_id": str(uuid.uuid4()),
                 "objective_id": state.get("objective_id", self.objective_id),
-                "action_id": "ACTION-END-001",
+                "action_id": "ACTION-END-003" if has_inconclusive else "ACTION-END-001",
                 "target_id": self.target_id,
-                "reason_code": "terminal_phase_stop",
+                "reason_code": "inconclusive_terminal_stop" if has_inconclusive else "terminal_phase_stop",
                 "confidence": 1.0,
             }
             return self._build_result(
@@ -445,6 +451,15 @@ class ObservedStatePlanner:
             })
 
         if parsed_plan:
+            has_inconclusive = any(
+                f.get("classification") == "INCONCLUSIVE"
+                or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
+                for f in facts
+            )
+            if parsed_plan.get("action_id") == "ACTION-END-001" and has_inconclusive:
+                parsed_plan["action_id"] = "ACTION-END-003"
+                parsed_plan["reason_code"] = "unresolved_inconclusive_surface"
+
             # Successful LLM decision
             return self._build_result(
                 proposal=parsed_plan,
@@ -507,6 +522,20 @@ class ObservedStatePlanner:
         # Extract verified actions/parameters and candidate inputs
         verified_actions: set[str] = set()
         candidate_inputs: list[dict[str, str]] = []
+        candidate_keys: set[tuple[str, str, str]] = set()
+
+        def add_candidate(resource: str, param: str, method: str) -> None:
+            parsed = urllib.parse.urlsplit(resource)
+            canonical_resource = parsed.path or "/" if (parsed.scheme or parsed.netloc) else resource
+            canonical_resource = canonical_resource.split("#", 1)[0]
+            key = (canonical_resource, param, method)
+            if key not in candidate_keys:
+                candidate_keys.add(key)
+                candidate_inputs.append({
+                    "resource": canonical_resource,
+                    "param": param,
+                    "method": method,
+                })
 
         for f in facts:
             ft = f.get("fact_type", "")
@@ -527,10 +556,12 @@ class ObservedStatePlanner:
             elif ft == "ACTION_OUTCOME" and subj:
                 verified_actions.add(subj)
             elif ft == "PARAMETER" and subj and val:
-                candidate_inputs.append({
-                    "resource": subj,
-                    "param": str(val),
-                })
+                add_candidate(subj, str(val), "GET")
+            elif ft == "CANDIDATE_FINDING" and subj and val and str(val).startswith("post_form_input_"):
+                param = str(val)[len("post_form_input_"):]
+                param_lower = param.lower()
+                if not any(part in param_lower for part in ("csrf", "token", "session", "secret", "password")):
+                    add_candidate(subj, param, "POST")
 
         has_target_info = bool(target_facts) or ("ACTION-RECON-001" in previous)
 
@@ -573,12 +604,28 @@ class ObservedStatePlanner:
 
         # Step 4: Collect verified outcomes and anomalies
         verified_outcomes: dict[str, str] = {}
+        outcome_counts: dict[str, int] = {}
+
+        def canonical_outcome_subject(subject: str) -> str:
+            action_id, separator, remainder = subject.partition(":")
+            if not separator or action_id not in {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}:
+                return subject
+            resource, param_separator, param = remainder.rpartition(":")
+            if not param_separator or not resource or not param:
+                return subject
+            parsed_resource = urllib.parse.urlsplit(resource)
+            if parsed_resource.scheme or parsed_resource.netloc:
+                resource = parsed_resource.path or "/"
+            return f"{action_id}:{resource}:{param}"
+
         for f in facts:
             ft = f.get("fact_type", "")
             subj = str(f.get("subject", ""))
             val = str(f.get("value", ""))
             if ft == "ACTION_OUTCOME" and subj:
-                verified_outcomes[subj] = val
+                canonical_subject = canonical_outcome_subject(subj)
+                verified_outcomes[canonical_subject] = val
+                outcome_counts[canonical_subject] = outcome_counts.get(canonical_subject, 0) + 1
 
         # Priority 1: Follow up on any anomaly/SIGNAL outcome
         for subj, outcome in verified_outcomes.items():
@@ -606,8 +653,14 @@ class ObservedStatePlanner:
         reflection_candidates: list[dict[str, str]] = []
         injection_candidates: list[dict[str, str]] = []
 
-        path_keywords = ("file", "path", "doc", "invoice", "template", "dir", "include", "view")
-        reflection_keywords = ("name", "author", "comment", "title", "msg", "message", "body", "content", "review")
+        path_keywords = (
+            "file", "path", "doc", "invoice", "template", "dir", "include", "view",
+            "page", "document", "download", "folder", "src", "dest", "filename", "read"
+        )
+        reflection_keywords = (
+            "name", "author", "comment", "title", "msg", "message", "body", "content",
+            "review", "text", "description", "feedback", "email", "input", "prompt", "val", "data"
+        )
 
         for cand in candidate_inputs:
             p_lower = cand["param"].lower()
@@ -618,81 +671,107 @@ class ObservedStatePlanner:
             else:
                 injection_candidates.append(cand)
 
-        # 2A: Path traversal candidates get ACTION-WEB-003 FIRST
+        candidate_proposals: list[tuple[int, dict[str, str], str, str, str, float]] = []
         for cand in path_candidates:
-            res, param = cand["resource"], cand["param"]
-            key = f"ACTION-WEB-003:{res}:{param}"
-            if key not in verified_outcomes and "ACTION-WEB-003" not in refused_actions:
-                return {
-                    "schema_version": "1.0",
-                    "plan_id": str(uuid.uuid4()),
-                    "objective_id": obj_id,
-                    "action_id": "ACTION-WEB-003",
-                    "target_id": self.target_id,
-                    "hypothesis_id": f"HYPO-PATH-{uuid.uuid4().hex[:6]}",
-                    "resource_ref": res,
-                    "parameter_name": param,
-                    "reason_code": "verify_path_handling_candidate",
-                    "confidence": 0.85,
-                }
-
-        # 2B: Reflection candidates get ACTION-WEB-002 FIRST
+            candidate_proposals.append((0, cand, "ACTION-WEB-003", "HYPO-PATH",
+                                        "verify_path_handling_candidate", 0.85))
         for cand in reflection_candidates:
+            candidate_proposals.append((1, cand, "ACTION-WEB-002", "HYPO-XSS",
+                                        "verify_script_reflection_candidate", 0.80))
+        for cand in injection_candidates:
+            candidate_proposals.append((2, cand, "ACTION-WEB-001", "HYPO-SQLI",
+                                        "verify_input_injection_candidate", 0.80))
+            if any(k in cand["param"].lower() for k in ("q", "query", "search", "keyword")):
+                candidate_proposals.append((3, cand, "ACTION-WEB-002", "HYPO-XSS",
+                                            "verify_script_reflection_candidate", 0.75))
+
+        # Read-only/query candidates are evaluated before POST forms. Within a
+        # method, retain the semantic family priority above.
+        candidate_proposals.sort(key=lambda entry: (entry[1].get("method") != "GET", entry[0]))
+        for _, cand, action_id, hypothesis_prefix, reason_code, confidence in candidate_proposals:
             res, param = cand["resource"], cand["param"]
-            key = f"ACTION-WEB-002:{res}:{param}"
-            if key not in verified_outcomes and "ACTION-WEB-002" not in refused_actions:
+            key = f"{action_id}:{res}:{param}"
+            if key not in verified_outcomes and action_id not in refused_actions:
                 return {
                     "schema_version": "1.0",
                     "plan_id": str(uuid.uuid4()),
                     "objective_id": obj_id,
-                    "action_id": "ACTION-WEB-002",
+                    "action_id": action_id,
                     "target_id": self.target_id,
-                    "hypothesis_id": f"HYPO-XSS-{uuid.uuid4().hex[:6]}",
+                    "hypothesis_id": f"{hypothesis_prefix}-{uuid.uuid4().hex[:6]}",
                     "resource_ref": res,
                     "parameter_name": param,
-                    "reason_code": "verify_script_reflection_candidate",
-                    "confidence": 0.80,
+                    "reason_code": reason_code,
+                    "confidence": confidence,
                 }
 
-        # 2C: Injection/query candidates get ACTION-WEB-001 FIRST
-        for cand in injection_candidates:
-            res, param = cand["resource"], cand["param"]
-            key = f"ACTION-WEB-001:{res}:{param}"
-            if key not in verified_outcomes and "ACTION-WEB-001" not in refused_actions:
-                return {
-                    "schema_version": "1.0",
-                    "plan_id": str(uuid.uuid4()),
-                    "objective_id": obj_id,
-                    "action_id": "ACTION-WEB-001",
-                    "target_id": self.target_id,
-                    "hypothesis_id": f"HYPO-SQLI-{uuid.uuid4().hex[:6]}",
-                    "resource_ref": res,
-                    "parameter_name": param,
-                    "reason_code": "verify_input_injection_candidate",
-                    "confidence": 0.80,
-                }
+        # Priority 3: Candidate re-verification cycle for INCONCLUSIVE outcomes
+        for subj, outcome in sorted(verified_outcomes.items()):
+            if outcome == "INCONCLUSIVE" and outcome_counts.get(subj, 0) < 3:
+                parts = subj.split(":", 2)
+                if len(parts) == 3:
+                    act_id, s_res, s_param = parts[0], parts[1], parts[2]
+                    if act_id in self.effective_actions and act_id not in refused_actions:
+                        return {
+                            "schema_version": "1.0",
+                            "plan_id": str(uuid.uuid4()),
+                            "objective_id": obj_id,
+                            "action_id": act_id,
+                            "target_id": self.target_id,
+                            "hypothesis_id": f"HYPO-REVERIFY-{uuid.uuid4().hex[:6]}",
+                            "resource_ref": s_res,
+                            "parameter_name": s_param,
+                            "reason_code": "reverify_inconclusive_candidate",
+                            "confidence": 0.70,
+                        }
 
-        # 2D: Secondary reflection check for query/search parameters that render on page
-        for cand in injection_candidates:
-            res, param = cand["resource"], cand["param"]
-            p_lower = param.lower()
-            if any(k in p_lower for k in ("q", "query", "search", "keyword")):
-                xss_key = f"ACTION-WEB-002:{res}:{param}"
-                if xss_key not in verified_outcomes and "ACTION-WEB-002" not in refused_actions:
-                    return {
-                        "schema_version": "1.0",
-                        "plan_id": str(uuid.uuid4()),
-                        "objective_id": obj_id,
-                        "action_id": "ACTION-WEB-002",
-                        "target_id": self.target_id,
-                        "hypothesis_id": f"HYPO-XSS-{uuid.uuid4().hex[:6]}",
-                        "resource_ref": res,
-                        "parameter_name": param,
-                        "reason_code": "verify_script_reflection_candidate",
-                        "confidence": 0.75,
-                    }
+        # Check if any outcomes or facts remain INCONCLUSIVE
+        has_inconclusive = any(
+            outcome == "INCONCLUSIVE" for outcome in verified_outcomes.values()
+        ) or any(
+            f.get("classification") == "INCONCLUSIVE"
+            or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
+            for f in facts
+        )
 
-        # Terminal: all candidate hypotheses evaluated or surface clean
+        if has_inconclusive:
+            # Cannot complete cleanly when there are still unresolved INCONCLUSIVE items -> HALT
+            return {
+                "schema_version": "1.0",
+                "plan_id": str(uuid.uuid4()),
+                "objective_id": obj_id,
+                "action_id": "ACTION-END-003",
+                "target_id": self.target_id,
+                "reason_code": "unresolved_inconclusive_surface",
+                "confidence": 1.0,
+            }
+
+        unresolved_blocked = False
+        for cand in candidate_inputs:
+            p_lower = cand["param"].lower()
+            if any(k in p_lower for k in path_keywords):
+                action_id = "ACTION-WEB-003"
+            elif any(k in p_lower for k in reflection_keywords):
+                action_id = "ACTION-WEB-002"
+            else:
+                action_id = "ACTION-WEB-001"
+            key = f"{action_id}:{cand['resource']}:{cand['param']}"
+            if key not in verified_outcomes and action_id in refused_actions:
+                unresolved_blocked = True
+                break
+
+        if unresolved_blocked:
+            return {
+                "schema_version": "1.0",
+                "plan_id": str(uuid.uuid4()),
+                "objective_id": obj_id,
+                "action_id": "ACTION-END-003",
+                "target_id": self.target_id,
+                "reason_code": "unresolved_candidate_surface",
+                "confidence": 1.0,
+            }
+
+        # Terminal: all candidate hypotheses evaluated and surface clean
         return {
             "schema_version": "1.0",
             "plan_id": str(uuid.uuid4()),

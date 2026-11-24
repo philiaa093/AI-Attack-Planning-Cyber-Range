@@ -220,6 +220,8 @@ export interface Translations {
   controlManualDesc: string;
   plannerStrategy: string;
   labTarget: string;
+  targetOrigin: string;
+  targetOriginDesc: string;
   maxDecisionsLimit: string;
   allowFallbackToRule: string;
   singleStepPreview: string;
@@ -501,6 +503,8 @@ export const translations: Record<Language, Translations> = {
     controlManualDesc: 'Chờ phê duyệt rõ ràng từ người vận hành cho từng hành động riêng lẻ',
     plannerStrategy: 'Bộ lập kế hoạch',
     labTarget: 'Mục tiêu thực nghiệm',
+    targetOrigin: 'Địa chỉ mạng mục tiêu (URL Origin)',
+    targetOriginDesc: 'Hỗ trợ ShopLab GNS3 (http://10.0.0.2:8080) hoặc Docker Gateway (http://127.0.0.1:18088)',
     maxDecisionsLimit: 'Giới hạn Quyết định Tối đa',
     allowFallbackToRule: 'Cho phép dự phòng theo quy tắc khi mô hình ngôn ngữ gặp lỗi',
     singleStepPreview: 'Xem trước một bước',
@@ -780,6 +784,8 @@ export const translations: Record<Language, Translations> = {
     controlManualDesc: 'Awaits explicit operator approval for every single action',
     plannerStrategy: 'Planner Strategy',
     labTarget: 'Lab Target',
+    targetOrigin: 'Target Origin URL',
+    targetOriginDesc: 'Supports ShopLab GNS3 (http://10.0.0.2:8080) or Docker Gateway (http://127.0.0.1:18088)',
     maxDecisionsLimit: 'Max Decisions Limit',
     allowFallbackToRule: 'Allow fallback to RULE if LLM fails',
     singleStepPreview: 'Single-step Preview Only',

@@ -458,15 +458,19 @@ class AutonomousRunner:
             if not res:
                 return "DENIED", "UNOBSERVED_RESOURCE"
 
+            canonical_resource = self.gate.canonicalizer.canonicalize(str(res))
+            if not canonical_resource.is_valid or not canonical_resource.is_same_origin:
+                return "DENIED", "UNOBSERVED_RESOURCE"
+            resource_clean = canonical_resource.canonical_url.split("?", 1)[0].rstrip("/")
+
             # Lookup item either by exact key or by item.path
             item = self.inventory.items.get(res)
             if not item:
                 for it in self.inventory.items.values():
-                    if it.path == res or it.canonical_url == res:
+                    item_clean = it.canonical_url.split("?", 1)[0].rstrip("/")
+                    if it.path == res or it.canonical_url == res or item_clean == resource_clean:
                         item = it
                         break
-            if not item:
-                return "DENIED", "UNOBSERVED_RESOURCE"
 
             # 11. Parameter provenance check
             param = proposal.get("parameter_name")
@@ -475,24 +479,34 @@ class AutonomousRunner:
 
             observed_inputs: set[str] = set()
             # 1. Query parameters directly on this item's URL
-            parsed = urllib.parse.urlsplit(item.path)
+            parsed = urllib.parse.urlsplit(item.path if item else canonical_resource.canonical_url)
             if parsed.query:
                 for qk, _ in urllib.parse.parse_qsl(parsed.query):
                     observed_inputs.add(qk)
 
-            # 2. GET form inputs whose action endpoint resolves to this item
-            item_clean = item.canonical_url.split("?")[0].rstrip("/")
+            # 2. Inputs from an observed same-origin form whose action resolves to
+            # this resource. POST provenance is accepted here, but the bounded
+            # executor and centralized dispatch gate still control the request.
+            form_target_observed = False
             for inv_item in self.inventory.items.values():
                 for f in inv_item.forms:
                     raw_act = f.get("action", "").strip()
-                    f_method = f.get("method", "GET").upper().strip()
-                    f_target = urllib.parse.urljoin(inv_item.canonical_url, raw_act) if raw_act else inv_item.canonical_url
-                    f_clean = f_target.split("?")[0].rstrip("/")
-                    if f_clean == item_clean and f_method == "GET":
+                    f_target = self.gate.canonicalizer.canonicalize(
+                        raw_act or inv_item.canonical_url,
+                        current_url=inv_item.canonical_url,
+                    )
+                    if not f_target.is_valid or not f_target.is_same_origin:
+                        continue
+                    f_clean = f_target.canonical_url.split("?", 1)[0].rstrip("/")
+                    if f_clean == resource_clean:
+                        form_target_observed = True
                         for inp in f.get("inputs", []):
                             inp_name = inp.get("name")
                             if inp_name:
                                 observed_inputs.add(inp_name)
+
+            if not item and not form_target_observed:
+                return "DENIED", "UNOBSERVED_RESOURCE"
 
             if param not in observed_inputs:
                 return "DENIED", "UNOBSERVED_INPUT"

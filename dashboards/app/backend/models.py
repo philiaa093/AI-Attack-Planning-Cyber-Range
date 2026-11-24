@@ -2,8 +2,38 @@
 from __future__ import annotations
 
 from enum import Enum
+import ipaddress
 from typing import Any, Dict, List, Literal, Optional
+import urllib.parse
 from pydantic import BaseModel, Field, model_validator
+
+
+def validate_target_origin(origin_val: Optional[str]) -> str:
+    if not origin_val:
+        return "http://127.0.0.1:18088"
+    norm = origin_val.strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(norm)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError("Target origin must use http or https scheme")
+    if parsed.username or parsed.password:
+        raise ValueError("Userinfo / credentials in target origin forbidden")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("Target origin hostname cannot be empty")
+    is_loopback = host in ("127.0.0.1", "localhost", "::1")
+    is_private_ip = False
+    try:
+        ip = ipaddress.ip_address(host)
+        is_private_ip = ip.is_private or ip.is_loopback
+    except ValueError:
+        if host.endswith(".local") or host.endswith(".lab") or host == "host.docker.internal":
+            is_private_ip = True
+    if not (is_loopback or is_private_ip):
+        raise ValueError(
+            "Public or external hostnames are forbidden by Centralized Safety Gate policy. "
+            "Only loopback or private lab network addresses (e.g. 10.x.x.x, 192.168.x.x) are allowed."
+        )
+    return norm
 
 
 class RangeState(str, Enum):
@@ -112,6 +142,7 @@ class RunStatus(BaseModel):
     control_mode: str = "AUTONOMOUS"
     scenario: str = "SCN-001"
     target: str = "lab-ecommerce"
+    target_origin: Optional[str] = "http://127.0.0.1:18088"
     started_at_utc: Optional[str] = None
     ended_at_utc: Optional[str] = None
     stop_reason: Optional[str] = None
@@ -171,6 +202,7 @@ class StartRunRequest(BaseModel):
     control_mode: str = "AUTONOMOUS"  # AUTONOMOUS, ASSISTED, MANUAL
     allow_fallback: bool = True
     target: str = "lab-ecommerce"
+    target_origin: Optional[str] = "http://127.0.0.1:18088"
     max_decisions: int = Field(default=30, ge=1, le=100, strict=True)
     max_requests: int = Field(default=120, ge=1, le=500, strict=True)
     max_pages: int = Field(default=30, ge=1, le=100, strict=True)
@@ -184,10 +216,17 @@ class StartRunRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_scanner_scope(self):
+        if self.target_origin:
+            self.target_origin = validate_target_origin(self.target_origin)
+        is_allowed_target = (
+            self.target in ("lab-ecommerce", "lab-gns3", "gns3")
+            or "gns3" in self.target.lower()
+            or (self.target_origin and "10.0.0.2" in self.target_origin)
+        )
         if self.approve_authenticated_workflow and (not self.approve_active_verification or self.preview_one_page
-                or self.mode != "autonomous" or self.control_mode != "AUTONOMOUS" or self.target != "lab-ecommerce"
+                or self.mode != "autonomous" or self.control_mode != "AUTONOMOUS" or not is_allowed_target
                 or self.max_requests < 200):
-            raise ValueError("Authenticated workflow requires autonomous lab-ecommerce, active approval and at least 200 requests")
+            raise ValueError("Authenticated workflow requires autonomous lab-ecommerce or GNS3 target, active approval and at least 200 requests")
         selected = set(self.external_scanners)
         if len(selected) != len(self.external_scanners) or {"zap-passive", "zap-active"} <= selected:
             raise ValueError("Choose one ZAP mode and/or Nuclei")
@@ -402,3 +441,8 @@ class RunComparisonResponse(BaseModel):
     summary_verdict: str = ""
     comparison_kind: str = "DESCRIPTIVE_ONLY"
     comparability_reasons: List[str] = Field(default_factory=list)
+
+
+class TargetConfigRequest(BaseModel):
+    target_id: str = "lab-ecommerce"
+    origin: str = "http://127.0.0.1:18088"

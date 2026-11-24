@@ -128,6 +128,7 @@ export interface RunStatus {
   control_mode?: string;
   scenario: string;
   target: string;
+  target_origin?: string;
   started_at_utc: string | null;
   ended_at_utc: string | null;
   stop_reason: string | null;
@@ -210,6 +211,7 @@ export interface StartRunRequest {
   control_mode?: ControlMode | string;
   allow_fallback?: boolean;
   target?: string;
+  target_origin?: string;
   max_decisions?: number;
   max_requests?: number;
   max_pages?: number;

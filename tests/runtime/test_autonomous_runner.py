@@ -248,13 +248,15 @@ class AutonomousRunnerTests(unittest.TestCase):
 
         self.assertTrue(report.approved_actions_count > 0)
         self.assertTrue(report.network_dispatch_count > 0)
-        # Check that traces reflect multi-step progression: RECON-001 -> RECON-002 -> SCAN-001 -> END-001
+        # The fixture exposes an observed POST form but does not provide an
+        # executable verification path for it. The planner must halt honestly
+        # instead of claiming the discovery surface is complete.
         actions_sequence = [t.proposal["action_id"] for t in report.traces]
         self.assertIn("ACTION-RECON-001", actions_sequence)
         self.assertIn("ACTION-RECON-002", actions_sequence)
         self.assertIn("ACTION-SCAN-001", actions_sequence)
-        self.assertIn("ACTION-END-001", actions_sequence)
-        self.assertEqual(report.stop_reason, "discovery_surface_complete")
+        self.assertIn("ACTION-END-003", actions_sequence)
+        self.assertEqual(report.stop_reason, "unresolved_candidate_surface")
 
     # =========================================================================
     # A04: Unknown action -> DENIED, network_dispatch_count = 0

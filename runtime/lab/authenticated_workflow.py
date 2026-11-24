@@ -126,9 +126,11 @@ class AuthenticatedWorkflow:
                     self.lab.promote(username)
                 self.page(role, "/login")
                 logged_in = self.request(role, "/login", fields=self.form(role, "/login", username=username, password=password))
-                self.page(role, "/")
+                home = self.page(role, "/")
                 if logged_in.status_code not in (302, 303) or "/logout" not in self.observed[role]:
                     raise RuntimeError("WORKFLOW_LOGIN_FAILED")
+                if role == "c" and "/admin" not in home.links:
+                    raise RuntimeError("WORKFLOW_ADMIN_PROMOTION_FAILED")
                 self.check("login_" + role, True)
             self.page("a", "/products", FLOW_ACTION)
             add = self.form("a", "/cart/add", quantity="1")
@@ -167,7 +169,20 @@ class AuthenticatedWorkflow:
             self.check("peer_cannot_read_order", peer.status_code in (403, 404), http_status=peer.status_code)
             denied_admin = self.request("b", "/admin", CHECK_ACTION)
             self.check("user_cannot_read_admin", denied_admin.status_code == 403, http_status=denied_admin.status_code)
-            self.page("c", "/admin" + order_path, CHECK_ACTION)
+            admin_page = self.request("c", "/admin" + order_path, CHECK_ACTION)
+            if admin_page.status_code != 200:
+                raise RuntimeError("WORKFLOW_ADMIN_PAGE_UNAVAILABLE")
+            parsed_admin = Forms(admin_page.body)
+            self.observed["c"] = {}
+            for form in parsed_admin.forms:
+                canonical = self.gate.canonicalizer.canonicalize(form["action"] or "/admin" + order_path,
+                                                                current_url=self.gate.base_origin + "/admin" + order_path)
+                if canonical.is_valid and not canonical.redacted:
+                    target = urllib.parse.urlsplit(canonical.canonical_url)
+                    if form["method"] == "POST" and target.path in POST_FIELDS and not target.query:
+                        if set(form["fields"]) <= POST_FIELDS[target.path]:
+                            self.observed["c"].setdefault(target.path, form["fields"])
+                            self.policy.forms.add(target.path)
             invalid = self.request("c", "/admin/orders/status", CHECK_ACTION,
                                    self.form("c", "/admin/orders/status", status="pending"))
             self.check("backward_order_transition_rejected", invalid.status_code in (400, 409), http_status=invalid.status_code)

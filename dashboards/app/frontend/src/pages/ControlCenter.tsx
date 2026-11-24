@@ -148,6 +148,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
   const [presentationMode, setPresentationMode] = useState<boolean>(true);
 
   const handleLaunchPreset = async (preset: 'safe-recon' | 'deny-demo' | 'assisted') => {
+    const currentOrigin = status?.range.origin || 'http://10.0.0.2:8080';
     let req: StartRunRequest;
     if (preset === 'safe-recon') {
       req = {
@@ -156,6 +157,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
         control_mode: 'AUTONOMOUS',
         allow_fallback: true,
         target: 'lab-ecommerce',
+        target_origin: currentOrigin,
         scenario: 'SCN-001',
         max_decisions: 10,
       };
@@ -166,6 +168,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
         control_mode: 'AUTONOMOUS',
         allow_fallback: true,
         target: 'lab-ecommerce',
+        target_origin: currentOrigin,
         scenario: 'SCN-002',
         max_decisions: 5,
       };
@@ -176,6 +179,7 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
         control_mode: 'ASSISTED',
         allow_fallback: true,
         target: 'lab-ecommerce',
+        target_origin: currentOrigin,
         scenario: 'SCN-001',
         max_decisions: 10,
       };

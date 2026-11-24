@@ -527,6 +527,121 @@ class ReplanPreflightTests(unittest.TestCase):
         # Next action shifts to ACTION-RECON-002 based strictly on the new observed fact
         self.assertEqual(res_target.proposal["action_id"], "ACTION-RECON-002")
 
+    def test_p09_inconclusive_triggers_candidate_reverification(self) -> None:
+        """When an outcome is INCONCLUSIVE, planner proposes re-verification of the candidate."""
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001", "ACTION-WEB-001"],
+            "discovered_endpoints": ["/items"],
+            "observed_facts": [
+                {"fact_type": "ENDPOINT", "value": "/items"},
+                {"fact_type": "PARAMETER", "subject": "/items", "value": "id"},
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-001:/items:id", "value": "INCONCLUSIVE"},
+            ],
+        }
+        res = planner.propose(state)
+        self.assertEqual(res.proposal["action_id"], "ACTION-WEB-001")
+        self.assertEqual(res.proposal["resource_ref"], "/items")
+        self.assertEqual(res.proposal["parameter_name"], "id")
+        self.assertEqual(res.proposal["reason_code"], "reverify_inconclusive_candidate")
+        self.assertTrue(res.proposal["hypothesis_id"].startswith("HYPO-REVERIFY-"))
+
+    def test_p10_inconclusive_prevents_action_end_001_and_halts_with_003(self) -> None:
+        """When reverification attempts are exhausted and INCONCLUSIVE remains, planner halts with ACTION-END-003, NEVER ACTION-END-001."""
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        # 3 recorded attempts for ACTION-WEB-001:/items:id all INCONCLUSIVE
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001"],
+            "discovered_endpoints": ["/items"],
+            "observed_facts": [
+                {"fact_type": "ENDPOINT", "value": "/items"},
+                {"fact_type": "PARAMETER", "subject": "/items", "value": "id"},
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-001:/items:id", "value": "INCONCLUSIVE"},
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-001:/items:id", "value": "INCONCLUSIVE"},
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-001:/items:id", "value": "INCONCLUSIVE"},
+            ],
+        }
+        res = planner.propose(state)
+        # MUST NOT end with ACTION-END-001 when INCONCLUSIVE remains!
+        self.assertNotEqual(res.proposal["action_id"], "ACTION-END-001")
+        self.assertEqual(res.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(res.proposal["reason_code"], "unresolved_inconclusive_surface")
+
+    def test_p11_terminal_phase_with_inconclusive_facts_halts_with_003(self) -> None:
+        """Even in TERMINAL phase, state containing INCONCLUSIVE facts halts with ACTION-END-003."""
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "TERMINAL",
+            "remaining_budget": {"actions": 5},
+            "previous_actions": ["ACTION-RECON-001"],
+            "observed_facts": [
+                {"fact_type": "ACTION_OUTCOME", "subject": "ACTION-WEB-002:/profile:name", "value": "INCONCLUSIVE"}
+            ],
+        }
+        res = planner.propose(state)
+        self.assertEqual(res.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(res.proposal["reason_code"], "inconclusive_terminal_stop")
+
+    def test_absolute_post_form_candidate_is_canonicalized_and_control_fields_are_skipped(self) -> None:
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001"],
+            "discovered_endpoints": ["/login"],
+            "observed_facts": [
+                {"fact_type": "ENDPOINT", "value": "/login"},
+                {"fact_type": "CANDIDATE_FINDING", "subject": "http://10.0.0.2:8080/login",
+                 "value": "post_form_input_csrf_token"},
+                {"fact_type": "CANDIDATE_FINDING", "subject": "http://10.0.0.2:8080/login",
+                 "value": "post_form_input_username"},
+            ],
+        }
+        proposal = planner.propose(state).proposal
+        self.assertEqual(proposal["action_id"], "ACTION-WEB-002")
+        self.assertEqual(proposal["resource_ref"], "/login")
+        self.assertEqual(proposal["parameter_name"], "username")
+
+    def test_refused_candidate_surface_halts_instead_of_claiming_discovery_complete(self) -> None:
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001"],
+            "refused_actions": ["ACTION-WEB-002"],
+            "discovered_endpoints": ["/login"],
+            "observed_facts": [
+                {"fact_type": "ENDPOINT", "value": "/login"},
+                {"fact_type": "CANDIDATE_FINDING", "subject": "http://10.0.0.2:8080/login",
+                 "value": "post_form_input_username"},
+            ],
+        }
+        proposal = planner.propose(state).proposal
+        self.assertEqual(proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(proposal["reason_code"], "unresolved_candidate_surface")
+
+    def test_read_only_query_candidate_is_verified_before_post_form_candidate(self) -> None:
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "RECON",
+            "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001"],
+            "discovered_endpoints": ["/products", "/login"],
+            "observed_facts": [
+                {"fact_type": "PARAMETER", "subject": "http://10.0.0.2:8080/products", "value": "q"},
+                {"fact_type": "CANDIDATE_FINDING", "subject": "http://10.0.0.2:8080/login",
+                 "value": "post_form_input_username"},
+            ],
+        }
+        proposal = planner.propose(state).proposal
+        self.assertEqual(proposal["action_id"], "ACTION-WEB-001")
+        self.assertEqual(proposal["resource_ref"], "/products")
+        self.assertEqual(proposal["parameter_name"], "q")
+
 
 class LiveProviderRequestTests(unittest.TestCase):
     def test_provider_timeout_identifies_stage_without_retry_or_secret_echo(self):

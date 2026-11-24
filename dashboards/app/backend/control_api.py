@@ -38,6 +38,7 @@ from dashboards.app.backend.models import (
     RunTimelineResponse,
     StartRunRequest,
     SystemStatus,
+    TargetConfigRequest,
 )
 from dashboards.app.backend.range_controller import RangeController
 from dashboards.app.backend.run_history import RunIndex
@@ -103,6 +104,19 @@ def get_system_status() -> SystemStatus:
 @app.get("/api/range/status", response_model=RangeStatus)
 def get_range_status() -> RangeStatus:
     """Return real Docker container and gateway health without faking."""
+    return range_controller.get_status()
+
+
+@app.get("/api/range/probe")
+def probe_target(origin: Optional[str] = Query(None, description="Optional target origin URL to probe")) -> Dict[str, Any]:
+    """Perform network reachability and HTTP probe on target origin."""
+    return range_controller.probe_http_health(origin=origin)
+
+
+@app.post("/api/range/target", response_model=RangeStatus)
+def set_active_target(cfg: TargetConfigRequest) -> RangeStatus:
+    """Set active lab target and origin URL for RangeController and dashboard."""
+    range_controller.set_target(cfg.target_id, cfg.origin)
     return range_controller.get_status()
 
 

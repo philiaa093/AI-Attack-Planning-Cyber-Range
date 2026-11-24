@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import threading
 from typing import Any, Dict, Optional
+import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -34,26 +35,46 @@ class RangeController:
         with self._lock:
             return dict(self._owned)
 
-    def probe_http_health(self) -> Dict[str, Any]:
-        """Perform loopback HTTP health check on Gateway."""
+    def set_target(self, target_id: str, origin: str) -> None:
+        """Update active target identity and origin URL for dashboard and health probes."""
+        with self._lock:
+            self.target_id = target_id
+            self.origin = origin.rstrip("/")
+
+    def probe_http_health(self, origin: Optional[str] = None) -> Dict[str, Any]:
+        """Perform HTTP health check on Gateway or GNS3 lab node."""
+        target_origin = (origin or self.origin).rstrip("/")
         try:
-            conn = http.client.HTTPConnection("127.0.0.1", 18088, timeout=3.0)
+            parsed = urllib.parse.urlsplit(target_origin)
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            conn = http.client.HTTPConnection(host, port, timeout=3.0)
             conn.request("GET", "/health")
             res = conn.getresponse()
             status = res.status
             body = res.read(1024).decode("utf-8", errors="replace")
             conn.close()
+            if status == 404:
+                conn2 = http.client.HTTPConnection(host, port, timeout=3.0)
+                conn2.request("GET", "/")
+                res2 = conn2.getresponse()
+                status = res2.status
+                body = res2.read(1024).decode("utf-8", errors="replace")
+                conn2.close()
+            healthy = (status in (200, 301, 302, 303, 307, 308))
             return {
                 "accessible": True,
                 "status_code": status,
-                "healthy": (status == 200),
-                "body": body,
+                "healthy": healthy,
+                "origin": target_origin,
+                "body": body[:200],
             }
         except Exception as exc:
             return {
                 "accessible": False,
                 "status_code": 0,
                 "healthy": False,
+                "origin": target_origin,
                 "error": type(exc).__name__,
             }
 
@@ -64,6 +85,16 @@ class RangeController:
             try:
                 snapshot = lab.service_snapshot()
             except lab.DemoBlocked as exc:
+                probe = self.probe_http_health()
+                if probe.get("accessible") and probe.get("healthy"):
+                    return RangeStatus(
+                        status=RangeState.HEALTHY,
+                        target_id=self.target_id,
+                        origin=self.origin,
+                        services={},
+                        message=f"Target {self.target_id} at {self.origin} verified reachable via network.",
+                        checked_at_utc=checked_at,
+                    )
                 return RangeStatus(
                     status=RangeState.UNAVAILABLE,
                     target_id=self.target_id,
@@ -73,6 +104,16 @@ class RangeController:
                     checked_at_utc=checked_at,
                 )
             except Exception as exc:
+                probe = self.probe_http_health()
+                if probe.get("accessible") and probe.get("healthy"):
+                    return RangeStatus(
+                        status=RangeState.HEALTHY,
+                        target_id=self.target_id,
+                        origin=self.origin,
+                        services={},
+                        message=f"Target {self.target_id} at {self.origin} verified reachable via network.",
+                        checked_at_utc=checked_at,
+                    )
                 return RangeStatus(
                     status=RangeState.UNAVAILABLE,
                     target_id=self.target_id,

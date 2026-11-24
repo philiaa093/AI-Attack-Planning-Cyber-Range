@@ -8,6 +8,23 @@ import urllib.error
 import urllib.request
 
 
+def active_scan_urls(urls):
+    """Choose one representative per path and query-parameter shape."""
+    selected = []
+    shapes = set()
+    for url in urls:
+        parsed = urllib.parse.urlsplit(url)
+        keys = tuple(sorted({key for key, _ in urllib.parse.parse_qsl(
+            parsed.query, keep_blank_values=True)}))
+        if not keys:
+            continue
+        shape = (parsed.scheme, parsed.netloc, parsed.path or "/", keys)
+        if shape not in shapes:
+            shapes.add(shape)
+            selected.append(url)
+    return selected
+
+
 def main():
     job = json.load(sys.stdin)
     # No target request uses this client: it addresses only the local ZAP API.
@@ -51,8 +68,7 @@ def main():
             api("ascan", "action", "setOptionTargetParamsEnabledRPC", Integer=0)
         for url in job["urls"]:
             api("core", "action", "accessUrl", url=url, followRedirects="false")
-        for url in job["urls"]:
-            if job["active"] and urllib.parse.urlsplit(url).query:
+        for url in active_scan_urls(job["urls"]) if job["active"] else ():
                 # ZAP inserts accessed messages into its site tree asynchronously.
                 for _ in range(50):
                     if url in api("core", "view", "urls")["urls"]:

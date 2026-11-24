@@ -210,7 +210,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                                 "confidence": 0.85,
                             })
                         else:
-                            # POST/mutating form input: metadata finding only; zero conversion to synthetic GET
+                            # POST/mutating form input: record finding as CANDIDATE_FINDING (zero conversion to synthetic GET query parameter)
                             candidate_facts.append({
                                 "fact_id": f"FACT-CAND-{uuid.uuid4().hex[:8]}",
                                 "fact_type": "CANDIDATE_FINDING",
@@ -300,22 +300,56 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
         classification = "INCONCLUSIVE"
         reason = "Incomplete response set during bounded differential probe"
 
-        for label, vector_val in vectors:
-            parsed = urllib.parse.urlsplit(resource)
-            query_dict = dict(urllib.parse.parse_qsl(parsed.query))
-            query_dict[param] = vector_val
-            encoded_query = urllib.parse.urlencode(query_dict)
-            full_path = f"{parsed.path}?{encoded_query}"
-            full_url = f"{gate.base_origin}{full_path}"
+        # Check if input belongs to a discovered POST form
+        is_post_form = False
+        default_form_fields: dict[str, str] = {}
+        for item in inventory.items.values():
+            for form in item.forms:
+                clean_target = (form.get("action") or item.canonical_url).split("?")[0].split("#")[0]
+                clean_res = resource.split("?")[0].split("#")[0]
+                if clean_target.rstrip("/") == clean_res.rstrip("/") or clean_res in clean_target:
+                    inp_names = [inp.get("name") for inp in form.get("inputs", []) if inp.get("name")]
+                    if param in inp_names and form.get("method", "GET").upper() == "POST":
+                        is_post_form = True
+                        for inp in form.get("inputs", []):
+                            iname = inp.get("name")
+                            if iname:
+                                default_form_fields[iname] = "test"
+                        break
+            if is_post_form:
+                break
 
-            req = DiscoveryRequest(
-                run_id=run_id,
-                target_id=target_id,
-                action_id="ACTION-WEB-001",
-                url=full_url,
-                method="GET",
-                approval=approval,
-            )
+        for label, vector_val in vectors:
+            if is_post_form:
+                form_payload = dict(default_form_fields)
+                form_payload[param] = vector_val
+                clean_path = urllib.parse.urlsplit(resource).path or "/"
+                full_url = f"{gate.base_origin}{clean_path}"
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-WEB-001",
+                    url=full_url,
+                    method="POST",
+                    form=form_payload,
+                    approval=approval,
+                )
+            else:
+                parsed = urllib.parse.urlsplit(resource)
+                query_dict = dict(urllib.parse.parse_qsl(parsed.query))
+                query_dict[param] = vector_val
+                encoded_query = urllib.parse.urlencode(query_dict)
+                full_path = f"{parsed.path}?{encoded_query}"
+                full_url = f"{gate.base_origin}{full_path}"
+
+                req = DiscoveryRequest(
+                    run_id=run_id,
+                    target_id=target_id,
+                    action_id="ACTION-WEB-001",
+                    url=full_url,
+                    method="GET",
+                    approval=approval,
+                )
             initial_artifact_count = len(recorder.artifacts)
             resp = gate.dispatch(req)
             dispatches_made = gate.network_dispatch_count - initial_dispatch_count
@@ -456,21 +490,55 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
         inert_tag_marker = f"<shoplab_sentinel_{marker_id}>"
         escaped_tag_marker = f"&lt;shoplab_sentinel_{marker_id}&gt;"
 
-        parsed = urllib.parse.urlsplit(resource)
-        query_dict = dict(urllib.parse.parse_qsl(parsed.query))
-        query_dict[param] = inert_tag_marker
-        encoded_query = urllib.parse.urlencode(query_dict)
-        full_path = f"{parsed.path}?{encoded_query}"
-        full_url = f"{gate.base_origin}{full_path}"
+        # Check if input belongs to a discovered POST form
+        is_post_form = False
+        default_form_fields: dict[str, str] = {}
+        for item in inventory.items.values():
+            for form in item.forms:
+                clean_target = (form.get("action") or item.canonical_url).split("?")[0].split("#")[0]
+                clean_res = resource.split("?")[0].split("#")[0]
+                if clean_target.rstrip("/") == clean_res.rstrip("/") or clean_res in clean_target:
+                    inp_names = [inp.get("name") for inp in form.get("inputs", []) if inp.get("name")]
+                    if param in inp_names and form.get("method", "GET").upper() == "POST":
+                        is_post_form = True
+                        for inp in form.get("inputs", []):
+                            iname = inp.get("name")
+                            if iname:
+                                default_form_fields[iname] = "test"
+                        break
+            if is_post_form:
+                break
 
-        req = DiscoveryRequest(
-            run_id=run_id,
-            target_id=target_id,
-            action_id="ACTION-WEB-002",
-            url=full_url,
-            method="GET",
-            approval=approval,
-        )
+        if is_post_form:
+            form_payload = dict(default_form_fields)
+            form_payload[param] = inert_tag_marker
+            clean_path = urllib.parse.urlsplit(resource).path or "/"
+            full_url = f"{gate.base_origin}{clean_path}"
+            req = DiscoveryRequest(
+                run_id=run_id,
+                target_id=target_id,
+                action_id="ACTION-WEB-002",
+                url=full_url,
+                method="POST",
+                form=form_payload,
+                approval=approval,
+            )
+        else:
+            parsed = urllib.parse.urlsplit(resource)
+            query_dict = dict(urllib.parse.parse_qsl(parsed.query))
+            query_dict[param] = inert_tag_marker
+            encoded_query = urllib.parse.urlencode(query_dict)
+            full_path = f"{parsed.path}?{encoded_query}"
+            full_url = f"{gate.base_origin}{full_path}"
+
+            req = DiscoveryRequest(
+                run_id=run_id,
+                target_id=target_id,
+                action_id="ACTION-WEB-002",
+                url=full_url,
+                method="GET",
+                approval=approval,
+            )
         resp = gate.dispatch(req)
         if gate.halted_due_to_evidence or (
             not resp.durable_confirmed and "EVIDENCE" in (resp.refusal_reason or "")
@@ -491,7 +559,14 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
         body = resp.body or ""
         content_type = resp.headers.get("Content-Type") or resp.headers.get("content-type") or ""
 
-        if inert_tag_marker in body and "text/html" in content_type.lower():
+        if resp.outcome == "DENIED" or resp.refusal_reason:
+            classification = "REFUSED"
+            reason = "Safety Gate refused bounded reflection probe: " + (resp.refusal_reason or resp.outcome)
+        elif (resp.outcome not in {"SUCCESS", "FAILURE"} or resp.status_code != 200
+              or resp.error_message or resp.truncated):
+            classification = "INCONCLUSIVE"
+            reason = "Incomplete response during bounded reflection probe"
+        elif inert_tag_marker in body and "text/html" in content_type.lower():
             # Raw unencoded tag marker reflected in HTML body
             classification = "VERIFIED_IN_LAB"
             reason = "Inert HTML sentinel reflected unescaped in HTML response body"
@@ -509,7 +584,9 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
             reason = "Inert probe marker was not reflected in observed target response body"
 
         finding_id = f"FIND-XSS-{uuid.uuid4().hex[:8]}"
-        conf = 0.95 if classification == "VERIFIED_IN_LAB" else (0.75 if "escaped" in reason else 0.60)
+        conf = 0.95 if classification == "VERIFIED_IN_LAB" else (
+            0.75 if "escaped" in reason else (0.50 if classification in {"INCONCLUSIVE", "REFUSED"} else 0.60)
+        )
         finding = VerificationFinding(
             finding_id=finding_id,
             family="SCRIPT_INJECTION",
@@ -547,7 +624,9 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
         return CapabilityExecutionResult(
             action_id="ACTION-WEB-002",
             target_id=target_id,
-            outcome="SUCCESS",
+            outcome="DENIED" if classification == "REFUSED" else (
+                "FAILURE" if classification == "INCONCLUSIVE" else "SUCCESS"
+            ),
             classification=classification,
             findings=[finding],
             new_facts=[fact],

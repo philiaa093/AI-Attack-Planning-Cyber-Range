@@ -1,0 +1,29 @@
+{
+  "id": "lab-xss-reflection",
+  "info": {
+    "name": "XSS reflection marker exposed on an observed lab URL",
+    "author": "lab",
+    "severity": "info",
+    "tags": "xss"
+  },
+  "http": [
+    {
+      "method": "GET",
+      "path": [
+        "{{BaseURL}}"
+      ],
+      "redirects": false,
+      "matchers": [
+        {
+          "type": "word",
+          "part": "body",
+          "words": [
+            "<script",
+            "shoplab_sentinel",
+            "alert("
+          ]
+        }
+      ]
+    }
+  ]
+}

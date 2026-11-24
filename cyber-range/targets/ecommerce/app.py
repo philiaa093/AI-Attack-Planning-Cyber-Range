@@ -21,6 +21,7 @@ from urllib.parse import urlsplit, parse_qs, urlencode
 
 PORT = int(os.environ.get("PORT", "8080"))
 TARGET_ID = os.environ.get("TARGET_ID", "lab-ecommerce")
+WORKFLOW_CONTROL_PORT = int(os.environ.get("WORKFLOW_CONTROL_PORT", "8081"))
 SHOPLAB_CURRENCY = "USD"
 DATA_DIR = pathlib.Path(os.environ.get("SHOPLAB_DATA_DIR", "/app/data"))
 UPLOAD_DIR = DATA_DIR / "invoices"
@@ -28,6 +29,8 @@ _condition = threading.Condition()
 _database_path: pathlib.Path | None = None
 _accepting = False
 _active = 0
+_workflow_control_lock = threading.Lock()
+_workflow_snapshot: dict[str, object] | None = None
 BUSY_SECONDS = 5.0
 DRAIN_SECONDS = 5.0
 
@@ -719,6 +722,114 @@ def set_local_role(data_dir, user_id, role):
             raise
         finally:
             db.close()
+
+
+def _workflow_run_id(value: object) -> str:
+    if type(value) is not str or not re.fullmatch(r"RUN-DASH-[a-f0-9]{32}", value):
+        raise ValueError("Invalid workflow run")
+    return value
+
+
+def _workflow_snapshot_create(run_id: str) -> str:
+    """Create one bounded live database snapshot before a remote workflow mutates state."""
+    global _workflow_snapshot
+    run_id = _workflow_run_id(run_id)
+    with _workflow_control_lock:
+        if _workflow_snapshot is not None:
+            raise RuntimeError("Workflow snapshot already active")
+        name = ".workflow-" + hashlib.sha256(run_id.encode()).hexdigest()[:16] + ".sqlite3"
+        snapshot_path = DATA_DIR / name
+        if snapshot_path.exists():
+            raise RuntimeError("Workflow snapshot path exists")
+        try:
+            with storage_transaction() as source:
+                destination = sqlite3.connect(str(snapshot_path))
+                try:
+                    source.backup(destination)
+                finally:
+                    destination.close()
+            digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+            invoice_names = frozenset(
+                item.name for item in UPLOAD_DIR.iterdir()
+                if item.is_file() and not item.is_symlink()
+            )
+            _workflow_snapshot = {
+                "run_id": run_id,
+                "path": snapshot_path,
+                "sha256": digest,
+                "invoice_names": invoice_names,
+            }
+            return digest
+        except BaseException:
+            if snapshot_path.exists():
+                snapshot_path.unlink()
+            raise
+
+
+def _workflow_promote(run_id: str, username: object) -> None:
+    """Promote only the per-run workflow account while a matching snapshot is active."""
+    run_id = _workflow_run_id(run_id)
+    expected = "rt_" + hashlib.sha256(run_id.encode()).hexdigest()[:12] + "_c"
+    if type(username) is not str or not hmac.compare_digest(username, expected):
+        raise ValueError("Invalid workflow account")
+    with _workflow_control_lock:
+        if _workflow_snapshot is None or _workflow_snapshot["run_id"] != run_id:
+            raise RuntimeError("Workflow snapshot unavailable")
+        with storage_transaction(write=True) as db:
+            row = db.execute("SELECT id,role FROM users WHERE username=?", (username,)).fetchone()
+            if row is None:
+                raise ValueError("Unknown workflow account")
+            if row["role"] != "admin":
+                db.execute("UPDATE users SET role='admin' WHERE id=?", (row["id"],))
+                db.execute("DELETE FROM sessions WHERE user_id=?", (row["id"],))
+                db.execute(
+                    "INSERT INTO admin_audit(action,user_id,old_role,new_role,created_at) VALUES (?,?,?,?,?)",
+                    ("promote", row["id"], row["role"], "admin", datetime.now(timezone.utc).isoformat()),
+                )
+
+
+def _workflow_snapshot_restore(run_id: str) -> str:
+    """Restore the exact pre-workflow database and remove invoices created by the workflow."""
+    global _accepting, _workflow_snapshot
+    run_id = _workflow_run_id(run_id)
+    with _workflow_control_lock:
+        snapshot = _workflow_snapshot
+        if snapshot is None or snapshot["run_id"] != run_id:
+            raise RuntimeError("Workflow snapshot unavailable")
+        snapshot_path = snapshot["path"]
+        if not isinstance(snapshot_path, pathlib.Path) or not snapshot_path.is_file():
+            raise RuntimeError("Workflow snapshot unavailable")
+        digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+        if not hmac.compare_digest(digest, str(snapshot["sha256"])):
+            raise RuntimeError("Workflow snapshot integrity failure")
+        quiesce_storage()
+        try:
+            if _database_path is None:
+                raise StorageError("Storage is unavailable")
+            source = sqlite3.connect(str(snapshot_path))
+            destination = sqlite3.connect(str(_database_path))
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+                source.close()
+            baseline = snapshot["invoice_names"]
+            if not isinstance(baseline, frozenset):
+                raise RuntimeError("Workflow snapshot invalid")
+            for item in UPLOAD_DIR.iterdir():
+                if item.is_file() and not item.is_symlink() and item.name not in baseline:
+                    item.unlink()
+            _preflight_db(_database_path, required=True)
+        except BaseException:
+            # Keep admission closed when restore cannot be proven complete.
+            raise
+        else:
+            snapshot_path.unlink()
+            _workflow_snapshot = None
+            with _condition:
+                _accepting = True
+                _condition.notify_all()
+            return digest
 
 
 def restore_baseline(data_dir: str | pathlib.Path) -> None:
@@ -2096,11 +2207,99 @@ class Handler(BaseHTTPRequestHandler):
         return  # suppress access log
 
 
+class WorkflowControlHandler(BaseHTTPRequestHandler):
+    """Closed management plane for the fixed authenticated lab workflow."""
+
+    server_version = "ShopLabWorkflowControl/1"
+
+    def _json(self, status: int, payload: dict[str, object]) -> None:
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        expected = getattr(self.server, "control_token", "")
+        candidate = self.headers.get("Authorization", "")
+        return bool(expected) and hmac.compare_digest(candidate, "Bearer " + expected)
+
+    def _body(self, keys: set[str]) -> dict[str, object]:
+        if self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise ValueError("Invalid content type")
+        raw_length = self.headers.get("Content-Length", "")
+        if not raw_length.isdigit() or not 1 <= int(raw_length) <= 2048:
+            raise ValueError("Invalid body length")
+        value = json.loads(self.rfile.read(int(raw_length)))
+        if type(value) is not dict or set(value) != keys:
+            raise ValueError("Invalid body schema")
+        return value
+
+    def do_GET(self) -> None:
+        if not self._authorized():
+            self._json(401, {"error": "CONTROL_AUTH_REQUIRED"})
+            return
+        if urlsplit(self.path).path != "/control/v1/health" or urlsplit(self.path).query:
+            self._json(404, {"error": "CONTROL_ROUTE_NOT_FOUND"})
+            return
+        self._json(200, {"status": "ok", "service": "workflow-control"})
+
+    def do_POST(self) -> None:
+        if not self._authorized():
+            self._json(401, {"error": "CONTROL_AUTH_REQUIRED"})
+            return
+        parsed = urlsplit(self.path)
+        if parsed.query:
+            self._json(404, {"error": "CONTROL_ROUTE_NOT_FOUND"})
+            return
+        try:
+            if parsed.path == "/control/v1/workflow/snapshot":
+                body = self._body({"run_id"})
+                digest = _workflow_snapshot_create(body["run_id"])
+                self._json(200, {"status": "snapshotted", "sha256": digest})
+            elif parsed.path == "/control/v1/workflow/promote":
+                body = self._body({"run_id", "username"})
+                _workflow_promote(body["run_id"], body["username"])
+                self._json(200, {"status": "promoted"})
+            elif parsed.path == "/control/v1/workflow/restore":
+                body = self._body({"run_id"})
+                digest = _workflow_snapshot_restore(body["run_id"])
+                self._json(200, {"status": "restored", "sha256": digest})
+            else:
+                self._json(404, {"error": "CONTROL_ROUTE_NOT_FOUND"})
+        except (ValueError, json.JSONDecodeError):
+            self._json(400, {"error": "CONTROL_REQUEST_INVALID"})
+        except (RuntimeError, StorageError, OSError, sqlite3.Error):
+            self._json(409, {"error": "CONTROL_OPERATION_FAILED"})
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+
 if __name__ == "__main__":
     initialize_storage(DATA_DIR)
+    control_server = None
+    control_thread = None
     try:
+        control_token = os.environ.get("WORKFLOW_CONTROL_TOKEN", "")
+        if control_token:
+            if len(control_token) < 32 or len(control_token) > 256 or any(ord(c) < 33 or ord(c) > 126 for c in control_token):
+                raise RuntimeError("Invalid workflow control token")
+            if not 1 <= WORKFLOW_CONTROL_PORT <= 65535 or WORKFLOW_CONTROL_PORT == PORT:
+                raise RuntimeError("Invalid workflow control port")
+            control_server = ThreadingHTTPServer(("0.0.0.0", WORKFLOW_CONTROL_PORT), WorkflowControlHandler)
+            control_server.control_token = control_token
+            control_thread = threading.Thread(target=control_server.serve_forever, daemon=True)
+            control_thread.start()
         print(f"ShopLab starting on port {PORT} (isolated lab only)...")
         with ThreadingHTTPServer(("0.0.0.0", PORT), Handler) as server:
             server.serve_forever()
     finally:
+        if control_server is not None:
+            control_server.shutdown()
+            control_server.server_close()
+        if control_thread is not None:
+            control_thread.join(timeout=5)
         close_storage()

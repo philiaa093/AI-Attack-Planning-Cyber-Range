@@ -326,11 +326,33 @@ class ExternalScannerTests(unittest.TestCase):
             with self.subTest(matched=matched), self.assertRaises(ValueError):
                 parse_runtime_nuclei(raw, self.relay)
 
-    def test_gate_origin_must_match_registered_loopback_gateway(self):
-        for origin in ("http://127.0.0.1:9999", "http://lab-ecommerce:18088", "http://127.0.0.1:18088/path"):
+    def test_gate_origin_must_match_registered_private_lab_gateway(self):
+        for origin in ("http://127.0.0.1:9999", "http://lab-ecommerce:18088",
+                       "http://127.0.0.1:18088/path", "http://8.8.8.8:18088"):
             with self.subTest(origin=origin), patch.object(self.gate, "base_origin", origin):
                 with self.assertRaisesRegex(RuntimeError, "SCANNER_GATE_ORIGIN_MISMATCH"):
                     self.relay.check()
+
+        request = StartRunRequest(target="lab-ecommerce", target_origin="http://10.0.0.2:8080",
+                                  approve_active_verification=True, external_scanners=["nuclei"])
+        gate = _run_gate(request, self.recorder)
+        inventory = SimpleNamespace(items={"/products": SimpleNamespace(
+            canonical_url=gate.base_origin + "/products", refusal_reason=None, forms=[])})
+        relay = ScannerRelay(gate, self.recorder, "RUN-SCANNER-TEST", "lab-ecommerce",
+                             inventory, self.approval, "ACTION-SCAN-002", lambda: False)
+        relay.check()
+
+    def test_zap_active_scan_deduplicates_equivalent_query_shapes(self):
+        from tools.scanners.zap_worker import active_scan_urls
+
+        urls = [
+            "http://lab-ecommerce/products?q=&category=2",
+            "http://lab-ecommerce/products?category=3&q=phone",
+            "http://lab-ecommerce/products?q=phone",
+            "http://lab-ecommerce/products",
+            "http://lab-ecommerce/search?q=phone",
+        ]
+        self.assertEqual(active_scan_urls(urls), [urls[0], urls[2], urls[4]])
 
     def test_default_port_canonicalization_and_result_failure(self):
         response = SimpleNamespace(status_code=200, durable_confirmed=True, truncated=False, body="ok", headers={})

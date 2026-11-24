@@ -24,6 +24,7 @@ from runtime.evidence.evidence_package import EvidenceVerifier
 import json
 import os
 import re
+import urllib.parse
 from dashboards.app.backend.event_sink import EventSink
 from dashboards.app.backend.model_profiles import ProfileStore
 from runtime.planners.observed_planner import ProviderConfig
@@ -66,19 +67,60 @@ def _utc_now_iso() -> str:
 
 
 def _run_gate(req: StartRunRequest, recorder=None) -> CentralizedSafetyGate:
-    gate = lab.make_gate(recorder, pages=1 if req.preview_one_page else req.max_pages)
-    gate.budget_tracker.max_requests = 1 if req.preview_one_page else req.max_requests
+    target_id = req.target or lab.TARGET
+    origin = (req.target_origin or lab.ORIGIN).rstrip("/")
+
+    # Authoritative registry with origin port mapping
+    registry = lab.load_canonical_target_registry()
+    parsed_origin = urllib.parse.urlsplit(origin)
+    origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
+
+    if target_id not in registry:
+        registry[target_id] = {
+            "target_id": target_id,
+            "port": origin_port,
+            "health_path": "/health",
+            "reset_path": "/reset",
+        }
+    else:
+        registry = dict(registry)
+        registry[target_id] = dict(registry[target_id])
+        registry[target_id]["port"] = origin_port
+
+    budget = BudgetTracker(
+        max_requests=1 if req.preview_one_page else req.max_requests,
+        max_pages=1 if req.preview_one_page else req.max_pages,
+        max_depth=2,
+        max_retries=0,
+        timeout=15.0 if origin == "http://10.0.0.2:8080" else 5.0,
+    )
+    rate_limiter = TokenBucketRateLimiter(requests_per_second=2.0, burst=1)
+
+    action_allowlist = {
+        lab.ACTION,
+        "ACTION-RECON-001",
+        "ACTION-SCAN-001",
+        "ACTION-END-001",
+        "ACTION-END-002",
+        "ACTION-END-003",
+    }
     if req.approve_active_verification and not req.preview_one_page:
-        # Still intersected with canonical policy by the gate constructor.
-        gate = CentralizedSafetyGate(
-            base_origin=lab.ORIGIN, target_registry=lab.load_canonical_target_registry(),
-            target_allowlist={lab.TARGET},
-            action_allowlist=gate.effective_actions | {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
-                | ({"ACTION-SCAN-002"} if req.external_scanners else set())
-                | ({"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"} if req.approve_authenticated_workflow else set()),
-            recorder=recorder, budget_tracker=gate.budget_tracker,
-            rate_limiter=gate.rate_limiter, lab_mode=True,
-        )
+        action_allowlist |= {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003"}
+        if req.external_scanners:
+            action_allowlist |= {"ACTION-SCAN-002"}
+        if req.approve_authenticated_workflow:
+            action_allowlist |= {"ACTION-AUTH-001", "ACTION-FLOW-001", "ACTION-FLOW-002"}
+
+    gate = CentralizedSafetyGate(
+        base_origin=origin,
+        target_registry=registry,
+        target_allowlist={target_id},
+        action_allowlist=action_allowlist,
+        recorder=recorder,
+        budget_tracker=budget,
+        rate_limiter=rate_limiter,
+        lab_mode=True,
+    )
     return gate
 
 
@@ -437,13 +479,6 @@ class RunManager:
 
     def start_run(self, req: StartRunRequest, event_sink: EventSink) -> ControlResponse:
         """Start a new execution run in a dedicated background worker thread."""
-        if req.external_scanners:
-            from runtime.lab.external_scanners import preflight
-            try:
-                preflight(req.external_scanners)
-            except (ValueError, OSError, subprocess.SubprocessError) as exc:
-                return ControlResponse(success=False, message=f"Scanner preflight failed: {exc}",
-                                       timestamp_utc=_utc_now_iso())
         provider_config = (self.model_profiles.snapshot()
                            if self.model_profiles is not None and req.planner == "llm" else None)
         with self._lock:
@@ -481,6 +516,7 @@ class RunManager:
                 control_mode=req.control_mode,
                 scenario=req.scenario,
                 target=req.target,
+                target_origin=req.target_origin or "http://127.0.0.1:18088",
                 started_at_utc=_utc_now_iso(),
             )
             self._agent_status = AgentStatus(
@@ -512,7 +548,14 @@ class RunManager:
             type="RUN_STARTED",
             timestamp_utc=_utc_now_iso(),
             phase="PRE_ENGAGEMENT",
-            payload={"run_id": run_id, "mode": req.mode, "planner": req.planner, "control_mode": req.control_mode, "target": req.target},
+            payload={
+                "run_id": run_id,
+                "mode": req.mode,
+                "planner": req.planner,
+                "control_mode": req.control_mode,
+                "target": req.target,
+                "target_origin": req.target_origin or "http://127.0.0.1:18088",
+            },
         ))
 
         # Launch worker
@@ -985,10 +1028,12 @@ class RunManager:
     def _worker(self, run_id: str, req: StartRunRequest, run_dir: Path, event_sink: EventSink,
                 provider_config: ProviderConfig | None = None) -> None:
         """Background execution worker for active run."""
+        recorder = None
+        gate = None
         try:
             recorder = lab.new_recorder(run_dir / "assessment", run_id)
             gate = _run_gate(req, recorder)
-            approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, lab.TARGET, "*",
+            approval = (ApprovalToken("APP-DASH-" + uuid.uuid4().hex, run_id, req.target, "*",
                                       time.time(), time.time() + 900)
                         if req.approve_read_only or req.approve_active_verification else None)
 
@@ -1007,6 +1052,8 @@ class RunManager:
                 "run_id": run_id,
                 "mode": req.mode,
                 "planner": req.planner,
+                "target_id": req.target,
+                "target_origin": req.target_origin or lab.ORIGIN,
                 "approval_granted": bool(approval),
                 "approved_action_ids": sorted(gate.effective_actions) if approval else [],
                 "active_verification_approved": req.approve_active_verification and not req.preview_one_page,
@@ -1121,8 +1168,9 @@ class RunManager:
             if req.approve_authenticated_workflow:
                 from runtime.lab.workflow_lab import WorkflowLab
                 from runtime.lab.authenticated_workflow import AuthenticatedWorkflow
-                on_runtime_event({"type": "WORKFLOW_STARTED", "payload": {"status": "RUNNING", "executor": "FIXED_WORKFLOW_NOT_LLM"}})
-                with WorkflowLab(run_id, recorder) as workflow_lab:
+                is_gns3 = ("10.0.0.2" in (req.target_origin or "")) or ("gns3" in str(req.target).lower())
+                on_runtime_event({"type": "WORKFLOW_STARTED", "payload": {"status": "RUNNING", "executor": "FIXED_WORKFLOW_NOT_LLM", "provider": "GNS3" if is_gns3 else "DOCKER"}})
+                with WorkflowLab(run_id, recorder, is_gns3=is_gns3, target_origin=req.target_origin) as workflow_lab:
                     workflow_result = AuthenticatedWorkflow(gate, recorder, approval, workflow_lab).execute()
                     report = runner.run()
                 workflow_restored = True
@@ -1146,6 +1194,7 @@ class RunManager:
                     "workflow_result": workflow_result,
                     "run_id": report.run_id,
                     "target_id": report.target_id,
+                    "target_origin": req.target_origin or lab.ORIGIN,
                     "requested_planner_mode": report.requested_planner_mode,
                     "actual_planner_mode": report.actual_planner_mode,
                     "control_mode": report.control_mode,
@@ -1196,10 +1245,68 @@ class RunManager:
                 self._safety_status.denials_count = report.denied_actions_count
 
         except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            dispatches = gate.network_dispatch_count if gate is not None else 0
+            artifacts = list(recorder.artifacts) if recorder is not None else []
+            evidence_refs = [item.get("evidence_id") for item in artifacts
+                             if type(item) is dict and type(item.get("evidence_id")) is str]
+            verification = {"state": "NOT_VERIFIED", "records": 0}
+            if recorder is not None:
+                try:
+                    verified = lab.verify(recorder)
+                    verification = {"state": "VERIFIED", "records": verified.get("records", 0)}
+                except Exception:
+                    verification = {"state": "FAILED", "records": 0}
+            failure_report = {
+                "workflow_result": None,
+                "run_id": run_id,
+                "target_id": req.target,
+                "target_origin": req.target_origin or lab.ORIGIN,
+                "requested_planner_mode": "HYBRID" if req.planner == "hybrid" else ("RULE" if req.planner == "rule" else "LLM"),
+                "actual_planner_mode": "NONE",
+                "control_mode": req.control_mode,
+                "provider": "rule_engine" if req.planner == "rule" else None,
+                "model": "none" if req.planner == "rule" else None,
+                "state": "FAILED",
+                "error": error,
+                "stop_reason": "WORKFLOW_FAILED" if req.approve_authenticated_workflow else "RUN_FAILED",
+                "decisions_count": 0,
+                "approved_actions_count": 0,
+                "denied_actions_count": 0,
+                "network_dispatch_count": dispatches,
+                "unsafe_dispatch_count": 0,
+                "observations_added_count": 0,
+                "pause_count": 0,
+                "operator_approvals_count": 0,
+                "operator_rejections_count": 0,
+                "findings": [],
+                "active_verifications_count": 0,
+                "scanner_results": [{"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED",
+                                     "reason": "WORKFLOW_FAILED"}
+                                    for tool in req.external_scanners],
+                "evidence_refs": evidence_refs,
+                "evidence_verification": verification,
+                "final_state": {},
+            }
+            report_path = run_dir / "report.json"
+            if not report_path.exists():
+                try:
+                    with report_path.open("x", encoding="utf-8") as stream:
+                        json.dump(failure_report, stream, indent=2)
+                except Exception:
+                    pass
             with self._lock:
                 self._run_status.state = AgentState.FAILED
-                self._run_status.error = f"{type(exc).__name__}: {exc}"
+                self._run_status.stop_reason = failure_report["stop_reason"]
+                self._run_status.error = error
+                self._run_status.network_dispatches = dispatches
+                self._run_status.evidence_count = len(artifacts)
                 self._agent_status.state = AgentState.FAILED
+                self._safety_status.network_dispatches = dispatches
+                self._evidence_status.count = len(artifacts)
+                self._evidence_status.verified_count = verification["records"] if verification["state"] == "VERIFIED" else 0
+                self._evidence_status.pending_count = max(0, len(artifacts) - self._evidence_status.verified_count)
+                self._evidence_status.integrity_status = verification["state"]
                 self._pipeline_status.steps["COMPLETE"] = StepState.FAILED
 
             event_sink.publish(AgentEvent(
@@ -1207,7 +1314,11 @@ class RunManager:
                 run_id=run_id,
                 type="RUN_FAILED",
                 timestamp_utc=_utc_now_iso(),
-                payload={"error": str(exc), "type": type(exc).__name__},
+                payload={"error": str(exc), "type": type(exc).__name__,
+                         "stop_reason": failure_report["stop_reason"],
+                         "network_dispatches": dispatches,
+                         "evidence_count": len(artifacts),
+                         "evidence_verification": verification["state"]},
             ))
         finally:
             with self._lock:
