@@ -48,6 +48,38 @@ class ZapOfflineTests(unittest.TestCase):
         site["@host"] = site.pop("host")
         self.assertEqual(len(self.parse(data)), 2)
 
+    def test_reconcile_report_preserves_scope_values_and_duplicate_key_order(self):
+        base = f"http://{TARGET}/products"
+        data = report(instances=[{"uri": uri} for uri in (
+            base + "?page=2&q=PRIVATE_SENTINEL",
+            base + "?q=other&page=2",
+            base + "?q=first&%71=second&page=2",
+            base + "?q=changed&page=2",
+            base + "/different?page=2&q=PRIVATE_SENTINEL",
+            f"http://{TARGET}:8080/products?page=2&q=PRIVATE_SENTINEL",
+        )])
+        before = copy.deepcopy(data)
+        result = zap_parser.reconcile_zap_report(data, TARGET, dispatched_urls=[
+            base + "?q=PRIVATE_SENTINEL&page=2",
+            base + "?q=other&page=2",
+            base + "?%71=second&page=2&q=first",
+        ])
+        self.assertEqual(result, [{"alert_index": 0, "finding_type": "sqli",
+                                  "exact": 1, "query_order_only": 1, "unmatched": 4}])
+        self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
+        self.assertEqual(data, before)
+
+    def test_reconcile_rejects_invalid_request_inventory_and_untrusted_alerts(self):
+        uri = f"http://{TARGET}/products"
+        for urls in (None, uri, [None], [f"http://lab-xss-001/products"]):
+            with self.subTest(urls=urls), self.assertRaises(ValueError):
+                zap_parser.reconcile_zap_report(report(uri=uri), TARGET, dispatched_urls=urls)
+        with self.assertRaises(ValueError):
+            zap_parser.reconcile_zap_report(
+                report(uri="http://lab-xss-001/products", confidence="0"),
+                TARGET, dispatched_urls=[uri],
+            )
+
     def test_confidence_not_severity(self):
         for code in range(5):
             for value in (code, str(code)):

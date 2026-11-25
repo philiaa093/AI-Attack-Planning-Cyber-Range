@@ -1,5 +1,6 @@
 """Scanner isolation and integration checks; real Docker scans use only a local fixture."""
 import json
+import hashlib
 import io
 import os
 from pathlib import Path
@@ -20,9 +21,44 @@ from dashboards.app.backend.run_manager import _run_gate
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder, EvidenceFailure
 from runtime.discovery.discovery_engine import HTMLMetadataParser
 from runtime.lab.capability_registry import CapabilityExecutionResult
-from runtime.lab.external_scanners import ExternalScannerExecutor, ScannerRelay, isolated_scan, load_config, preflight, parse_runtime_nuclei
+from runtime.lab.external_scanners import (
+    ExternalScannerExecutor, ScannerRelay, isolated_scan, load_config, preflight,
+    parse_runtime_nuclei, recorded_scanner_coverage,
+)
 from runtime.orchestration.autonomous_runner import AutonomousRunner
 from runtime.safety.discovery_gate import ApprovalToken, BudgetTracker, CentralizedSafetyGate, TokenBucketRateLimiter
+from tools.parsers import zap_parser
+
+
+class RecordedScannerCoverageTests(unittest.TestCase):
+    def test_coverage_and_seed_count_require_explicit_measurements(self):
+        for coverage, seed, expected in (
+            ("BOUNDED", {"not_requested_seed_count": 0}, ("BOUNDED", 0)),
+            ("PARTIAL", {"not_requested_seed_count": 2}, ("PARTIAL", 2)),
+            (None, None, (None, None)),
+            ("BOUNDED", {"not_requested_seed_count": False}, ("BOUNDED", None)),
+            ("UNKNOWN", {"not_requested_seed_count": -1}, (None, None)),
+        ):
+            with self.subTest(coverage=coverage, seed=seed):
+                result = {"status": "COMPLETED", "coverage": coverage, "seed_coverage": seed}
+                self.assertEqual(recorded_scanner_coverage(result), expected)
+
+    def test_only_same_run_records_with_evidence_count_for_selected_scanners(self):
+        executor = ExternalScannerExecutor(("zap-passive", "nuclei"))
+        bounded = {
+            "run_id": "RUN-UNIT", "status": "COMPLETED", "evidence_id": "EV-UNIT-FIXTURE",
+            "coverage": "BOUNDED", "seed_coverage": {"not_requested_seed_count": 0},
+        }
+        executor.results.append({**bounded, "tool": "zap-passive"})
+        self.assertFalse(executor.has_complete_recorded_coverage("RUN-UNIT"))
+
+        for change in ({"run_id": "RUN-OTHER"}, {"evidence_id": None},
+                       {"seed_coverage": {}}, {"coverage": "PARTIAL"}):
+            with self.subTest(change=change):
+                executor.results[1:] = [{**bounded, "tool": "nuclei", **change}]
+                self.assertFalse(executor.has_complete_recorded_coverage("RUN-UNIT"))
+        executor.results[1:] = [{**bounded, "tool": "nuclei", "evidence_id": "EV-UNIT-SECOND"}]
+        self.assertTrue(executor.has_complete_recorded_coverage("RUN-UNIT"))
 
 
 class ExternalScannerTests(unittest.TestCase):
@@ -110,6 +146,24 @@ class ExternalScannerTests(unittest.TestCase):
         self.relay.executed_urls.update(self.relay.urls())
         self.assertEqual(self.relay.seed_coverage()["not_requested_seed_count"], 5)
         self.assertEqual(self.relay.seed_coverage()["successful_seed_count"], 0)
+
+    def test_seed_coverage_matches_reordered_distinct_keys_only(self):
+        base = "http://lab-ecommerce/products?"
+        self.relay.seed_urls = {
+            base + "q=&category=2", base + "category=2&q=",
+            base + "q=red&%71=blue&category=2", base + "q=changed&category=2",
+        }
+        self.relay.executed_urls = {
+            base + "category=2&q=", base + "%71=blue&category=2&q=red",
+            base + "category=2&q=other",
+            "http://lab-ecommerce:8080/products?q=changed&category=2",
+        }
+        self.relay.successful_urls = self.relay.executed_urls.copy()
+        self.assertEqual(self.relay.seed_coverage(), {
+            "observed_seed_count": 3, "selected_seed_count": 3,
+            "requested_seed_count": 1, "successful_seed_count": 1,
+            "not_requested_seed_count": 2, "options_truncated": False,
+        })
 
     def test_scope_validation_before_dispatch(self):
         bad = [None, [], {}, {"url": "http://lab-ecommerce/products", "method": "POST"},
@@ -249,8 +303,11 @@ class ExternalScannerTests(unittest.TestCase):
             self.assertEqual([r["status"] for r in executor.results], ["ERROR", "COMPLETED"])
             self.assertEqual(result.outcome, "FAILURE")
             self.assertEqual(result.classification, "INCONCLUSIVE")
-            self.assertEqual({f["subject"] for f in result.new_facts},
-                             {"ACTION-SCAN-002:zap-active", "ACTION-SCAN-002:nuclei"})
+            fact_subjects = {f["subject"] for f in result.new_facts}
+            self.assertTrue({"ACTION-SCAN-002:zap-active", "ACTION-SCAN-002:nuclei"} <= fact_subjects)
+            coverage = {f["subject"]: f["value"] for f in result.new_facts
+                        if f["subject"].endswith(":coverage")}
+            self.assertEqual(coverage.get("ACTION-SCAN-002:zap-active:coverage"), "INCOMPLETE")
             with self.assertRaisesRegex(ValueError, "SCANNER_BATCH_ALREADY_EXECUTED"):
                 self.execute(executor)
 
@@ -297,7 +354,7 @@ class ExternalScannerTests(unittest.TestCase):
     def test_report_provenance_and_candidates_not_confirmed(self):
         raw = json.dumps({"template-id": "lab-sql-error", "type": "http", "matcher-status": True,
             "host": "http://lab-ecommerce", "matched-at": "http://lab-ecommerce/products?q=x",
-            "info": {"severity": "info", "tags": ["sqli"]}}).encode()
+            "info": {"severity": "info", "tags": ["sqli"], "description": "PRIVATE_REPORT_TEXT"}}).encode()
         def scan(*args):
             self.gate.network_dispatch_count += 1
             args[1].executed_urls.add("http://lab-ecommerce/products?q=x")
@@ -310,8 +367,121 @@ class ExternalScannerTests(unittest.TestCase):
         self.assertEqual(result.findings[0].classification, "CANDIDATE")
         self.assertEqual(len(executor.results[0]["report_sha256"]), 64)
         self.assertTrue(executor.results[0]["asset_hashes"])
+        directory = self.root / "evidence"
+        payload_path, = directory.glob("nuclei_review-*.json")
+        payload = json.loads(payload_path.read_text("utf-8"))
+        self.assertEqual(payload["report_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(payload["alerts"], [{"alert_index": 0, "rule_id": "lab-sql-error",
+                                             "severity": "informational", "instances": 1}])
+        self.assertNotIn("PRIVATE_REPORT_TEXT", payload_path.read_text("utf-8"))
+        self.assertNotIn("matched-at", payload_path.read_text("utf-8"))
+        review_record, = (json.loads(p.read_text()) for p in directory.glob("record-nuclei_review-*.json"))
+        result_record, = (json.loads(p.read_text()) for p in directory.glob("record-scanner_result-*.json"))
+        self.assertEqual(result_record["derived_from"], [review_record["evidence_id"]])
         with self.assertRaises(ValueError):
             self.execute(executor)
+
+    def test_zap_review_evidence_retains_dispatched_order_without_raw_data(self):
+        base = "http://lab-ecommerce/products"
+        self.inventory.items["/products"].forms[0]["inputs"].append({"name": "page"})
+        dispatched = base + "?q=PRIVATE_NEEDLE&page=2&q=second"
+        reordered = base + "?page=2&q=PRIVATE_NEEDLE&q=second"
+        reversed_repeat = base + "?q=second&page=2&q=PRIVATE_NEEDLE"
+        report = {"site": [{"host": "lab-ecommerce", "alerts": [
+            {"alert": "SQL Injection", "confidence": "2", "pluginid": "40018",
+             "alertRef": "40018-2", "riskcode": "3", "instances": [
+                {"uri": reordered, "evidence": "PRIVATE_REPORT_TEXT"},
+                {"uri": reversed_repeat}, {"uri": reordered.replace("page=2", "page=3")},
+            ]},
+            {"alert": "PRIVATE_UNRECOGNIZED_ALERT", "uri": reordered, "pluginid": "10021",
+             "alertRef": "PRIVATE_REF", "riskcode": 1, "riskdesc": "PRIVATE_RISK_DESC"},
+        ]}]}
+        raw = json.dumps({"version": "2.16.1", "report": report}).encode()
+
+        def scan(tool, relay, *_):
+            for method in ("GET", "HEAD"):
+                self.assertEqual(relay.dispatch({"url": dispatched, "method": method})["status"], 200)
+            self.assertEqual(relay.dispatch({"url": base + "/blocked", "method": "GET"})["status"], 403)
+            return raw
+
+        with patch("runtime.lab.external_scanners.preflight", return_value={}), \
+             patch("runtime.lab.external_scanners.isolated_scan", side_effect=scan), \
+             patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = []
+            response.read.return_value = b"fixture"
+            result = self.execute(ExternalScannerExecutor(["zap-active"]))
+        self.assertEqual(result.findings, [])
+        self.assertEqual(connection.call_count, 2)
+        self.assertEqual(connection.return_value.request.call_args.args[1], urllib.parse.urlsplit(dispatched).path
+                         + "?" + urllib.parse.urlsplit(dispatched).query)
+
+        evidence_dir = self.root / "evidence"
+        payload_path, = evidence_dir.glob("zap_review-*.json")
+        saved = payload_path.read_text("utf-8")
+        payload = json.loads(saved)
+        self.assertEqual(payload["report_sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(payload["format_version"], 2)
+        self.assertEqual(payload["dispatch_count"], 2)
+        self.assertEqual([row["method"] for row in payload["requests"]], ["GET", "HEAD"])
+        self.assertEqual(len(payload["alerts"]), 2)
+        self.assertIsNone(payload["alerts"][1]["finding_type"])
+        self.assertEqual([(row["rule_id"], row["severity"]) for row in payload["alerts"]],
+                         [("40018-2", "high"), ("10021", "low")])
+        expected = [
+            {"alert_index": 0, "finding_type": "sqli", "exact": 0, "query_order_only": 1, "unmatched": 2},
+        ]
+        self.assertEqual(zap_parser.reconcile_zap_evidence(payload), expected)
+        legacy = {**payload, "format_version": 1, "alerts": [
+            {k: v for k, v in row.items() if k not in ("rule_id", "severity")} for row in payload["alerts"]
+        ]}
+        self.assertEqual(zap_parser.reconcile_zap_evidence(legacy), expected)
+        tampered = {**payload, "alerts": [{**payload["alerts"][0], "severity": "PRIVATE_RISK_DESC"}]}
+        with self.assertRaisesRegex(ValueError, "alert metadata"):
+            zap_parser.reconcile_zap_evidence(tampered)
+        with self.assertRaisesRegex(ValueError, "dispatch count"):
+            zap_parser.reconcile_zap_evidence({**payload, "requests": payload["requests"][:1]})
+        for text in ("/products", "PRIVATE_NEEDLE", "PRIVATE_REPORT_TEXT", "PRIVATE_UNRECOGNIZED_ALERT",
+                     "PRIVATE_REF", "PRIVATE_RISK_DESC", "page="):
+            self.assertNotIn(text, saved)
+        review_record, = (json.loads(p.read_text()) for p in evidence_dir.glob("record-zap_review-*.json"))
+        intent_record, = (json.loads(p.read_text()) for p in evidence_dir.glob("record-scanner_intent-*.json"))
+        result_record, = (json.loads(p.read_text()) for p in evidence_dir.glob("record-scanner_result-*.json"))
+        self.assertTrue(review_record["redacted"])
+        self.assertEqual(review_record["sha256"], hashlib.sha256(payload_path.read_bytes()).hexdigest())
+        self.assertEqual(review_record["derived_from"], [intent_record["evidence_id"]])
+        self.assertEqual(result_record["derived_from"], [review_record["evidence_id"]])
+
+    def test_zap_review_partial_or_missing_input_cannot_report_full_comparison(self):
+        with patch.object(zap_parser, "_MAX_REVIEW_FIELDS", 1):
+            capture = zap_parser.ZapReviewCapture("lab-ecommerce")
+            uri = "http://lab-ecommerce/products?q=one&page=2"
+            capture.record_dispatch(uri, "GET", 200)
+            partial = capture.finish({"site": [{"host": "lab-ecommerce", "alerts": [
+                {"alert": "SQL Injection", "confidence": 2, "uri": uri},
+            ]}]}, report_received=True, dispatch_count=1)
+        self.assertEqual((partial["requests_omitted"], partial["alert_urls_omitted"]), (1, 1))
+        for value in (partial, capture.finish(None, report_received=False, dispatch_count=1),
+                      capture.finish(None, report_received=True, dispatch_count=1)):
+            with self.subTest(report_state=value["report_state"]), self.assertRaises(ValueError):
+                zap_parser.reconcile_zap_evidence(value)
+
+    def test_zap_review_write_failure_stops_before_next_scanner(self):
+        persist = self.recorder.persist_phase_artifact
+
+        def fail_review(phase, *args, **kwargs):
+            if phase == "zap_review":
+                raise EvidenceFailure("review storage unavailable")
+            return persist(phase, *args, **kwargs)
+
+        with patch.object(self.recorder, "persist_phase_artifact", side_effect=fail_review), \
+             patch("runtime.lab.external_scanners.preflight", return_value={}), \
+             patch("runtime.lab.external_scanners.isolated_scan", side_effect=RuntimeError("SCANNER_TIMEOUT")) as scan:
+            with self.assertRaisesRegex(EvidenceFailure, "review storage unavailable"):
+                self.execute(ExternalScannerExecutor(["zap-active", "nuclei"]))
+        self.assertEqual(scan.call_count, 1)
+        self.assertEqual(list((self.root / "evidence").glob("scanner_result-*.json")), [])
 
     def test_runner_does_not_offer_unselected_scanner_and_stop_revokes(self):
         runner = AutonomousRunner("lab-ecommerce", self.gate, self.recorder, self.approval)

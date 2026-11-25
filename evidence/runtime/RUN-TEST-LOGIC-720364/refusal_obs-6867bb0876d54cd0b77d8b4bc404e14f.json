@@ -1,0 +1,1 @@
+{"action_id":"ACTION-LOGIC-001","evidence_refs":["EV-DECISION-bd17c60af599"],"new_facts":[{"confidence":1.0,"fact_id":"FACT-REF-ACTION-LOGIC-001","fact_type":"ACTION_OUTCOME","subject":"ACTION-LOGIC-001","value":"REFUSED"}],"observation_id":"OBS-REFUSAL-5febcf57","outcome":"DENIED","run_id":"RUN-TEST-LOGIC-720364","timestamp_utc":"2026-11-24T16:20:42.502718Z"}

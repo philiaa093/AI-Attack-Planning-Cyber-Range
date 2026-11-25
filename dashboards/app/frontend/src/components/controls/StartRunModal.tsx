@@ -35,14 +35,26 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
   const [previewOnePage, setPreviewOnePage] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const scanOrigins: Record<string, string> = {
+    'lab-webapp-a': 'http://127.0.0.1:18085',
+    'lab-webapp-b': 'http://127.0.0.1:18086',
+  };
+  const disposableTarget = target in scanOrigins;
+  const selectTarget = (next: string) => {
+    setTarget(next);
+    setTargetOrigin(scanOrigins[next] ?? 'http://127.0.0.1:18088');
+  };
+
   if (!isOpen) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
     const normalizedOrigin = targetOrigin.trim().replace(/\/+$/, '');
-    if ((executionScope === 'workflow' || mode !== 'deny-demo') &&
-        (target !== 'lab-ecommerce' || !['http://127.0.0.1:18088', 'http://10.0.0.2:8080'].includes(normalizedOrigin))) {
+    const knownTarget = target === 'lab-ecommerce'
+      ? ['http://127.0.0.1:18088', 'http://10.0.0.2:8080'].includes(normalizedOrigin)
+      : executionScope === 'scan' && scanOrigins[target] === normalizedOrigin;
+    if ((executionScope === 'workflow' || mode !== 'deny-demo') && !knownTarget) {
       setSubmitError('ISOLATED_LAB_TARGET_UNSUPPORTED');
       return;
     }
@@ -136,7 +148,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                 <span>{submitError.includes('SCAN_REDACTION_UNSAFE')
                   ? (lang === 'vi' ? 'Không thể chạy scan: bộ ghi evidence chưa che được giá trị CSRF trong HTML. Cần sửa redaction trước.' : 'Scan blocked: evidence redaction does not yet protect CSRF values in HTML.')
                   : submitError.includes('ISOLATED_LAB_TARGET_UNSUPPORTED')
-                  ? (lang === 'vi' ? 'Chỉ hỗ trợ lab-ecommerce tại địa chỉ GNS3 hoặc Docker ở trên.' : 'Only lab-ecommerce at the GNS3 or Docker address above is supported.')
+                  ? (lang === 'vi' ? 'Chọn đúng target và địa chỉ lab tương ứng. Workflow chỉ hỗ trợ ShopLab.' : 'Choose a supported target and its matching lab address. Workflows support ShopLab only.')
                   : displayValue(submitError, lang)}</span>
               </div>
             )}
@@ -148,10 +160,13 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                 {lang === 'vi' ? 'Scan và kiểm tra chủ động' : 'Scan and active verification'}
               </label>
               <label className="flex items-center gap-2 text-xs text-slate-200">
-                <input type="radio" name="execution-scope" checked={executionScope === 'workflow'} onChange={() => setExecutionScope('workflow')} />
+                <input type="radio" name="execution-scope" checked={executionScope === 'workflow'} onChange={() => {
+                  setExecutionScope('workflow');
+                  if (disposableTarget) selectTarget('lab-ecommerce');
+                }} />
                 {lang === 'vi' ? 'Workflow nghiệp vụ cố định' : 'Fixed business workflow'}
               </label>
-              <p className="text-xs text-slate-400">{lang === 'vi' ? 'Mỗi phiên chỉ chạy một phần; workflow không sử dụng planner hoặc scanner. Scan dùng bản sao Docker được giữ lại hoặc snapshot/restore GNS3; lab có thể gián đoạn và GNS3 cần control plane.' : 'Each run uses one scope; the workflow does not use a planner or scanner. Scans retain a Docker volume copy or use GNS3 snapshot/restore; the lab may be interrupted and GNS3 requires the control plane.'}</p>
+              <p className="text-xs text-slate-400">{lang === 'vi' ? 'Workflow cố định không dùng planner hoặc scanner. Webapp A/B chạy trên container riêng từng phiên. ShopLab dùng bản sao volume Docker hoặc snapshot/restore GNS3; ShopLab có thể tạm gián đoạn.' : 'The fixed workflow uses no planner or scanner. Webapp A/B use disposable containers per run. ShopLab uses a Docker volume copy or GNS3 snapshot/restore and may be briefly unavailable.'}</p>
             </fieldset>
 
             {/* Mode Selector */}
@@ -256,19 +271,27 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
 
               <div>
                 <label htmlFor="lab-target" className="text-[11px] font-medium text-slate-400 block mb-1">{t.labTarget}</label>
-                <input
+                <select
                   id="lab-target"
-                  type="text"
                   value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  onChange={(e) => selectTarget(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 font-mono text-xs focus:outline-hidden focus:border-blue-500"
-                />
+                >
+                  <option value="lab-ecommerce">ShopLab (lab-ecommerce)</option>
+                  {executionScope === 'scan' && <>
+                    <option value="lab-webapp-a">Webapp A (lab-webapp-a)</option>
+                    <option value="lab-webapp-b">Webapp B (lab-webapp-b)</option>
+                  </>}
+                </select>
+                {disposableTarget && <p className="mt-1 text-[10px] text-slate-400">{lang === 'vi'
+                  ? 'Lab có lỗi cố ý để kiểm tra khả năng phát hiện. Chỉ scan GET/HEAD; stored XSS cần POST chưa được kiểm tra.'
+                  : 'Intentionally vulnerable detection lab. GET/HEAD scans only; stored XSS requiring POST is untested.'}</p>}
               </div>
 
               <div className="col-span-2 space-y-1.5 rounded border border-slate-800 bg-slate-900/60 p-2.5">
                 <div className="flex items-center justify-between">
                   <label htmlFor="target-origin" className="text-[11px] font-medium text-slate-300 block">{t.targetOrigin}</label>
-                  <div className="flex items-center space-x-1.5">
+                  {!disposableTarget && <div className="flex items-center space-x-1.5">
                     <button
                       type="button"
                       onClick={() => { setTarget('lab-ecommerce'); setTargetOrigin('http://10.0.0.2:8080'); }}
@@ -291,7 +314,7 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                     >
                       Docker Gateway (127.0.0.1:18088)
                     </button>
-                  </div>
+                  </div>}
                 </div>
                 <input
                   id="target-origin"
@@ -303,8 +326,8 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
                 />
                 <p className="text-[10px] text-slate-400">{t.targetOriginDesc}</p>
                 <p className="text-[10px] text-slate-400">{lang === 'vi'
-                  ? 'Cô lập chỉ hỗ trợ lab-ecommerce tại hai địa chỉ GNS3 hoặc Docker ở trên.'
-                  : 'Isolation supports lab-ecommerce only at the GNS3 or Docker addresses above.'}</p>
+                  ? 'A/B dùng cổng loopback 18085/18086 với container riêng; nếu cổng đang bị chiếm, phiên sẽ báo lỗi. ShopLab hỗ trợ hai địa chỉ Docker/GNS3 ở trên.'
+                  : 'A/B use loopback ports 18085/18086 with disposable containers; an occupied port stops the run with an error. ShopLab supports the Docker/GNS3 addresses above.'}</p>
               </div>
 
               <div>
@@ -328,6 +351,19 @@ export const StartRunModal: React.FC<StartRunModalProps> = ({
               <label className="text-[11px] text-slate-400">{lang === 'vi' ? 'Giới hạn trang khám phá' : 'Discovery page budget'}
                 <input type="number" min={1} max={100} required disabled={executionScope === 'workflow'} value={maxPages} onChange={e => setMaxPages(Number(e.target.value))} className="w-full rounded border border-slate-800 bg-slate-900 px-2.5 py-1.5 text-slate-200" />
               </label>
+              {executionScope === 'scan' && mode !== 'deny-demo' && !previewOnePage && <div className="col-span-2 space-y-2">
+                <button type="button" onClick={() => {
+                  setApproveActiveVerification(true);
+                  setZapMode('zap-active');
+                  setUseNuclei(true);
+                  setMaxRequests(Math.max(500, maxRequests));
+                }} className="rounded border border-blue-700 bg-blue-950/40 px-3 py-2 text-xs text-blue-200 hover:bg-blue-900/40">
+                  {lang === 'vi' ? 'Phê duyệt và chọn Active + ZAP + Nuclei' : 'Approve and select Active + ZAP + Nuclei'}
+                </button>
+                <p className="text-[11px] text-slate-400">{lang === 'vi'
+                  ? 'Chọn gói pentest lab với ngân sách 500 HTTP; xem lại bên dưới rồi bắt đầu phiên. Không có kết quả phát hiện vẫn có thể là chưa kiểm tra hoặc thiếu bằng chứng.'
+                  : 'Select the lab pentest preset with a 500-request budget; review the settings below before launching. Zero findings can still mean untested inputs or insufficient evidence.'}</p>
+              </div>}
               {executionScope === 'scan' && <label className="col-span-2 flex items-start gap-2 rounded border border-amber-900 bg-amber-950/20 p-2 text-xs text-amber-200">
                 <input type="checkbox" checked={approveActiveVerification && !previewOnePage} disabled={previewOnePage} onChange={e => setApproveActiveVerification(e.target.checked)} />
                 {lang === 'vi' ? 'Phê duyệt kiểm tra chủ động có giới hạn trong lab: SQLi, XSS, path traversal. Yêu cầu kiểm tra tới ứng dụng chỉ dùng GET/HEAD; phép thử form cần POST sẽ bị từ chối và báo chưa kiểm tra.' : 'Approve bounded active lab checks: SQLi, XSS and path traversal. Application checks use GET/HEAD only; POST-based form checks are refused and reported as untested.'}

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from dashboards.app.backend.control_api import app, event_sink, run_manager
 from dashboards.app.backend.event_sink import EventSink
+from dashboards.app.backend.run_manager import RunManager
 from dashboards.app.backend.models import (
     AgentEvent,
     AgentState,
@@ -28,6 +29,7 @@ from dashboards.app.backend.models import (
     RangeState,
     RunStatus,
     SafetyStatus,
+    StartRunRequest,
     StepState,
 )
 from runtime.lab import control_support as lab
@@ -342,6 +344,8 @@ class TestRuntimeEvents(unittest.TestCase):
 
     def test_provider_halt_sets_failed_state_reason_and_plan_failure(self):
         reason = "provider_unavailable_halt:FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT"
+        run_manager._on_runtime_event({"run_id": "RUN-PROVIDER-FAILURE", "type": "PLANNER_PROPOSED",
+            "payload": {"actual_mode": "NONE", "fallback_reason": "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT"}}, event_sink)
         run_manager._on_runtime_event({"run_id": "RUN-PROVIDER-FAILURE", "type": "RUN_FAILED",
             "payload": {"stop_reason": reason, "error": "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT"}}, event_sink)
         run_manager._on_runtime_event({"run_id": "RUN-PROVIDER-FAILURE", "type": "EVIDENCE_VERIFIED",
@@ -349,6 +353,8 @@ class TestRuntimeEvents(unittest.TestCase):
         run, agent, _, evidence, pipeline = run_manager.get_snapshot()
         self.assertEqual(run.state, AgentState.FAILED)
         self.assertEqual(agent.state, AgentState.FAILED)
+        self.assertEqual(agent.actual_mode, "NONE")
+        self.assertEqual(agent.fallback_reason, "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT")
         self.assertEqual(run.stop_reason, reason)
         self.assertEqual(run.error, "FALLBACK_NOT_ALLOWED:PROVIDER_TIMEOUT")
         self.assertEqual(pipeline.steps["PLAN"], StepState.FAILED)
@@ -369,6 +375,42 @@ class TestRuntimeEvents(unittest.TestCase):
             resp_filter = self.client.get(f"/api/runs/{run_id}/events")
             self.assertEqual(resp_filter.status_code, 200)
             self.assertTrue(resp_filter.headers["content-type"].startswith("text/event-stream"))
+
+
+class TestFailureVisibility(unittest.TestCase):
+    def test_planner_halts_set_failed_plan(self):
+        for halt in ("provider_unavailable_halt", "hybrid_not_implemented_halt"):
+            with self.subTest(halt=halt):
+                manager, sink = RunManager(), EventSink()
+                reason = f"{halt}:FALLBACK_NOT_ALLOWED:TEST_REASON"
+                manager._on_runtime_event({"run_id": "RUN-FAILURE", "type": "RUN_FAILED",
+                    "payload": {"stop_reason": reason, "error": "FALLBACK_NOT_ALLOWED:TEST_REASON"}}, sink)
+                run, agent, _, _, pipeline = manager.get_snapshot()
+                self.assertEqual(run.state, AgentState.FAILED)
+                self.assertEqual(agent.state, AgentState.FAILED)
+                self.assertEqual(run.stop_reason, reason)
+                self.assertEqual(run.error, "FALLBACK_NOT_ALLOWED:TEST_REASON")
+                self.assertEqual(pipeline.steps["PLAN"], StepState.FAILED)
+                self.assertEqual(pipeline.steps["COMPLETE"], StepState.FAILED)
+
+    def test_worker_exception_retains_type_in_current_status(self):
+        manager, sink = RunManager(), EventSink()
+        run_id = "RUN-WORKER-FAILURE"
+        manager._active_run_id = run_id
+        req = StartRunRequest(mode="deny-demo")
+        run_dir = MagicMock()  # No filesystem writes in this test.
+        run_dir.__truediv__.return_value.exists.return_value = False
+        with patch.object(lab, "new_recorder", side_effect=RuntimeError("recorder unavailable")):
+            manager._worker(run_id, req, run_dir, sink)
+
+        with patch("dashboards.app.backend.control_api.run_manager", manager):
+            response = TestClient(app).get("/api/runs/current")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["run"]["state"], "FAILED")
+        self.assertEqual(response.json()["run"]["error"], "RuntimeError: recorder unavailable")
+        failure = next(event for event in sink.get_history(run_id=run_id) if event["type"] == "RUN_FAILED")
+        self.assertEqual(failure["payload"]["error"], "recorder unavailable")
+        self.assertEqual(failure["payload"]["type"], "RuntimeError")
 
 
 if __name__ == "__main__":

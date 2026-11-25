@@ -52,6 +52,9 @@ _EMAIL_PATTERN = re.compile(
 )
 
 BODY_SNIPPET_OMITTED = "[BODY_SNIPPET_OMITTED]"
+_EVIDENCE_SOURCES = frozenset({
+    "VALIDATOR", "UNIT_TEST", "COMPILE_CHECK", "PLANNER", "EXECUTOR", "TOOL_ADAPTER", "OPERATOR",
+})
 
 
 class EvidenceFailure(RuntimeError):
@@ -162,7 +165,7 @@ class DurableEvidenceRecorder:
             raise EvidenceFailure("run_id must be a non-empty string")
         if any(c in run_id for c in ("..", "/", "\\", "\0")):
             raise EvidenceFailure(f"path traversal or invalid characters in run_id '{run_id}'")
-        if source not in ("VALIDATOR", "UNIT_TEST", "COMPILE_CHECK", "PLANNER", "EXECUTOR", "TOOL_ADAPTER", "OPERATOR"):
+        if type(source) is not str or source not in _EVIDENCE_SOURCES:
             raise EvidenceFailure(f"invalid evidence source '{source}' per evidence.schema.json")
 
         self.run_id = run_id
@@ -266,8 +269,12 @@ class DurableEvidenceRecorder:
         expected_state: str,
         observed_state: str,
         derived_from: list[str] | None = None,
+        source: str | None = None,
     ) -> dict[str, Any]:
         """Atomically persist payload and evidence record with temp -> fsync -> atomic publish pattern."""
+        record_source = self.source if source is None else source
+        if type(record_source) is not str or record_source not in _EVIDENCE_SOURCES:
+            raise EvidenceFailure("invalid evidence source per evidence.schema.json")
         if self._inject_dir_error:
             raise EvidenceFailure("simulated evidence directory error")
 
@@ -322,7 +329,7 @@ class DurableEvidenceRecorder:
             "path": str(payload_path.relative_to(ROOT)) if payload_path.is_relative_to(ROOT) else str(payload_path),
             "sha256": payload_digest,
             "created_at_utc": created_utc,
-            "source": self.source,
+            "source": record_source,
             "redacted": True,
             "expected_state": expected_state,
             "observed_state": observed_state,
@@ -373,7 +380,8 @@ class DurableEvidenceRecorder:
         return artifact
 
     def persist_intent(
-        self, intent_data: dict[str, Any], derived_from: list[str] | None = None
+        self, intent_data: dict[str, Any], derived_from: list[str] | None = None,
+        *, source: str | None = None,
     ) -> dict[str, Any]:
         """Persist dispatch intent and policy decision before any network transmission."""
         if self._inject_intent_failure:
@@ -387,10 +395,12 @@ class DurableEvidenceRecorder:
             expected_state="INTENT_RECORDED",
             observed_state="INTENT_RECORDED",
             derived_from=derived_from,
+            source=source,
         )
 
     def persist_result(
-        self, result_data: dict[str, Any], derived_from: list[str] | None = None
+        self, result_data: dict[str, Any], derived_from: list[str] | None = None,
+        *, source: str | None = None,
     ) -> dict[str, Any]:
         """Persist dispatch result before scheduling any subsequent request."""
         if self._inject_result_failure:
@@ -402,6 +412,7 @@ class DurableEvidenceRecorder:
             expected_state="DISPATCH_CONFIRMED",
             observed_state="DISPATCH_CONFIRMED",
             derived_from=derived_from,
+            source=source,
         )
 
     def persist_phase_artifact(
@@ -411,6 +422,7 @@ class DurableEvidenceRecorder:
         expected_state: str = "PHASE_RECORDED",
         observed_state: str = "PHASE_RECORDED",
         derived_from: list[str] | None = None,
+        *, source: str | None = None,
     ) -> dict[str, Any]:
         """Persist phase artifact and confirm durability."""
         clean_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", phase_name.lower())
@@ -420,4 +432,5 @@ class DurableEvidenceRecorder:
             expected_state=expected_state,
             observed_state=observed_state,
             derived_from=derived_from,
+            source=source,
         )

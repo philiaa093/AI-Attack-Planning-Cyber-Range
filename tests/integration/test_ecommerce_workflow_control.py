@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import sqlite3
 import threading
 from tempfile import TemporaryDirectory
 import unittest
@@ -38,6 +39,10 @@ class ShopLabWorkflowControlTests(unittest.TestCase):
             return db.execute(sql, params).fetchone()[0]
 
     def test_snapshot_promote_and_restore_round_trip(self):
+        changed = self.app.UPLOAD_DIR / "changed.txt"
+        missing = self.app.UPLOAD_DIR / "missing.txt"
+        changed.write_bytes(b"original\r\n")
+        missing.write_bytes(b"\x00original")
         digest = self.app._workflow_snapshot_create(self.run_id)
         self.assertRegex(digest, r"^[a-f0-9]{64}$")
 
@@ -52,12 +57,52 @@ class ShopLabWorkflowControlTests(unittest.TestCase):
             )
         generated = self.app.UPLOAD_DIR / "workflow-generated.txt"
         generated.write_text("temporary", encoding="utf-8")
+        changed.write_text("modified", encoding="utf-8")
+        missing.unlink()
 
         self.assertEqual(self.app._workflow_snapshot_restore(self.run_id), digest)
         self.assertEqual(self.scalar("SELECT role FROM users WHERE id=?", (self.user_id,)), "user")
         self.assertEqual(self.scalar("SELECT count(*) FROM sessions WHERE user_id=?", (self.user_id,)), 1)
         self.assertEqual(self.scalar("SELECT count(*) FROM users WHERE username='temporary'"), 0)
         self.assertFalse(generated.exists())
+        self.assertEqual(changed.read_bytes(), b"original\r\n")
+        self.assertEqual(missing.read_bytes(), b"\x00original")
+
+    def test_corrupt_invoice_backup_refuses_restore_before_changes(self):
+        invoice = self.app.UPLOAD_DIR / "original.txt"
+        invoice.write_bytes(b"baseline")
+        digest = self.app._workflow_snapshot_create(self.run_id)
+        backup = self.app._workflow_snapshot["path"].parent / "invoices" / invoice.name
+        backup.write_bytes(b"damaged")
+        invoice.write_bytes(b"changed")
+        with self.assertRaisesRegex(RuntimeError, "invoice snapshot integrity"):
+            self.app._workflow_snapshot_restore(self.run_id)
+        self.assertEqual(invoice.read_bytes(), b"changed")
+        with self.assertRaises(self.app.StorageError):
+            self.scalar("SELECT 1")
+        backup.write_bytes(b"baseline")
+        self.assertEqual(self.app._workflow_snapshot_restore(self.run_id), digest)
+        self.assertEqual(invoice.read_bytes(), b"baseline")
+
+    def test_valid_but_different_restored_database_stays_closed_and_retryable(self):
+        digest = self.app._workflow_snapshot_create(self.run_id)
+        snapshot = self.app._workflow_snapshot["path"]
+        preflight = self.app._preflight_db
+        def change_sequence(path, **kwargs):
+            with sqlite3.connect(path) as db:
+                db.execute("UPDATE sqlite_sequence SET seq = seq + 1 WHERE name = 'users'")
+            db.close()
+            preflight(path, **kwargs)
+
+        with patch.object(self.app, "_preflight_db", side_effect=change_sequence):
+            with self.assertRaisesRegex(RuntimeError, "differs from workflow snapshot"):
+                self.app._workflow_snapshot_restore(self.run_id)
+        self.assertTrue(snapshot.exists())
+        with self.assertRaises(self.app.StorageError):
+            self.scalar("SELECT 1")
+        self.assertEqual(self.app._workflow_snapshot_restore(self.run_id), digest)
+        self.assertFalse(snapshot.exists())
+        self.assertEqual(self.scalar("SELECT seq FROM sqlite_sequence WHERE name='users'"), self.user_id)
 
     def test_wrong_run_and_wrong_account_fail_closed(self):
         self.app._workflow_snapshot_create(self.run_id)

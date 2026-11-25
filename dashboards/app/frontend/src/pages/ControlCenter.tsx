@@ -134,7 +134,9 @@ export const ControlCenter: React.FC<ControlCenterProps> = ({
     try {
       const res = await apiClient.startRun(req);
       if (res.success) {
-        notify('success', `Autonomous run started: ${res.run_id}`);
+        notify('info', lang === 'vi'
+          ? `Đã tiếp nhận yêu cầu chạy: ${res.run_id}. Hãy theo dõi trạng thái để biết kết quả.`
+          : `Run launch accepted: ${res.run_id}. Follow the run status for the outcome.`);
         await refetch();
       } else {
         notify('error', res.message || 'Run startup rejected');

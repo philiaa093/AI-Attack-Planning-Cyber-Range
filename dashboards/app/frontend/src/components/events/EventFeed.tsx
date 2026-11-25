@@ -224,6 +224,17 @@ export const EventFeed: React.FC<EventFeedProps> = ({
                   </div>
                 </div>
 
+                {ev.type === 'RUN_FAILED' && (
+                  <div className="mt-1 space-y-0.5 break-words text-[11px] text-rose-300">
+                    {typeof p.stop_reason === 'string' && p.stop_reason && (
+                      <div>{lang === 'vi' ? 'Lý do dừng:' : 'Stop reason:'} {p.stop_reason}</div>
+                    )}
+                    {typeof p.error === 'string' && p.error && (
+                      <div>{lang === 'vi' ? 'Lỗi:' : 'Error:'} {p.error}</div>
+                    )}
+                  </div>
+                )}
+
                 {isExpanded && (
                   <div className="mt-2 pt-2 border-t border-slate-800/60 font-mono text-[11px] space-y-1 text-slate-300">
                     <div className="flex justify-between text-slate-400 text-[10px]">

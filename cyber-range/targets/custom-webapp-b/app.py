@@ -90,7 +90,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
 
         if path == "/":
-            self._send_html(200, "<html><body><h1>lab-webapp-b</h1><p>Cyber range target B (lab only)</p></body></html>")
+            self._send_html(200, """<html><body><h1>lab-webapp-b</h1>
+<p>Cyber range target B (lab only)</p>
+<a href="/api/orders?customer_id=1">Customer orders</a>
+<form method="GET" action="/api/orders"><label>Customer orders <input name="customer_id" value="1"></label><button>Find orders</button></form>
+<a href="/api/comments">Comments</a>
+<a href="/api/download?file=readme.txt">Public download</a>
+<a href="/api/inventory">Inventory</a></body></html>""")
             return
 
         if path == "/health":

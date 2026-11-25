@@ -139,10 +139,21 @@ class GNS3AuthenticatedWorkflowTests(unittest.TestCase):
 class PostFormSupportTests(unittest.TestCase):
     def setUp(self) -> None:
         self.recorder = Mock()
-        self.recorder.persist_intent.return_value = {"evidence_id": "EV-INTENT"}
-        self.recorder.persist_result.return_value = {"evidence_id": "EV-RESULT"}
         self.recorder.persist_phase_artifact.return_value = {"evidence_id": "EV-PHASE"}
         self.recorder.artifacts = [{"evidence_id": "EV-RESULT-1", "type": "result"}]
+
+        def persist_intent(_payload, *, source):
+            artifact = {"evidence_id": f"EV-INTENT-{len(self.recorder.artifacts)}", "derived_from": []}
+            self.recorder.artifacts.append(artifact)
+            return artifact
+
+        def persist_result(_payload, *, derived_from, source):
+            artifact = {"evidence_id": f"EV-RESULT-{len(self.recorder.artifacts)}", "derived_from": derived_from}
+            self.recorder.artifacts.append(artifact)
+            return artifact
+
+        self.recorder.persist_intent.side_effect = persist_intent
+        self.recorder.persist_result.side_effect = persist_result
         self.approval = ApprovalToken("APP-1", "RUN-POST-1", "lab-ecommerce", "*", 0, 9999999999)
         self.gate = CentralizedSafetyGate(
             base_origin="http://127.0.0.1:18088",
@@ -172,6 +183,10 @@ class PostFormSupportTests(unittest.TestCase):
 
             resp = self.gate.dispatch(req)
             self.assertEqual(resp.outcome, "SUCCESS")
+            intent, result = self.recorder.artifacts[-2:]
+            self.assertEqual(result["derived_from"], [intent["evidence_id"]])
+            self.assertEqual(self.recorder.persist_intent.call_args.kwargs["source"], "VALIDATOR")
+            self.assertEqual(self.recorder.persist_result.call_args.kwargs["source"], "EXECUTOR")
             # Verify body was urlencoded in POST request
             conn.return_value.request.assert_called_once()
             call_args = conn.return_value.request.call_args
@@ -510,6 +525,64 @@ class PostFormSupportTests(unittest.TestCase):
             )
         self.assertEqual(result.classification, "INCONCLUSIVE")
         self.assertEqual(result.outcome, "FAILURE")
+
+
+class PassiveAnalysisDeduplicationTests(unittest.TestCase):
+    @staticmethod
+    def item(path, observation_id, forms):
+        return InventoryItem(
+            canonical_url=f"http://127.0.0.1:18088{path}", path=path,
+            method="GET", source_observation_id=observation_id, parent_url=None,
+            depth=0, status_code=200, content_type="text/html", body_bytes=10,
+            truncated=False, forms=forms, links_found=[], redirect_to=None,
+            discovered_at_utc="2026-11-24T00:00:00Z", redacted=True,
+        )
+
+    def analyze(self, items):
+        inventory = InventoryStore()
+        for item in items:
+            inventory.record_item(item)
+        recorder = Mock()
+        recorder.persist_phase_artifact.return_value = {"evidence_id": "EV-PASSIVE"}
+        gate = Mock()
+        result = PassiveSurfaceAnalyzer().execute(
+            proposal={}, gate=gate, recorder=recorder, run_id="RUN-TEST",
+            target_id="lab-ecommerce", inventory=inventory, approval=None,
+        )
+        gate.dispatch.assert_not_called()
+        self.assertEqual(result.network_dispatch_count, 0)
+        self.assertEqual(result.details["candidate_facts_count"], len(result.new_facts))
+        return result.new_facts
+
+    def test_repeated_forms_same_observation_do_not_duplicate_inputs(self):
+        form = {"action": "/cart/add", "method": "POST",
+                "inputs": [{"name": "quantity", "type": "hidden"}]}
+        facts = self.analyze([self.item("/catalog", "OBS-1", [form, dict(form), form])])
+        candidates = [f for f in facts if f["value"] == "post_form_input_quantity"]
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["subject"], "http://127.0.0.1:18088/cart/add")
+
+    def test_distinct_sources_methods_targets_and_form_context_are_preserved(self):
+        post = {"action": "/submit", "method": "POST",
+                "inputs": [{"name": "message", "type": "text"}]}
+        other_context = {"action": "/submit", "method": "POST",
+                         "inputs": [{"name": "message", "type": "textarea"}]}
+        other_target = {"action": "/other", "method": "POST",
+                        "inputs": [{"name": "message", "type": "text"}]}
+        get_form = {"action": "/submit", "method": "GET",
+                    "inputs": [{"name": "message", "type": "text"}]}
+        credential = {"action": "/login", "method": "POST", "inputs": [
+            {"name": "username", "type": "text"}, {"name": "password", "type": "password"}]}
+        facts = self.analyze([
+            self.item("/one", "OBS-1", [post, post, other_context, other_target, get_form, credential]),
+            self.item("/two", "OBS-2", [post, post]),
+        ])
+        candidates = [f for f in facts if f["value"] == "post_form_input_message"]
+        self.assertEqual(len(candidates), 4)  # two contexts, another target, another source
+        self.assertEqual(sum(f["subject"].endswith("/submit") for f in candidates), 3)
+        self.assertTrue(any(f["fact_type"] == "PARAMETER" and f["value"] == "message" for f in facts))
+        self.assertFalse(any(f["value"] in {"post_form_input_username", "post_form_input_password"}
+                             for f in facts))
 
 
 class RuleAndTemplateExpansionTests(unittest.TestCase):

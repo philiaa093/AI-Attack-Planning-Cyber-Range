@@ -46,6 +46,14 @@ export const PresentationHero: React.FC<PresentationHeroProps> = ({ system, late
     : (run?.error || run?.stop_reason ? displayValue(run.error || run.stop_reason, lang) : null) || (vi
       ? 'Theo dõi diễn biến, quyết định an toàn và bằng chứng đã ghi nhận của phiên này.'
       : 'Follow the recorded timeline, safety decisions and evidence for this run.');
+  // A terminal lifecycle event alone does not establish that the objective was met.
+  const inconclusiveStopReasons = new Set([
+    'no_approved_action_can_make_progress', 'unresolved_candidate_surface',
+    'unresolved_inconclusive_surface', 'inconclusive_terminal_stop',
+    'MAX_DECISIONS_REACHED', 'BUDGET_EXHAUSTED', 'NO_PROGRESS_LOOP',
+  ]);
+  const objectiveUnconfirmed = hasRun && run?.state === 'COMPLETED'
+    && typeof run.stop_reason === 'string' && inconclusiveStopReasons.has(run.stop_reason);
   const DecisionIcon = isDenied ? ShieldAlert : isPermitted ? ShieldCheck : Lock;
 
   return (
@@ -54,6 +62,9 @@ export const PresentationHero: React.FC<PresentationHeroProps> = ({ system, late
         <div className="cc-eyebrow">{vi ? 'Hoạt động hiện tại' : 'Current activity'}</div>
         <h2 aria-live="polite">{title}</h2>
         <p className="cc-description">{description}</p>
+        {objectiveUnconfirmed && <p className="cc-description">{vi
+          ? 'Phiên đã dừng; chưa có bằng chứng xác nhận mục tiêu đã hoàn thành.'
+          : 'The run has stopped; objective completion has not been established.'}</p>}
         <div className="cc-meta">
           <span className="cc-chip">{displayValue(run?.state || 'IDLE', lang)}</span>
           <span>{vi ? 'Mục tiêu' : 'Target'}: {run?.target || '—'}</span>

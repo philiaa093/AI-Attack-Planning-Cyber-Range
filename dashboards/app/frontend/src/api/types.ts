@@ -252,6 +252,11 @@ export interface CoverageMatrixRow {
   http_status: number | null;
 }
 
+export type ScannerAnalysis = (
+  | { status: 'AVAILABLE'; model: string; interpretation: string; uncertainty: string; evidence_check: string }
+  | { status: 'PROVIDER_UNAVAILABLE' | 'INVALID_RESPONSE' | 'MISSING_RULE' }
+) & { analysis_evidence_id?: string };
+
 export interface RunCoverage {
   run_id: string;
   integrity: string;
@@ -261,6 +266,13 @@ export interface RunCoverage {
   workflow: { status: string; restore: string; recorded_checks: number; reason?: string | null };
   scan_isolation?: { restore: string };
   scanners: CoverageScanner[];
+  scanner_reviews?: {
+    tool: 'zap-passive' | 'zap-active' | 'nuclei';
+    status: 'AVAILABLE' | 'PARTIAL' | 'UNAVAILABLE' | 'NOT_RECORDED';
+    source: { artifact: 'zap_review' | 'nuclei_review'; evidence_id: string } | null;
+    alerts: { alert_index: number; rule_id: string | null;
+      severity: 'informational' | 'low' | 'medium' | 'high' | 'critical' | null; instances: number; analysis?: ScannerAnalysis }[];
+  }[];
   verifications: { action: string; resource: string; parameter: string; attempts: number;
     classification: string; reason: string | null; evidence_id: string }[];
   matrix: CoverageMatrixRow[];

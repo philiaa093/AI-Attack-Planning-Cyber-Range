@@ -68,6 +68,7 @@ from runtime.planners.observed_planner import (
     PlannerResult,
     ProviderConfig,
 )
+from runtime.planners.web_planning_context import completion_blocker
 
 RUNNER_ACTION_CATALOG = {
     **ACTION_CATALOG,
@@ -253,6 +254,46 @@ class AutonomousRunner:
         ev_type = ev.get("type", "")
         payload = ev.get("payload", {})
         self._emit_event(ev_type, payload=payload)
+
+    def _with_run_budget(self, state: dict[str, Any], decisions_used: int) -> dict[str, Any]:
+        """Project run-owned limits without changing the shared observation store.
+
+        A decision is consumed when the planner returns a proposal, including a
+        terminal or refused proposal. HTTP requests are counted by the gate, not
+        by the number of observations produced by an action.
+        """
+        state = copy.deepcopy(state)
+        budget = state.setdefault("remaining_budget", {})
+        budget["actions"] = max(0, self.max_decisions - decisions_used)
+        budget["requests"] = max(
+            0, self.gate.budget_tracker.max_requests - self.gate.budget_tracker.requests_dispatched
+        )
+        return state
+
+    def _terminal_coverage_blocker(self, state: dict[str, Any]) -> str | None:
+        blocker = completion_blocker(state, self.planner.effective_actions)
+        if blocker:
+            return blocker
+        if self.scanner_executor and not self.scanner_executor.has_complete_recorded_coverage(self.run_id):
+            return "unresolved_scan_coverage"
+
+        recorded_results = set(self.evidence_refs)
+        recorded_observations = {
+            observation_id
+            for trace in self.traces
+            if trace.safety_decision == "APPROVED" and trace.outcome == "SUCCESS"
+            and trace.result_evidence_id and trace.result_evidence_id in recorded_results
+            for observation_id in trace.observation_ids
+        }
+        for fact in state.get("observed_facts", []):
+            fact_type = fact.get("fact_type")
+            supports_completion = fact_type in ("ENDPOINT", "PARAMETER") or (
+                fact_type == "ACTION_OUTCOME" and fact.get("value") in ("NEGATIVE", "VERIFIED_IN_LAB")
+            )
+            if supports_completion and (fact.get("source_kind") == "PLANNER_INFERENCE"
+                    or fact.get("source_observation_id") not in recorded_observations):
+                return "unresolved_candidate_surface"
+        return None
 
     def _ingest_and_update_visibility(self, obs: dict[str, Any]) -> bool:
         """Ingest observation into state adapter and project any newly discovered targets into planner visibility."""
@@ -1068,6 +1109,7 @@ class AutonomousRunner:
     def run(self) -> AutonomousRunReport:
         """Execute the autonomous control loop until bounded termination."""
         iteration = 0
+        decisions_used = 0
         no_progress_counter = 0
         state_history: list[str] = []
         last_fact_count = self.state_manager.get_fact_count()
@@ -1139,7 +1181,7 @@ class AutonomousRunner:
                 self.lifecycle_state = "RUNNING"
                 self._emit_event("RUN_RESUMED", iteration=iteration, payload={"run_id": self.run_id})
 
-            planner_state = self.state_adapter.get_minimized_planner_state()
+            planner_state = self._with_run_budget(self.state_adapter.get_minimized_planner_state(), decisions_used)
             # Fog of War invariant: planner visibility is strictly projected from verified state + entry seed
             projected = project_visible_targets(planner_state, initial_seed=self.target_id)
             self.visible_targets.update(projected)
@@ -1158,6 +1200,7 @@ class AutonomousRunner:
             # Propose next action from observed state
             self._emit_event("PLANNER_STARTED", iteration=iteration, payload={"requested_mode": self.requested_planner_mode})
             plan_res = self.planner.propose(planner_state)
+            decisions_used += 1
             proposal = plan_res.proposal
             provenance = plan_res.mode_provenance
             last_provenance = provenance
@@ -1179,16 +1222,36 @@ class AutonomousRunner:
                 },
             )
 
-            if provenance.get("fallback_reason"):
-                self._emit_event(
-                    "PLANNER_FALLBACK",
-                    iteration=iteration,
-                    action_id=action_id,
-                    payload={"actual_mode": provenance.get("actual_mode"), "reason": provenance.get("fallback_reason")},
-                )
-
-            # Check terminal actions from planner
             if action_id in ("ACTION-END-001", "ACTION-END-002", "ACTION-END-003"):
+                provider_proposal = provenance.get("actual_mode") == "LLM"
+                proposed_reason = proposal.get("reason_code", "PLANNER_TERMINAL_STOP")
+                terminal_reason = proposed_reason
+                blocker = None
+                if action_id == "ACTION-END-001" or (provider_proposal and action_id == "ACTION-END-003"):
+                    blocker = self._terminal_coverage_blocker(planner_state)
+                if action_id == "ACTION-END-001" and blocker:
+                    self._emit_event(
+                        "PLANNER_TERMINAL_GUARD",
+                        iteration=iteration,
+                        action_id="ACTION-END-003",
+                        payload={"original_action_id": "ACTION-END-001",
+                                 "reason_code": blocker},
+                    )
+                    proposal = {**proposal, "action_id": "ACTION-END-003",
+                                "reason_code": blocker}
+                    action_id = "ACTION-END-003"
+                    terminal_reason = blocker
+                elif provider_proposal:
+                    if action_id == "ACTION-END-001":
+                        terminal_reason = "objective_satisfied"
+                    elif action_id == "ACTION-END-002":
+                        exhausted = (decisions_used >= self.max_decisions
+                                     or planner_state["remaining_budget"]["requests"] <= 0)
+                        terminal_reason = "budget_exhausted" if exhausted else "PLANNER_TERMINAL_STOP"
+                    else:
+                        terminal_reason = blocker or "PLANNER_TERMINAL_STOP"
+                if action_id == "ACTION-END-003" and not provider_proposal and provenance.get("fallback_reason"):
+                    terminal_reason = f"{terminal_reason}:{provenance['fallback_reason']}"
                 decision_id = f"DEC-{uuid.uuid4().hex[:8]}"
                 dec_art = self.recorder.persist_phase_artifact(
                     "decision",
@@ -1196,7 +1259,9 @@ class AutonomousRunner:
                         "run_id": self.run_id,
                         "proposal": proposal,
                         "decision": "STOP",
-                        "reason": proposal.get("reason_code", "PLANNER_TERMINAL_STOP"),
+                        "reason": terminal_reason,
+                        **({"provider_reason_code": provenance.get("provider_reason_code", proposed_reason)}
+                           if provider_proposal else {}),
                         "timestamp_utc": _utc_now_iso(),
                     },
                 )
@@ -1205,7 +1270,7 @@ class AutonomousRunner:
                     "STOP_CONDITION_REACHED",
                     iteration=iteration,
                     action_id=action_id,
-                    payload={"reason_code": proposal.get("reason_code")},
+                    payload={"reason_code": terminal_reason},
                 )
                 self._emit_event(
                     "EVIDENCE_RECORDED",
@@ -1223,7 +1288,7 @@ class AutonomousRunner:
                         planner_actual_mode=provenance.get("actual_mode", "RULE"),
                         proposal=proposal,
                         safety_decision="STOP",
-                        safety_reason=proposal.get("reason_code", "PLANNER_TERMINAL_STOP"),
+                        safety_reason=terminal_reason,
                         dispatched=False,
                         intent_evidence_id=None,
                         result_evidence_id=dec_art["evidence_id"],
@@ -1232,9 +1297,6 @@ class AutonomousRunner:
                         outcome="STOP",
                     )
                 )
-                terminal_reason = proposal.get("reason_code", "PLANNER_TERMINAL_STOP")
-                if action_id == "ACTION-END-003" and provenance.get("fallback_reason"):
-                    terminal_reason = f"{terminal_reason}:{provenance['fallback_reason']}"
                 stop_reason = terminal_reason
                 break
 
@@ -1409,7 +1471,7 @@ class AutonomousRunner:
                 self._emit_event(
                     "BUDGET_UPDATED",
                     iteration=iteration,
-                    payload={"remaining_budget": self.state_manager.get_state().get("remaining_budget", {})},
+                    payload={"remaining_budget": self._with_run_budget(self.state_manager.get_state(), decisions_used)["remaining_budget"]},
                 )
                 if self.findings:
                     self._emit_event(
@@ -1450,7 +1512,7 @@ class AutonomousRunner:
         if self.gate.kill_switch.is_active() or self._stop_requested.is_set():
             self.lifecycle_state = "STOPPED"
             self._emit_event("RUN_STOPPED", payload={"stop_reason": stop_reason})
-        elif stop_reason.startswith("provider_unavailable_halt"):
+        elif stop_reason.startswith(("provider_unavailable_halt", "hybrid_not_implemented_halt")):
             self.lifecycle_state = "FAILED"
             self._emit_event("RUN_FAILED", payload={"stop_reason": stop_reason,
                 "error": last_provenance.get("fallback_reason"),
@@ -1461,7 +1523,7 @@ class AutonomousRunner:
                 "RUN_COMPLETED",
                 payload={
                     "stop_reason": stop_reason,
-                    "decisions_count": len(self.traces),
+                    "decisions_count": decisions_used,
                     "network_dispatch_count": self.gate.network_dispatch_count,
                     "approved_actions_count": approved_count,
                     "denied_actions_count": denied_count,
@@ -1475,7 +1537,7 @@ class AutonomousRunner:
             actual_planner_mode=last_provenance.get("actual_mode", "RULE"),
             provider=last_provenance.get("provider", "rule_engine"),
             model=last_provenance.get("model", "none"),
-            decisions_count=len(self.traces),
+            decisions_count=decisions_used,
             approved_actions_count=approved_count,
             denied_actions_count=denied_count,
             network_dispatch_count=self.gate.network_dispatch_count,
@@ -1483,7 +1545,7 @@ class AutonomousRunner:
             observations_added_count=obs_added_count,
             stop_reason=stop_reason,
             traces=self.traces,
-            final_state=self.state_manager.get_state(),
+            final_state=self._with_run_budget(self.state_manager.get_state(), decisions_used),
             evidence_refs=list(self.evidence_refs),
             findings=list(self.findings),
             active_verifications_count=self.active_verifications_count,

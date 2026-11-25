@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections import Counter
 from pathlib import Path
 
 from runtime.evidence.discovery_recorder import EvidenceFailure
@@ -20,7 +21,7 @@ from runtime.lab.capability_registry import CapabilityExecutionResult, Verificat
 from runtime.safety.discovery_gate import DiscoveryRequest
 from scripts.validation.validate_scaffold import ROOT
 from tools.parsers.nuclei_parser import parse_nuclei_results, _unique_object, _reject_constant
-from tools.parsers.zap_parser import parse_zap_results
+from tools.parsers.zap_parser import ZapReviewCapture, parse_zap_results
 
 TOOLS = {"zap-passive", "zap-active", "nuclei"}
 TEMPLATES = {"lab-sql-error": "sqli", "lab-sentinel-disclosure": "path-traversal", "lab-xss-reflection": "xss"}
@@ -68,10 +69,11 @@ def preflight(selected):
 
 
 class ScannerRelay:
-    def __init__(self, gate, recorder, run_id, target_id, inventory, approval, action_id, cancelled):
+    def __init__(self, gate, recorder, run_id, target_id, inventory, approval, action_id, cancelled, *, zap_review=None):
         self.gate, self.recorder = gate, recorder
         self.run_id, self.target_id, self.approval = run_id, target_id, approval
         self.action_id, self.cancelled = action_id, cancelled
+        self.zap_review = zap_review
         self.origin = "http://" + target_id
         self.paths = {}
         self.seed_urls = set()
@@ -173,11 +175,25 @@ class ScannerRelay:
         return sorted(self.seed_urls)[:100]
 
     def seed_coverage(self):
-        selected = set(self.urls())
-        return {"observed_seed_count": len(self.seed_urls), "selected_seed_count": len(selected),
-                "requested_seed_count": len(selected & self.executed_urls),
-                "successful_seed_count": len(selected & self.successful_urls),
-                "not_requested_seed_count": len(self.seed_urls - self.executed_urls),
+        def coverage_keys(urls):
+            keys = set()
+            for url in urls:
+                parts = urllib.parse.urlsplit(url)
+                # Group distinct query keys without changing their spelling or values.
+                # Keep order within a repeated key, including equivalent encodings.
+                fields = parts.query.split("&")
+                ordered = sorted(fields, key=lambda field: urllib.parse.unquote_plus(field.partition("=")[0]))
+                keys.add((parts.scheme, parts.netloc, parts.path, tuple(ordered), parts.fragment))
+            return keys
+
+        observed = coverage_keys(self.seed_urls)
+        selected = coverage_keys(self.urls())
+        executed = coverage_keys(self.executed_urls)
+        successful = coverage_keys(self.successful_urls)
+        return {"observed_seed_count": len(observed), "selected_seed_count": len(selected),
+                "requested_seed_count": len(selected & executed),
+                "successful_seed_count": len(selected & successful),
+                "not_requested_seed_count": len(observed - executed),
                 "options_truncated": self.options_truncated}
 
     def dispatch(self, message):
@@ -211,12 +227,16 @@ class ScannerRelay:
             if self.refusals >= 32:
                 raise RuntimeError("SCANNER_REFUSAL_LIMIT")
             return {"status": 403, "headers": {}, "body": reason}
+        before_dispatch = self.gate.network_dispatch_count
         response = self.gate.dispatch(DiscoveryRequest(run_id=self.run_id, target_id=self.target_id,
             action_id=self.action_id, url=mapped, method=method, approval=self.approval))
         if self.gate.halted_due_to_evidence or not response.durable_confirmed:
             if self.gate.halted_due_to_evidence:
                 raise EvidenceFailure("SCANNER_DISPATCH_EVIDENCE_FAILED")
             raise RuntimeError(response.refusal_reason or "SCANNER_DISPATCH_FAILED")
+        if self.zap_review is not None and self.gate.network_dispatch_count > before_dispatch:
+            # Keep the relay-side lab origin and the original path/query sent by the gate.
+            self.zap_review.record_dispatch(url, method, response.status_code)
         if not response.status_code or response.truncated:
             raise RuntimeError("SCANNER_RESPONSE_INCOMPLETE")
         if any(key.lower() == "content-encoding" and value.lower() not in ("", "identity")
@@ -233,7 +253,7 @@ class ScannerRelay:
         return {"status": response.status_code, "headers": headers, "body": response.body}
 
 
-def parse_runtime_nuclei(raw, relay):
+def parse_runtime_nuclei(raw, relay, *, review_rows=None):
     records = []
     for line in raw.decode("utf-8").splitlines():
         if not line.strip():
@@ -247,7 +267,15 @@ def parse_runtime_nuclei(raw, relay):
                         "matcher-status": record.get("matcher-status"), "info": record.get("info"),
                         "host": record.get("host", relay.origin), "matched-at": record["matched-at"],
                         "error": record.get("error", "")})
-    return parse_nuclei_results(records, relay.target_id, allowed_templates=TEMPLATES)
+    candidates = parse_nuclei_results(records, relay.target_id, allowed_templates=TEMPLATES)
+    if review_rows is not None:
+        # Only persist metadata from validated matches bound to dispatched requests.
+        matches = Counter((row["template-id"], row["info"]["severity"])
+                          for row in records if row["matcher-status"])
+        for index, ((rule, severity), count) in enumerate(sorted(matches.items())):
+            review_rows.append({"alert_index": index, "rule_id": rule, "instances": count,
+                                "severity": {"info": "informational", "unknown": None}.get(severity, severity)})
+    return candidates
 
 
 def parse_runtime_zap(report, relay):
@@ -382,12 +410,34 @@ def isolated_scan(tool, relay, identities, config):
             raise RuntimeError("SCANNER_CLEANUP_FAILED:" + ",".join(cleanup_errors))
 
 
+def recorded_scanner_coverage(result: dict) -> tuple[str | None, int | None]:
+    """Return the coverage and seed gap actually present in a scanner result."""
+    coverage = result.get("coverage")
+    seed_coverage = result.get("seed_coverage")
+    unrequested = seed_coverage.get("not_requested_seed_count") if isinstance(seed_coverage, dict) else None
+    return (
+        coverage if coverage in ("BOUNDED", "PARTIAL", "INCOMPLETE") else None,
+        unrequested if type(unrequested) is int and unrequested >= 0 else None,
+    )
+
+
 class ExternalScannerExecutor:
     def __init__(self, selected, cancelled=lambda: False, event_hook=None):
         self.selected = tuple(selected)
         self.cancelled = cancelled
         self.event_hook = event_hook or (lambda *args, **kwargs: None)
         self.results = []
+
+    def has_complete_recorded_coverage(self, run_id: str) -> bool:
+        recorded = {
+            result["tool"] for result in self.results
+            if result.get("tool") in self.selected
+            and result.get("run_id") == run_id
+            and isinstance(result.get("evidence_id"), str) and result["evidence_id"].strip()
+            and result.get("status") == "COMPLETED"
+            and recorded_scanner_coverage(result) == ("BOUNDED", 0)
+        }
+        return all(tool in recorded for tool in self.selected)
 
     def execute(self, proposal, gate, recorder, run_id, target_id, inventory, approval):
         action = proposal["action_id"]
@@ -398,7 +448,12 @@ class ExternalScannerExecutor:
         result_ids = []
         for tool in self.selected:
             tool_before = gate.network_dispatch_count
-            relay = ScannerRelay(gate, recorder, run_id, target_id, inventory, approval, action, self.cancelled)
+            review = ZapReviewCapture(target_id) if tool in ("zap-active", "zap-passive") else None
+            relay = ScannerRelay(gate, recorder, run_id, target_id, inventory, approval, action, self.cancelled,
+                                 zap_review=review)
+            intent = None
+            zap_report, report_received = None, False
+            nuclei_review = None
             summary = {"tool": tool, "status": "ERROR", "limitations": LIMITATIONS, "run_id": run_id}
             self.event_hook("SCANNER_STARTED", action_id=action, payload={"tool": tool, "status": "RUNNING"})
             try:
@@ -410,18 +465,30 @@ class ExternalScannerExecutor:
                           for p in [ASSETS / "stdio_proxy.py", ASSETS / "zap_worker.py",
                                     *(ASSETS / "templates" / (n + ".yaml") for n in TEMPLATES)]}
                 summary.update({"images": identities, "asset_hashes": assets, "scope_urls_count": len(relay.urls())})
-                recorder.persist_phase_artifact("scanner_intent", {**summary, "expected_state": "SCANNER_COMPLETED",
-                                                                     "observed_state": "SCANNER_REQUESTED"})
+                intent = recorder.persist_phase_artifact("scanner_intent", {**summary, "expected_state": "SCANNER_COMPLETED",
+                                                                              "observed_state": "SCANNER_REQUESTED"})
                 raw = isolated_scan(tool, relay, identities, load_config())
                 summary["report_sha256"] = hashlib.sha256(raw).hexdigest()
+                if review is not None:
+                    report_received = True
+                    try:
+                        envelope = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+                    except (ValueError, RecursionError):
+                        raise ValueError("SCANNER_ZAP_ENVELOPE_INVALID") from None
+                    if type(envelope) is not dict or set(envelope) != {"version", "report"}:
+                        raise ValueError("SCANNER_ZAP_ENVELOPE_INVALID")
+                    zap_report = envelope["report"]
+                    version = envelope["version"]
+                    summary["version"] = (version if type(version) is str
+                                          and re.fullmatch(r"[0-9]{1,4}(?:\.[0-9]{1,4}){1,3}", version) else "UNKNOWN")
                 if gate.network_dispatch_count == tool_before:
                     raise RuntimeError("SCANNER_NO_TARGET_REQUESTS")
                 if tool == "nuclei":
-                    candidates = parse_runtime_nuclei(raw, relay)
+                    review_rows = []
+                    candidates = parse_runtime_nuclei(raw, relay, review_rows=review_rows)
+                    nuclei_review = review_rows
                 else:
-                    envelope = json.loads(raw)
-                    summary["version"] = envelope["version"]
-                    candidates = parse_runtime_zap(envelope["report"], relay)
+                    candidates = parse_runtime_zap(zap_report, relay)
                 summary.update({"status": "COMPLETED", "candidate_count": len(candidates), "candidates": candidates,
                                 "refused_requests": relay.refusals,
                                 "coverage": "PARTIAL" if relay.refusals else "BOUNDED"})
@@ -435,9 +502,32 @@ class ExternalScannerExecutor:
             summary["refused_requests"] = relay.refusals
             summary["seed_coverage"] = relay.seed_coverage()
             if summary.get("coverage") == "BOUNDED" and (relay.options_truncated or
-                    summary["seed_coverage"]["successful_seed_count"] < len(relay.seed_urls)):
+                    summary["seed_coverage"]["successful_seed_count"] < summary["seed_coverage"]["observed_seed_count"]):
                 summary["coverage"] = "PARTIAL"
-            artifact = recorder.persist_phase_artifact("scanner_result", summary)
+            review_refs = []
+            if review is not None and intent is not None:
+                capture = review.finish(zap_report, report_received=report_received,
+                                        dispatch_count=gate.network_dispatch_count - tool_before)
+                observed = capture["report_state"]
+                if capture["dispatch_count"] != len(capture["requests"]) or capture["alert_urls_omitted"]:
+                    observed = "PARTIAL"
+                review_record = recorder.persist_phase_artifact(
+                    "zap_review", {**capture, "run_id": run_id, "tool": tool,
+                                   "report_sha256": summary.get("report_sha256")},
+                    expected_state="ZAP_REVIEW_AVAILABLE", observed_state=observed,
+                    derived_from=[intent["evidence_id"]], source="TOOL_ADAPTER",
+                )
+                review_refs.append(review_record["evidence_id"])
+            if nuclei_review is not None:
+                review_record = recorder.persist_phase_artifact(
+                    "nuclei_review", {"run_id": run_id, "tool": tool, "format_version": 1,
+                                      "report_state": "AVAILABLE", "report_sha256": summary["report_sha256"],
+                                      "alerts": nuclei_review},
+                    expected_state="NUCLEI_REVIEW_AVAILABLE", observed_state="AVAILABLE",
+                    derived_from=[intent["evidence_id"]], source="TOOL_ADAPTER",
+                )
+                review_refs.append(review_record["evidence_id"])
+            artifact = recorder.persist_phase_artifact("scanner_result", summary, derived_from=review_refs)
             summary["evidence_id"] = artifact["evidence_id"]
             result_ids.append(artifact["evidence_id"])
             self.results.append(summary)
@@ -450,6 +540,15 @@ class ExternalScannerExecutor:
                     limitations=LIMITATIONS, reason=tool + ": unconfirmed " + candidate["finding_type"]))
             facts.append({"fact_id": "FACT-SCANNER-" + uuid.uuid4().hex, "fact_type": "ACTION_OUTCOME",
                           "subject": action + ":" + tool, "value": summary["status"], "confidence": 1.0})
+            coverage, unrequested = recorded_scanner_coverage(summary)
+            if coverage in ("PARTIAL", "INCOMPLETE"):
+                facts.append({"fact_id": "FACT-SCANNER-" + uuid.uuid4().hex, "fact_type": "ACTION_OUTCOME",
+                              "subject": action + ":" + tool + ":coverage",
+                              "value": coverage, "confidence": 1.0})
+            if unrequested is not None and unrequested > 0:
+                facts.append({"fact_id": "FACT-SCANNER-" + uuid.uuid4().hex, "fact_type": "ACTION_OUTCOME",
+                              "subject": action + ":" + tool + ":unrequested_seeds",
+                              "value": unrequested, "confidence": 1.0})
             for family in sorted({candidate["finding_type"] for candidate in candidates}):
                 facts.append({"fact_id": "FACT-SCANNER-" + uuid.uuid4().hex, "fact_type": "ACTION_OUTCOME",
                               "subject": action + ":" + tool + ":" + family,

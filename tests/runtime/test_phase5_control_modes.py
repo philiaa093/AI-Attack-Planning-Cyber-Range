@@ -53,6 +53,7 @@ class TestPhase5ControlModes(unittest.TestCase):
         gate.network_dispatch_count = 1
         gate.budget_tracker.max_requests = 100
         gate.budget_tracker.requests_made = 0
+        gate.budget_tracker.requests_dispatched = 0
         gate.budget_tracker.max_pages = 10
         gate.budget_tracker.pages_visited = 0
         gate.budget_tracker.max_depth = 3

@@ -3,7 +3,7 @@
 import math
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import unquote_plus, urlsplit
 
 from tools.adapters.base import build_scanner_result, validate_target
 
@@ -13,9 +13,14 @@ MAX_SITES = 1
 MAX_ALERTS = 1000
 MAX_INSTANCES = 2000
 MAX_URI_CHARS = 2048
+# Keep the redacted evidence below the history reader's per-file limit,
+# even when many URLs contain long lists of repeated query fields.
+_MAX_REVIEW_FIELDS = 20_000
 
 # Chuẩn hóa thứ bậc confidence của ZAP, không phải xác suất đã hiệu chuẩn.
 _CONFIDENCE_MAP = {str(code): code / 4 for code in range(5)}
+_SEVERITY_BY_RISK_CODE = {"0": "informational", "1": "low", "2": "medium", "3": "high"}
+_RULE_ID = re.compile(r"[1-9][0-9]{0,5}(?:-(?:0|[1-9][0-9]{0,5}))?")
 _FINDING_TYPE_MAP = {
     "SQL Injection": "sqli",
     "SQL Injection - MySQL": "sqli",
@@ -107,8 +112,8 @@ def _port(value):
     return port
 
 
-def _origin(uri, target_id):
-    if type(uri) is not str or not 1 <= len(uri) <= MAX_URI_CHARS:
+def _origin(uri, target_id, *, max_chars=None):
+    if type(uri) is not str or not 1 <= len(uri) <= (MAX_URI_CHARS if max_chars is None else max_chars):
         raise ValueError("URI không hợp lệ hoặc vượt giới hạn")
     if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in uri) or '\\' in uri:
         raise ValueError("URI có ký tự mơ hồ")
@@ -154,12 +159,7 @@ def _site_scope(site, target_id):
     return scheme, port
 
 
-def parse_zap_results(zap_output, target_id):
-    """Parse JSON đã nạp; không đọc file, chạy ZAP hoặc xác nhận vulnerability.
-
-    ponytail: chỉ một target/report JSON, endpoint_id=null để bỏ secrets trong
-    path; XML, provenance và runtime cần phạm vi/phê duyệt riêng.
-    """
+def _validated_alerts(zap_output, target_id):
     _target(target_id)
     if type(zap_output) is not dict:
         raise ValueError("Report ZAP phải là object JSON")
@@ -167,7 +167,6 @@ def parse_zap_results(zap_output, target_id):
     sites = zap_output.get("site")
     if type(sites) is not list or len(sites) > MAX_SITES:
         raise ValueError("Danh sách site không hợp lệ hoặc vượt giới hạn")
-    results = []
     alert_count = instance_count = 0
     for site in sites:
         if type(site) is not dict:
@@ -179,7 +178,7 @@ def parse_zap_results(zap_output, target_id):
         alert_count += len(alerts)
         if alert_count > MAX_ALERTS:
             raise ValueError("Alerts vượt giới hạn")
-        for alert in alerts:
+        for index, alert in enumerate(alerts):
             if type(alert) is not dict or type(alert.get("alert")) is not str or not alert["alert"]:
                 raise ValueError("Alert không hợp lệ")
             code = alert.get("confidence", "0")
@@ -210,7 +209,200 @@ def parse_zap_results(zap_output, target_id):
                     raise ValueError("URI không thuộc origin của site")
             finding_type = _FINDING_TYPE_MAP.get(alert["alert"])
             confidence = _CONFIDENCE_MAP[str(code)]
-            if finding_type is not None and confidence > 0:
-                for _ in range(count):
-                    results.append(build_scanner_result("ZAP", target_id, finding_type, confidence, endpoint_id=None))
-    return results
+            # An alert-level URI is metadata when instance URIs are present.
+            yield index, finding_type, confidence, uris[-count:], alert
+
+
+def parse_zap_results(zap_output, target_id):
+    """Parse loaded JSON into redacted candidates without executing a scanner."""
+    return [
+        build_scanner_result("ZAP", target_id, family, confidence, endpoint_id=None)
+        for _, family, confidence, uris, _ in _validated_alerts(zap_output, target_id)
+        if family is not None and confidence > 0
+        for _ in uris
+    ]
+
+
+def _review_url_parts(uri, target_id, *, max_chars=None):
+    scheme, port = _origin(uri, target_id, max_chars=max_chars)
+    parts = urlsplit(uri)
+    fields = tuple((unquote_plus(field.partition("=")[0]), field)
+                   for field in parts.query.split("&")) if parts.query else ()
+    return (scheme, target_id, port, parts.path, parts.fragment), fields
+
+
+def _reconcile(alerts, request_urls):
+    def keys(url):
+        location, fields = url
+        ordered = tuple(tuple(field) for field in fields)
+        # Stable sorting preserves the order of repeated names and every raw value.
+        return (location, ordered), (location, tuple(sorted(ordered, key=lambda field: field[0])))
+
+    exact_keys, reordered_keys = set(), set()
+    for url in request_urls:
+        exact, reordered = keys(url)
+        exact_keys.add(exact)
+        reordered_keys.add(reordered)
+
+    comparison = []
+    for index, family, urls in alerts:
+        counts = {"exact": 0, "query_order_only": 0, "unmatched": 0}
+        for url in urls:
+            exact, reordered = keys(url)
+            if exact in exact_keys:
+                counts["exact"] += 1
+            elif reordered in reordered_keys:
+                counts["query_order_only"] += 1
+            else:
+                counts["unmatched"] += 1
+        comparison.append({"alert_index": index, "finding_type": family, **counts})
+    return comparison
+
+
+def reconcile_zap_report(zap_output, target_id, *, dispatched_urls):
+    """Compare saved report instances against saved request URLs for offline review.
+
+    Returns counts by zero-based alert index. The caller supplies the actual
+    request URLs from the same run, using the lab origin as shown in the report.
+    An empty list is valid only when the caller knows no requests were made.
+    """
+    _target(target_id)
+    if type(dispatched_urls) not in (list, tuple) or len(dispatched_urls) > MAX_INSTANCES:
+        raise ValueError("Danh sách URL đã gửi không hợp lệ hoặc vượt giới hạn")
+
+    alerts = ((index, family, (_review_url_parts(uri, target_id) for uri in uris))
+              for index, family, confidence, uris, _ in _validated_alerts(zap_output, target_id)
+              if family is not None and confidence > 0)
+    return _reconcile(alerts, (_review_url_parts(uri, target_id) for uri in dispatched_urls))
+
+
+def _safe_rule_id(value):
+    if type(value) is int and 1 <= value <= 999_999:
+        value = str(value)
+    return value if type(value) is str and _RULE_ID.fullmatch(value) else None
+
+
+def _review_alert_metadata(alert):
+    plugin = _safe_rule_id(alert.get("pluginid"))
+    if plugin is not None and "-" in plugin:
+        plugin = None
+    alert_ref = _safe_rule_id(alert.get("alertRef"))
+    if alert_ref is not None and (plugin is None or alert_ref.split("-", 1)[0] == plugin):
+        rule = alert_ref
+    else:
+        rule = plugin
+    risk = alert.get("riskcode")
+    if type(risk) is int and 0 <= risk <= 3:
+        risk = str(risk)
+    severity = _SEVERITY_BY_RISK_CODE.get(risk) if type(risk) is str else None
+    return {"rule_id": rule, "severity": severity}
+
+
+class ZapReviewCapture:
+    """Build a URL equality projection for review, without saving the alias map."""
+
+    def __init__(self, target_id):
+        _target(target_id)
+        self.target_id = target_id
+        self._aliases = {}
+        self._requests = []
+        self._request_fields = 0
+        self._requests_omitted = 0
+
+    def _url(self, location, fields):
+        def alias(domain, value):
+            return self._aliases.setdefault((domain, value), len(self._aliases) + 1)
+
+        return [alias("location", location),
+                [[alias("name", name), alias("field", raw)] for name, raw in fields]]
+
+    def record_dispatch(self, uri, method, status):
+        if method not in ("GET", "HEAD") or type(status) is not int or not 0 <= status <= 999:
+            raise ValueError("Invalid dispatch metadata")
+        location, fields = _review_url_parts(uri, self.target_id, max_chars=8192)
+        if len(self._requests) == MAX_INSTANCES or self._request_fields + len(fields) > _MAX_REVIEW_FIELDS:
+            self._requests_omitted += 1
+            return
+        self._requests.append({"method": method, "status": status, "url": self._url(location, fields)})
+        self._request_fields += len(fields)
+
+    def finish(self, report, *, report_received, dispatch_count):
+        alerts, omitted, field_count = [], 0, 0
+        state = "UNAVAILABLE"
+        if report_received:
+            try:
+                validated = list(_validated_alerts(report, self.target_id))
+            except ValueError:
+                state = "INVALID"
+            else:
+                state = "AVAILABLE"
+                for index, family, confidence, uris, alert in validated:
+                    masked = []
+                    for uri in uris:
+                        location, fields = _review_url_parts(uri, self.target_id)
+                        if field_count + len(fields) > _MAX_REVIEW_FIELDS:
+                            omitted += 1
+                        else:
+                            masked.append(self._url(location, fields))
+                            field_count += len(fields)
+                    alerts.append({"alert_index": index, "finding_type": family, "confidence": confidence,
+                                   "urls": masked, **_review_alert_metadata(alert)})
+        return {"format_version": 2, "report_state": state, "alerts": alerts, "requests": self._requests,
+                "dispatch_count": dispatch_count,
+                "requests_omitted": self._requests_omitted, "alert_urls_omitted": omitted}
+
+
+def reconcile_zap_evidence(evidence):
+    """Review a complete redacted capture. Verify its evidence record before use."""
+    if (type(evidence) is not dict or type(evidence.get("format_version")) is not int
+            or evidence["format_version"] not in (1, 2) or evidence.get("report_state") != "AVAILABLE"
+            or any(type(evidence.get(key)) is not int or evidence[key] != 0
+                   for key in ("requests_omitted", "alert_urls_omitted"))):
+        raise ValueError("Complete ZAP review evidence required")
+
+    def rows(key, limit):
+        items = evidence.get(key)
+        if type(items) is not list or len(items) > limit or any(type(item) is not dict for item in items):
+            raise ValueError("Invalid ZAP review rows")
+        return items
+
+    def urls(values):
+        if type(values) is not list or len(values) > MAX_INSTANCES:
+            raise ValueError("Invalid ZAP review URLs")
+        field_count = 0
+        for value in values:
+            if (type(value) is not list or len(value) != 2 or type(value[0]) is not int or value[0] <= 0
+                    or type(value[1]) is not list):
+                raise ValueError("Invalid ZAP review URL")
+            field_count += len(value[1])
+            if field_count > _MAX_REVIEW_FIELDS or any(
+                    type(pair) is not list or len(pair) != 2 or any(type(ref) is not int or ref <= 0 for ref in pair)
+                    for pair in value[1]):
+                raise ValueError("Invalid ZAP review query fields")
+        return values
+
+    requests = urls([row.get("url") for row in rows("requests", MAX_INSTANCES)])
+    if type(evidence.get("dispatch_count")) is not int or evidence["dispatch_count"] != len(requests):
+        raise ValueError("ZAP review dispatch count does not match saved requests")
+    alerts = []
+    instance_count = field_count = 0
+    for index, alert in enumerate(rows("alerts", MAX_ALERTS)):
+        family, confidence = alert.get("finding_type"), alert.get("confidence")
+        if (type(alert.get("alert_index")) is not int or alert["alert_index"] != index
+                or (family is not None and family not in _FINDING_TYPE_MAP.values())
+                or type(confidence) not in (int, float) or confidence not in _CONFIDENCE_MAP.values()):
+            raise ValueError("Invalid ZAP review alert")
+        if evidence["format_version"] == 2:
+            rule, severity = alert.get("rule_id"), alert.get("severity")
+            if ("rule_id" not in alert or "severity" not in alert
+                    or (rule is not None and (type(rule) is not str or not _RULE_ID.fullmatch(rule)))
+                    or (severity is not None and severity not in _SEVERITY_BY_RISK_CODE.values())):
+                raise ValueError("Invalid ZAP review alert metadata")
+        instances = urls(alert.get("urls"))
+        instance_count += len(instances)
+        field_count += sum(len(value[1]) for value in instances)
+        if not instances or instance_count > MAX_INSTANCES or field_count > _MAX_REVIEW_FIELDS:
+            raise ValueError("Invalid ZAP review instance count")
+        if family is not None and confidence > 0:
+            alerts.append((index, family, instances))
+    return _reconcile(alerts, requests)

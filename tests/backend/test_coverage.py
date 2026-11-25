@@ -15,6 +15,7 @@ from dashboards.app.backend.event_sink import EventSink
 from dashboards.app.backend.models import AgentState, StartRunRequest
 from dashboards.app.backend.run_manager import RunManager, _run_gate, _scan_redaction_ready
 from dashboards.app.backend.run_history import RunIndex
+from dashboards.app.backend.scanner_analysis import analyze_alert, record_post_scan_analysis
 from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
 from runtime.lab.authenticated_workflow import WORKFLOW_CHECK_CONTEXT
 from runtime.lab.capability_registry import CapabilityExecutionResult
@@ -63,6 +64,24 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(coverage["verifications"][0]["attempts"], 2)
         self.assertEqual(coverage["verifications"][0]["classification"], "NEGATIVE")
 
+    def test_skipped_scanner_uses_only_a_matching_verified_batch(self):
+        selected = ["zap-active", "nuclei"]
+        self.record("dashboard_run_scope", external_scanners=selected)
+        error = dict(run_id=self.run.name, tool="zap-active", status="ERROR",
+                     reason="SCANNER_BUDGET_EXHAUSTED", coverage="INCOMPLETE")
+        ref = self.record("scanner_result", **error)["evidence_id"]
+        batch = dict(run_id=self.run.name, results=[{**error, "evidence_id": ref}], result_evidence_refs=[ref])
+        self.recorder.persist_phase_artifact("scanner_batch", batch, derived_from=[ref])
+        self.record("scanner_result", tool="nuclei", status="NOT_RUN", coverage="NOT_TESTED",
+                    reason="provider_unavailable_halt")
+        def skipped_reason():
+            coverage = build_coverage(self.run, self.run.name)
+            return next(row["reason"] for row in coverage["scanners"] if row["tool"] == "nuclei")
+        self.assertEqual(skipped_reason(), "SCANNER_BUDGET_EXHAUSTED")
+        # A second batch makes attribution ambiguous.
+        self.recorder.persist_phase_artifact("scanner_batch", batch, derived_from=[ref])
+        self.assertEqual(skipped_reason(), "provider_unavailable_halt")
+
     def test_no_scope_or_records_does_not_invent_skipped_reasons(self):
         empty = build_coverage(self.run, self.run.name)
         self.assertEqual(empty["integrity"], "NOT_VERIFIED")
@@ -72,6 +91,118 @@ class CoverageTests(unittest.TestCase):
         self.assertIsNone(coverage["scope"])
         self.assertEqual(coverage["scanners"][0]["status"], "UNKNOWN")
         self.assertEqual(coverage["matrix"][0]["status"], "UNKNOWN")
+
+    def test_passive_zap_alerts_are_projected_separately_from_candidates(self):
+        digest = "a" * 64
+        alerts = [
+            {"alert_index": index, "rule_id": rule, "severity": severity,
+             "urls": [[1, [[2, 3]]], [1, [[4, 5]]]], "otherinfo": "PRIVATE_SENTINEL"}
+            for index, (rule, severity) in enumerate(
+                (("10038-1", "medium"), ("10020-1", "medium"), ("10021", "low")))
+        ]
+        review = self.recorder.persist_phase_artifact("zap_review", {
+            "run_id": self.run.name, "tool": "zap-passive", "format_version": 2,
+            "report_state": "AVAILABLE", "report_sha256": digest, "alerts": alerts,
+        }, source="TOOL_ADAPTER", observed_state="AVAILABLE")
+        result = {"run_id": self.run.name, "tool": "zap-passive", "status": "COMPLETED",
+                  "report_sha256": digest, "candidate_count": 0}
+        self.recorder.persist_phase_artifact("scanner_result", result, derived_from=[review["evidence_id"]])
+        coverage = build_coverage(self.run, self.run.name)
+        self.assertEqual(coverage["scanners"][0]["candidate_count"], 0)
+        self.assertEqual(coverage["scanner_reviews"], [{
+            "tool": "zap-passive", "status": "AVAILABLE",
+            "source": {"artifact": "zap_review", "evidence_id": review["evidence_id"]},
+            "alerts": [{"alert_index": row["alert_index"], "rule_id": row["rule_id"],
+                        "severity": row["severity"], "instances": 2} for row in alerts],
+        }])
+
+        # A review for a different report cannot provide this scanner's alert metadata.
+        self.recorder.persist_phase_artifact("scanner_result", {**result, "report_sha256": "b" * 64},
+                                             derived_from=[review["evidence_id"]])
+        self.assertEqual(build_coverage(self.run, self.run.name)["scanner_reviews"][0]["status"], "UNAVAILABLE")
+
+    def test_active_zap_and_nuclei_share_the_review_shape_and_keep_missing_distinct(self):
+        digest = "b" * 64
+        self.record("scanner_result", tool="nuclei", status="COMPLETED", candidate_count=0)
+        self.assertEqual(build_coverage(self.run, self.run.name)["scanner_reviews"], [
+            {"tool": "nuclei", "status": "NOT_RECORDED", "alerts": [], "source": None},
+        ])
+        for tool, artifact, row in (
+            ("zap-active", "zap_review", {"urls": [[1, []]], "rule_id": "10021", "severity": "low"}),
+            ("nuclei", "nuclei_review", {"instances": 2, "rule_id": "lab-xss-reflection", "severity": "informational"}),
+        ):
+            review = self.recorder.persist_phase_artifact(artifact, {
+                "run_id": self.run.name, "tool": tool, "format_version": 2 if tool == "zap-active" else 1,
+                "report_state": "AVAILABLE", "report_sha256": digest,
+                "alerts": [{"alert_index": 0, **row}],
+            }, source="TOOL_ADAPTER", observed_state="AVAILABLE")
+            self.recorder.persist_phase_artifact("scanner_result", {
+                "run_id": self.run.name, "tool": tool, "status": "COMPLETED", "report_sha256": digest,
+            }, derived_from=[review["evidence_id"]])
+        zap, nuclei = build_coverage(self.run, self.run.name)["scanner_reviews"]
+        self.assertEqual((zap["tool"], zap["status"], zap["source"]["artifact"]),
+                         ("zap-active", "AVAILABLE", "zap_review"))
+        self.assertEqual((nuclei["tool"], nuclei["status"], nuclei["source"]["artifact"]),
+                         ("nuclei", "AVAILABLE", "nuclei_review"))
+        self.assertEqual(zap["alerts"], [{"alert_index": 0, "rule_id": "10021", "severity": "low", "instances": 1}])
+        self.assertEqual(nuclei["alerts"], [{"alert_index": 0, "rule_id": "lab-xss-reflection",
+                                            "severity": "informational", "instances": 2}])
+
+    def test_ai_review_of_verified_alerts_preserves_source_and_observations(self):
+        from dashboards.app.backend.control_api import app
+        from runtime.lab.control_support import verify
+
+        reply = {"interpretation": "Fixture meaning", "uncertainty": "Headers unavailable",
+                 "evidence_check": "Inspect the saved response headers"}
+        for tool, rule in (("zap-passive", "10021"), ("zap-active", "12345"), ("nuclei", "fixture-rule")):
+            zap = tool.startswith("zap")
+            row = {"urls": [[1, []]]} if zap else {"instances": 1}
+            ref = self.recorder.persist_phase_artifact("zap_review" if zap else "nuclei_review", {
+                "run_id": self.run.name, "tool": tool, "format_version": 2 if zap else 1,
+                "report_state": "AVAILABLE", "report_sha256": "a" * 64, "raw": "PRIVATE_FIXTURE",
+                "alerts": [{"alert_index": 0, "rule_id": rule, "severity": "low", **row}],
+            }, source="TOOL_ADAPTER", observed_state="AVAILABLE")["evidence_id"]
+            self.recorder.persist_phase_artifact("scanner_result", {"run_id": self.run.name, "tool": tool,
+                "status": "COMPLETED", "report_sha256": "a" * 64, "candidate_count": 0}, derived_from=[ref])
+        before = build_coverage(self.run, self.run.name)
+        with patch("dashboards.app.backend.scanner_analysis._call_real_provider",
+                   return_value=(json.dumps(reply), None, {"model_returned": "fixture-model"})) as provider:
+            client = TestClient(app, base_url="http://127.0.0.1:8000", client=("127.0.0.1", 51000))
+            url = f"/api/runs/{self.run.name}/coverage/analysis/nuclei/{ref}/0"
+            origin = {"origin": "http://127.0.0.1:5173"}
+            with patch("dashboards.app.backend.control_api.run_index", RunIndex(run_roots=[self.root])):
+                self.assertEqual(client.post(url).status_code, 403)
+                self.assertEqual(client.post(url.replace("nuclei/", "zap-passive/"), headers=origin).status_code, 404)
+                self.assertEqual(client.post(url, headers=origin).json()["evidence_check"], reply["evidence_check"])
+                cached = client.get(f"/api/runs/{self.run.name}/coverage").json()
+                self.assertEqual(cached["scanner_reviews"][-1]["alerts"][0]["analysis"]["model"], "fixture-model")
+                self.assertEqual(client.post(url, headers=origin).json()["interpretation"], reply["interpretation"])
+            self.assertEqual(before, build_coverage(self.run, self.run.name))
+            record_post_scan_analysis(self.run, self.recorder, None, lambda: False)
+            self.assertEqual(provider.call_count, 4)
+            for call in provider.call_args_list:
+                inputs = json.loads(call.args[1])
+                self.assertFalse(set(inputs) - {"tool", "rule_id", "severity", "instances", "report_status", "rule_definition"})
+                self.assertNotIn("PRIVATE_FIXTURE", call.args[1])
+        after = build_coverage(self.run, self.run.name)
+        self.assertEqual(after["integrity"], "VERIFIED")
+        self.assertTrue(verify(self.recorder)["passed"])
+        self.assertEqual(before["scanners"], after["scanners"])
+        for review in after["scanner_reviews"]:
+            advice = review["alerts"][0]["analysis"]
+            self.assertEqual(advice["model"], "fixture-model")
+            self.assertTrue(advice["analysis_evidence_id"].startswith("EV-SCANNER_ANALYSIS-"))
+
+    def test_ai_review_handles_missing_rule_provider_and_malformed_answers(self):
+        review = {"tool": "zap-active", "status": "PARTIAL"}
+        alert = {"rule_id": "10021", "instances": 1, "severity": None}
+        with patch("dashboards.app.backend.scanner_analysis._call_real_provider") as provider:
+            self.assertEqual(analyze_alert(review, {**alert, "rule_id": None}, None)["status"], "MISSING_RULE")
+            provider.assert_not_called()
+            provider.return_value = (None, "MISSING_API_KEY", {})
+            self.assertEqual(analyze_alert(review, alert, None)["status"], "PROVIDER_UNAVAILABLE")
+            provider.return_value = ('{"action":"run"}', None, {})
+            self.assertEqual(analyze_alert(review, alert, None)["status"], "INVALID_RESPONSE")
 
     def test_legacy_path_result_requires_path_like_input(self):
         self.record("action_web_003_verification", action_id="ACTION-WEB-003", resource="/products",
@@ -128,7 +259,7 @@ class SeparateExecutionTests(unittest.TestCase):
         fields.update(overrides)
         return StartRunRequest(**fields)
 
-    def _run_scanner_report_fixture(self, include_web):
+    def _run_scanner_report_fixture(self, include_web, interrupted=False, planner="rule"):
         run_id = self.run_id
         recorder = DurableEvidenceRecorder(run_id, self.run / "assessment", approved_root=self.root)
         actions = ["ACTION-SCAN-002"] + (["ACTION-WEB-001"] if include_web else [])
@@ -165,14 +296,19 @@ class SeparateExecutionTests(unittest.TestCase):
             return runner
 
         def scan(_tool, relay, *args):
+            if interrupted:
+                raise RuntimeError("SCANNER_BUDGET_EXHAUSTED")
             seed = relay.urls()[0]
             relay.executed_urls.add(seed)
             relay.successful_urls.add(seed)
             relay.gate.network_dispatch_count += 1
-            return json.dumps({"version": "fixture", "report": {"site": []}}).encode()
+            site = [{"host": "lab-ecommerce", "alerts": [{"alert": "Missing header", "pluginid": "10021",
+                     "riskcode": "1", "confidence": "2", "instances": [{"uri": seed}]}]}]
+            return json.dumps({"version": "fixture", "report": {"site": site}}).encode()
 
-        request = self.request(execution_scope="scan", approve_authenticated_workflow=False,
-                               approve_active_verification=True, external_scanners=["zap-passive"],
+        request = self.request(execution_scope="scan", planner=planner, approve_authenticated_workflow=False,
+                               approve_active_verification=True,
+                               external_scanners=["zap-passive", "nuclei"] if interrupted else ["zap-passive"],
                                max_decisions=len(actions))
         with patch("runtime.lab.workflow_lab.WorkflowLab", FakeLab), \
              patch("runtime.lab.control_support.new_recorder", return_value=recorder), \
@@ -183,6 +319,25 @@ class SeparateExecutionTests(unittest.TestCase):
         self.assertEqual(self.manager.get_snapshot()[0].state, AgentState.COMPLETED)
         report = json.loads((self.run / "report.json").read_text(encoding="utf-8"))
         return report, build_coverage(self.run, run_id)
+
+    def test_llm_run_includes_analysis_even_without_candidates(self):
+        reply = {"interpretation": "Possible header issue", "uncertainty": "Missing headers",
+                 "evidence_check": "Inspect saved header fields"}
+        with patch("dashboards.app.backend.scanner_analysis._call_real_provider",
+                   return_value=(json.dumps(reply), None, {"model_returned": "fixture"})) as provider:
+            report, coverage = self._run_scanner_report_fixture(False, planner="llm")
+        provider.assert_called_once()
+        alert = coverage["scanner_reviews"][0]["alerts"][0]
+        self.assertIn(alert["analysis"]["analysis_evidence_id"], report["evidence_refs"])
+        self.assertEqual(report["scanner_results"][0]["candidate_count"], 0)
+        self.assertEqual(coverage["scan_isolation"]["restore"], "RECORDED")
+
+    def test_new_report_keeps_batch_reason_for_unstarted_scanner(self):
+        report, coverage = self._run_scanner_report_fixture(include_web=False, interrupted=True)
+        for rows in (report["scanner_results"], coverage["scanners"]):
+            skipped = next(row for row in rows if row["tool"] == "nuclei")
+            self.assertEqual((skipped["status"], skipped["reason"]), ("NOT_RUN", "SCANNER_BUDGET_EXHAUSTED"))
+        self.assertNotEqual(report["stop_reason"], "SCANNER_BUDGET_EXHAUSTED")
 
     def test_passive_scanner_report_and_coverage_do_not_claim_internal_verification(self):
         report, coverage = self._run_scanner_report_fixture(include_web=False)
@@ -255,6 +410,78 @@ class SeparateExecutionTests(unittest.TestCase):
         recorder.assert_not_called()
         runner.assert_not_called()
         self.assertEqual(self.manager.get_snapshot()[0].state, AgentState.FAILED)
+
+    def test_web_labs_require_scan_scope_and_matching_loopback_origin(self):
+        for target, port in (("lab-webapp-a", 18085), ("lab-webapp-b", 18086)):
+            origin = f"http://127.0.0.1:{port}"
+            scan = self.request(target=target, target_origin=origin, execution_scope="scan",
+                                approve_authenticated_workflow=False, approve_active_verification=True,
+                                external_scanners=["zap-active", "nuclei"])
+            self.assertEqual(_run_gate(scan).effective_targets, {target})
+            self.assertIn("ACTION-SCAN-002", _run_gate(scan).effective_actions)
+            for wrong in ("http://10.0.0.2:8080", "http://127.0.0.1:18088", origin + "/other"):
+                with self.subTest(target=target, origin=wrong), self.assertRaises(ValidationError):
+                    self.request(target=target, target_origin=wrong, execution_scope="scan",
+                                 approve_authenticated_workflow=False)
+            for scope in ("workflow", "combined"):
+                with self.subTest(target=target, scope=scope), self.assertRaises(ValidationError):
+                    self.request(target=target, target_origin=origin, execution_scope=scope)
+
+    def test_web_lab_cleanup_happens_before_terminal_event_and_coverage(self):
+        lifecycle = []
+        run_id = self.run_id
+        class FakeLab:
+            def __init__(self, _id, recorder, target, origin, **kwargs):
+                self.recorder = recorder
+                self_target = target
+                self_origin = origin
+                lifecycle.append((self_target, self_origin))
+            def __enter__(self):
+                lifecycle.append("isolated")
+            def __exit__(self, *args):
+                lifecycle.append("removed")
+                self.recorder.persist_phase_artifact("scan_lab_restored", {"run_id": run_id})
+        class FakeRunner:
+            def __init__(self, **kwargs):
+                self.hook = kwargs["event_hook"]
+                self.scanner_executor = None
+            def run(self):
+                self.hook({"type": "RUN_COMPLETED", "payload": {"stop_reason": "fixture"}})
+                return AutonomousRunReport(run_id, "lab-webapp-a", "RULE", "RULE", "rule_engine", "none",
+                                           0, 0, 0, 0, 0, 0, "fixture", [], {}, [])
+        recorder = DurableEvidenceRecorder(run_id, self.run / "assessment", approved_root=self.root)
+        request = self.request(target="lab-webapp-a", target_origin="http://127.0.0.1:18085",
+                               execution_scope="scan", approve_authenticated_workflow=False,
+                               approve_read_only=True)
+        original_event = self.manager._on_runtime_event
+        def capture(event, sink):
+            if event["type"] == "RUN_COMPLETED":
+                self.assertIn("removed", lifecycle)
+            original_event(event, sink)
+        with patch("runtime.lab.web_scan_lab.WebScanLab", FakeLab), \
+             patch("runtime.lab.workflow_lab.WorkflowLab") as shoplab, \
+             patch("runtime.lab.control_support.new_recorder", return_value=recorder), \
+             patch("dashboards.app.backend.run_manager.AutonomousRunner", FakeRunner), \
+             patch.object(self.manager, "_on_runtime_event", side_effect=capture):
+            self.manager._worker(run_id, request, self.run, self.sink)
+        shoplab.assert_not_called()
+        self.assertEqual(self.manager.get_snapshot()[0].state, AgentState.COMPLETED,
+                         self.manager.get_snapshot()[0].error)
+        coverage = build_coverage(self.run, run_id)
+        self.assertEqual(coverage["scan_isolation"]["restore"], "RECORDED")
+        self.assertEqual(coverage["workflow"]["status"], "NOT_SELECTED")
+
+    def test_web_lab_without_approval_never_creates_containers(self):
+        request = self.request(target="lab-webapp-b", target_origin="http://127.0.0.1:18086",
+                               execution_scope="scan", approve_authenticated_workflow=False,
+                               approve_read_only=False)
+        recorder = DurableEvidenceRecorder(self.run_id, self.run / "assessment", approved_root=self.root)
+        with patch("runtime.lab.control_support.new_recorder", return_value=recorder), \
+             patch("runtime.lab.web_scan_lab.WebScanLab") as isolated:
+            self.manager._worker(self.run_id, request, self.run, self.sink)
+        isolated.assert_not_called()
+        self.assertEqual(self.manager.get_snapshot()[0].state, AgentState.FAILED)
+        self.assertEqual(self.manager.get_snapshot()[3].integrity_status, "VERIFIED")
 
     def test_non_isolated_scan_refuses_post_before_network(self):
         scan = self.request(execution_scope="scan", approve_authenticated_workflow=False,

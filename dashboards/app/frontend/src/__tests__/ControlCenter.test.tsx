@@ -197,6 +197,38 @@ describe('Autonomous Cyber Range Control Center Frontend MVP', () => {
     expect(screen.getByRole('heading', { name: 'A proposal awaits your review' })).toBeVisible();
   });
 
+  it('describes a successful start response as launch acceptance, not a completed run', async () => {
+    vi.spyOn(apiClient, 'getSystemStatus').mockResolvedValue(mockSystemStatus);
+    vi.spyOn(apiClient, 'startRun').mockResolvedValue({
+      success: true,
+      message: 'Run started successfully',
+      run_id: 'RUN-LAUNCH-TEST',
+      timestamp_utc: '2026-10-11T14:15:00Z',
+    });
+    render(<ControlCenter />);
+    await waitFor(() => expect(screen.getByText('Technical details')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Technical details'));
+    fireEvent.click(screen.getByRole('button', { name: 'Preset 1: Safe Recon (Autonomous)' }));
+    expect(await screen.findByText('Run launch accepted: RUN-LAUNCH-TEST. Follow the run status for the outcome.')).toBeVisible();
+  });
+
+  it('shows a run failure reason and error without expanding its event', async () => {
+    vi.spyOn(apiClient, 'getSystemStatus').mockResolvedValue(mockSystemStatus);
+    render(<ControlCenter />);
+    await waitFor(() => expect(screen.getByText('Technical details')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('Technical details'));
+    const failure: AgentEvent = {
+      event_id: 'EVT-FAIL',
+      run_id: 'RUN-TEST-1234',
+      type: 'RUN_FAILED',
+      timestamp_utc: '2026-10-11T14:15:00Z',
+      payload: { stop_reason: 'provider_unavailable_halt', error: 'PROVIDER_TIMEOUT' },
+    };
+    act(() => MockEventSource.instances[0].emit('RUN_FAILED', failure));
+    expect(await screen.findByText('Stop reason: provider_unavailable_halt')).toBeVisible();
+    expect(screen.getByText('Error: PROVIDER_TIMEOUT')).toBeVisible();
+  });
+
   it('handles named SSE event and appends live event feed', async () => {
     vi.spyOn(apiClient, 'getSystemStatus').mockResolvedValue(mockSystemStatus);
 

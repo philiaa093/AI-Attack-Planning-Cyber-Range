@@ -197,6 +197,68 @@ class RunIndex:
             return RunHistoryItem(run_id=run_id, stop_reason="CORRUPT_OR_INCOMPLETE",
                                   evidence_integrity="FAILED")
 
+    def _current_item(self) -> Optional[RunHistoryItem]:
+        if not self.run_manager:
+            return None
+        run_stat, agent_stat, safety_stat, evidence_stat, _ = self.run_manager.get_snapshot()
+        if not run_stat.run_id:
+            return None
+        verification = self._determine_planner_verification(
+            requested=run_stat.planner,
+            actual=agent_stat.actual_mode,
+            provider=agent_stat.provider,
+            fallback_reason=agent_stat.fallback_reason,
+        )
+        duration = _calc_duration_ms(run_stat.started_at_utc, run_stat.ended_at_utc)
+        return RunHistoryItem(
+            run_id=run_stat.run_id,
+            created_at_utc=run_stat.started_at_utc,
+            started_at_utc=run_stat.started_at_utc,
+            ended_at_utc=run_stat.ended_at_utc,
+            duration_ms=duration,
+            scenario=run_stat.scenario,
+            target_id=run_stat.target,
+            planner_requested=run_stat.planner.upper(),
+            planner_actual=agent_stat.actual_mode.upper(),
+            planner_verification=verification,
+            provider=agent_stat.provider,
+            model=agent_stat.model,
+            control_mode=run_stat.control_mode,
+            fallback_reason=agent_stat.fallback_reason,
+            state=run_stat.state.value,
+            outcome=run_stat.state.value,
+            stop_reason=run_stat.stop_reason,
+            iterations=run_stat.decisions_count,
+            proposals=run_stat.decisions_count,
+            permits=safety_stat.permits_count,
+            denials=safety_stat.denials_count,
+            network_dispatches=safety_stat.network_dispatches,
+            observations=agent_stat.facts_count,
+            evidence_count=evidence_stat.count,
+            verified_evidence_count=None,
+            evidence_integrity="NOT_VERIFIED",
+            findings_count=0,
+            pause_count=run_stat.pause_count,
+            operator_approvals=run_stat.operator_approvals,
+            operator_rejections=run_stat.operator_rejections,
+        )
+
+    def _terminal_integrity(self, item: RunHistoryItem) -> RunHistoryItem:
+        if item.state not in ("COMPLETED", "FAILED", "STOPPED") and not (item.state == "BLOCKED" and item.ended_at_utc):
+            return item
+        if self.run_manager.output_root not in self.roots:
+            return item
+        try:
+            run_dir = self.run_manager._validate_run_dir(item.run_id)
+        except (OSError, ValueError):
+            return item
+        assessment = run_dir / "assessment"
+        integrity = verify_records(assessment if assessment.is_dir() else run_dir, item.run_id)
+        item.evidence_count = integrity.record_count
+        item.verified_evidence_count = integrity.verified_count
+        item.evidence_integrity = integrity.state
+        return item
+
     def list_runs(
         self,
         planner: Optional[str] = None,
@@ -215,51 +277,10 @@ class RunIndex:
             raise ValueError("invalid history pagination")
         directories: Dict[str, Path] = {}
 
-        # 1. Include active/current run from RunManager if running
-        if self.run_manager:
-            run_stat, agent_stat, safety_stat, evidence_stat, _ = self.run_manager.get_snapshot()
-            if run_stat.run_id:
-                active_id = run_stat.run_id
-                seen_run_ids.add(active_id)
-                verification = self._determine_planner_verification(
-                    requested=run_stat.planner,
-                    actual=agent_stat.actual_mode,
-                    provider=agent_stat.provider,
-                    fallback_reason=agent_stat.fallback_reason,
-                )
-                duration = _calc_duration_ms(run_stat.started_at_utc, run_stat.ended_at_utc)
-                items.append(RunHistoryItem(
-                    run_id=active_id,
-                    created_at_utc=run_stat.started_at_utc,
-                    started_at_utc=run_stat.started_at_utc,
-                    ended_at_utc=run_stat.ended_at_utc,
-                    duration_ms=duration,
-                    scenario=run_stat.scenario,
-                    target_id=run_stat.target,
-                    planner_requested=run_stat.planner.upper(),
-                    planner_actual=agent_stat.actual_mode.upper(),
-                    planner_verification=verification,
-                    provider=agent_stat.provider,
-                    model=agent_stat.model,
-                    control_mode=run_stat.control_mode,
-                    fallback_reason=agent_stat.fallback_reason,
-                    state=run_stat.state.value,
-                    outcome=run_stat.state.value,
-                    stop_reason=run_stat.stop_reason,
-                    iterations=run_stat.decisions_count,
-                    proposals=run_stat.decisions_count,
-                    permits=safety_stat.permits_count,
-                    denials=safety_stat.denials_count,
-                    network_dispatches=safety_stat.network_dispatches,
-                    observations=agent_stat.facts_count,
-                    evidence_count=evidence_stat.count,
-                    verified_evidence_count=None,
-                    evidence_integrity="NOT_VERIFIED",
-                    findings_count=0,
-                    pause_count=run_stat.pause_count,
-                    operator_approvals=run_stat.operator_approvals,
-                    operator_rejections=run_stat.operator_rejections,
-                ))
+        current = self._current_item()
+        if current:
+            seen_run_ids.add(current.run_id)
+            items.append(current)
 
         # 2. Scan directories from roots
         for root in self.roots:
@@ -336,55 +357,17 @@ class RunIndex:
             filtered = filtered[offset:offset + limit]
             filtered = [self._extract_run_item(directories[item.run_id])
                         if item.run_id in directories else item for item in filtered]
+        if current and any(item is current for item in filtered):
+            self._terminal_integrity(current)
         return RunHistoryResponse(runs=filtered, total_count=total)
 
     def get_run(self, run_id: str) -> Optional[RunHistoryItem]:
         """Fetch single run details by run_id."""
         self.validate_run_id(run_id)
 
-        # Check active run in RunManager
-        if self.run_manager:
-            run_stat, agent_stat, safety_stat, evidence_stat, _ = self.run_manager.get_snapshot()
-            if run_stat.run_id == run_id:
-                verification = self._determine_planner_verification(
-                    requested=run_stat.planner,
-                    actual=agent_stat.actual_mode,
-                    provider=agent_stat.provider,
-                    fallback_reason=agent_stat.fallback_reason,
-                )
-                duration = _calc_duration_ms(run_stat.started_at_utc, run_stat.ended_at_utc)
-                return RunHistoryItem(
-                    run_id=run_id,
-                    created_at_utc=run_stat.started_at_utc,
-                    started_at_utc=run_stat.started_at_utc,
-                    ended_at_utc=run_stat.ended_at_utc,
-                    duration_ms=duration,
-                    scenario=run_stat.scenario,
-                    target_id=run_stat.target,
-                    planner_requested=run_stat.planner.upper(),
-                    planner_actual=agent_stat.actual_mode.upper(),
-                    planner_verification=verification,
-                    provider=agent_stat.provider,
-                    model=agent_stat.model,
-                    control_mode=run_stat.control_mode,
-                    fallback_reason=agent_stat.fallback_reason,
-                    state=run_stat.state.value,
-                    outcome=run_stat.state.value,
-                    stop_reason=run_stat.stop_reason,
-                    iterations=run_stat.decisions_count,
-                    proposals=run_stat.decisions_count,
-                    permits=safety_stat.permits_count,
-                    denials=safety_stat.denials_count,
-                    network_dispatches=safety_stat.network_dispatches,
-                    observations=agent_stat.facts_count,
-                    evidence_count=evidence_stat.count,
-                    verified_evidence_count=None,
-                    evidence_integrity="NOT_VERIFIED",
-                    findings_count=0,
-                    pause_count=run_stat.pause_count,
-                    operator_approvals=run_stat.operator_approvals,
-                    operator_rejections=run_stat.operator_rejections,
-                )
+        current = self._current_item()
+        if current and current.run_id == run_id:
+            return self._terminal_integrity(current)
 
         run_dir = self.find_run_dir(run_id)
         if not run_dir:

@@ -76,7 +76,13 @@ class Handler(BaseHTTPRequestHandler):
         path = parts.path
 
         if path == "/":
-            self._send_html(200, "<html><body><h1>lab-webapp-a</h1><p>Cyber range target (lab only)</p></body></html>")
+            self._send_html(200, """<html><body><h1>lab-webapp-a</h1>
+<p>Cyber range target (lab only)</p>
+<nav><a href="/api/users/search?q=alice">Browse users</a> <a href="/search?q=hello">Site search</a></nav>
+<form method="GET" action="/api/users/search"><label>User search <input name="q" value="alice"></label><button>Search users</button></form>
+<form method="GET" action="/search"><label>Site search <input name="q" value="hello"></label><button>Search site</button></form>
+<a href="/files?name=readme.txt">Public file</a>
+<a href="/api/products">Products</a></body></html>""")
             return
 
         if path == "/health":

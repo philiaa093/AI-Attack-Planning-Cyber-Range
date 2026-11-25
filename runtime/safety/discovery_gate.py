@@ -628,8 +628,16 @@ class CentralizedSafetyGate:
         }
 
         try:
-            self.recorder.persist_intent(intent_data)
-        except EvidenceFailure as exc:
+            prior_ids = {item.get("evidence_id") for item in self.recorder.artifacts
+                         if type(item) is dict and type(item.get("evidence_id")) is str}
+            intent_artifact = self.recorder.persist_intent(intent_data, source="VALIDATOR")
+            if (type(intent_artifact) is not dict
+                    or type(intent_artifact.get("evidence_id")) is not str
+                    or not intent_artifact["evidence_id"].strip()
+                    or intent_artifact["evidence_id"] in prior_ids
+                    or intent_artifact not in self.recorder.artifacts):
+                raise EvidenceFailure("new intent evidence ID not confirmed")
+        except Exception as exc:
             # STOP: zero network dispatch!
             self.halted_due_to_evidence = True
             return DispatchResponse(
@@ -725,8 +733,19 @@ class CentralizedSafetyGate:
         }
 
         try:
-            self.recorder.persist_result(result_data)
-        except EvidenceFailure as exc:
+            previous_ids = {item.get("evidence_id") for item in self.recorder.artifacts
+                            if type(item) is dict and type(item.get("evidence_id")) is str}
+            result_artifact = self.recorder.persist_result(
+                result_data, derived_from=[intent_artifact["evidence_id"]], source="EXECUTOR"
+            )
+            if (type(result_artifact) is not dict
+                    or type(result_artifact.get("evidence_id")) is not str
+                    or not result_artifact["evidence_id"].strip()
+                    or result_artifact["evidence_id"] in previous_ids
+                    or result_artifact not in self.recorder.artifacts
+                    or result_artifact.get("derived_from") != [intent_artifact["evidence_id"]]):
+                raise EvidenceFailure("new result evidence link not confirmed")
+        except Exception as exc:
             # STOP: Request was dispatched, but result persistence failed.
             # No subsequent requests may be scheduled!
             self.halted_due_to_evidence = True

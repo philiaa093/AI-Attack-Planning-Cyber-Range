@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import type { AgentEvent } from '../api/types';
+import type { AgentEvent, SystemStatus } from '../api/types';
 import { PresentationFlow } from '../components/presentation/PresentationFlow';
+import { PresentationHero } from '../components/presentation/PresentationHero';
 import { LanguageProvider } from '../i18n/LanguageContext';
 
 const event = (type: string, runId = 'run-1'): AgentEvent => ({
@@ -10,6 +11,28 @@ const event = (type: string, runId = 'run-1'): AgentEvent => ({
   type,
   timestamp_utc: '2026-11-25T00:00:00Z',
   payload: {},
+});
+
+describe('PresentationHero objective status', () => {
+  const system = (stop_reason: string): SystemStatus => ({
+    run: { run_id: 'run-1', state: 'COMPLETED', stop_reason, target: 'lab-ecommerce' },
+    agent: { actual_mode: 'LLM', requested_mode: 'LLM', current_phase: 'RECON' },
+  } as unknown as SystemStatus);
+
+  it('distinguishes a limited stop from evidence of objective completion', () => {
+    render(<LanguageProvider initialLang="vi"><PresentationHero
+      system={system('no_approved_action_can_make_progress')} latestEvent={null} />
+    </LanguageProvider>);
+    expect(screen.getByRole('heading', { name: 'Phiên chạy đã kết thúc' })).toBeInTheDocument();
+    expect(screen.getByText('Phiên đã dừng; chưa có bằng chứng xác nhận mục tiêu đã hoàn thành.')).toBeInTheDocument();
+  });
+
+  it('does not invent an unconfirmed stop for other terminal reasons', () => {
+    render(<LanguageProvider initialLang="en"><PresentationHero
+      system={system('objective_completed')} latestEvent={null} />
+    </LanguageProvider>);
+    expect(screen.queryByText('The run has stopped; objective completion has not been established.')).not.toBeInTheDocument();
+  });
 });
 
 const step = (name: string) => {

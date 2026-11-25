@@ -27,7 +27,9 @@ import os
 import re
 import urllib.parse
 from dashboards.app.backend.event_sink import EventSink
+from dashboards.app.backend.coverage import scanner_batch_stop_reason, verified_payload
 from dashboards.app.backend.model_profiles import ProfileStore
+from dashboards.app.backend.scanner_analysis import record_post_scan_analysis
 from runtime.planners.observed_planner import ProviderConfig
 from runtime.lab.capability_registry import ACTION_EXECUTION_DETAILS
 from dashboards.app.backend.models import (
@@ -83,6 +85,26 @@ def _scan_redaction_ready() -> bool:
                    for example in examples)
     except Exception:
         return False
+
+
+def _discovery_endpoint(result: dict) -> tuple[str, str] | None:
+    method = result.get("method")
+    if (result.get("action_id") != "ACTION-RECON-002" or method not in ("GET", "HEAD")
+            or result.get("outcome") != "SUCCESS" or type(result.get("status_code")) is not int
+            or not 100 <= result["status_code"] <= 599):
+        return None
+    url = result.get("url")
+    if not isinstance(url, str) or len(url) > 8192 or re.search(r"[\s\\\x00-\x1f\x7f]", url):
+        return None
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname
+    if parsed.scheme not in ("http", "https") or not host or parsed.username is not None:
+        return None
+    port = parsed.port
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None and port != (443 if parsed.scheme == "https" else 80):
+        authority += f":{port}"
+    return method, urllib.parse.urlunsplit((parsed.scheme, authority, parsed.path or "/", "", ""))
 
 
 class _ReadOnlyScanGate(CentralizedSafetyGate):
@@ -518,7 +540,9 @@ class RunManager:
         req = req.model_copy(deep=True)
         if req.mode != "deny-demo":
             try:
-                req.target_origin = validate_isolated_lab_target(req.target, req.target_origin)
+                req.target_origin = validate_isolated_lab_target(
+                    req.target, req.target_origin,
+                    scan_only=req.execution_scope == "scan" and not req.approve_authenticated_workflow)
             except (TypeError, ValueError):
                 return ControlResponse(success=False, message="ISOLATED_LAB_TARGET_UNSUPPORTED", timestamp_utc=_utc_now_iso())
         if req.execution_scope != "workflow" and req.mode != "deny-demo" and not _scan_redaction_ready():
@@ -718,6 +742,8 @@ class RunManager:
                     self._agent_status.actual_mode = payload.get("actual_mode")
                 if payload.get("decision_origin"):
                     self._agent_status.mode = payload.get("decision_origin")
+                if payload.get("fallback_reason"):
+                    self._agent_status.fallback_reason = payload["fallback_reason"]
 
             elif ev_type == "PLANNER_FALLBACK":
                 if payload.get("actual_mode"):
@@ -821,8 +847,16 @@ class RunManager:
                 self._run_status.state = AgentState.FAILED
                 self._agent_status.state = AgentState.FAILED
                 self._run_status.stop_reason = payload.get("stop_reason")
-                self._run_status.error = payload.get("error")
-                if str(payload.get("stop_reason", "")).startswith("provider_unavailable_halt"):
+                error = payload.get("error")
+                error_type = payload.get("type")
+                self._run_status.error = (
+                    f"{error_type}: {error}"
+                    if isinstance(error_type, str) and error_type and isinstance(error, str)
+                    else error
+                )
+                if str(payload.get("stop_reason", "")).startswith(
+                    ("provider_unavailable_halt", "hybrid_not_implemented_halt")
+                ):
                     self._pipeline_status.steps["PLAN"] = StepState.FAILED
                 self._run_status.ended_at_utc = _utc_now_iso()
 
@@ -1091,7 +1125,9 @@ class RunManager:
         runner = None
         try:
             if req.mode != "deny-demo":
-                req.target_origin = validate_isolated_lab_target(req.target, req.target_origin)
+                req.target_origin = validate_isolated_lab_target(
+                    req.target, req.target_origin,
+                    scan_only=req.execution_scope == "scan" and not req.approve_authenticated_workflow)
             if req.execution_scope != "workflow" and req.mode != "deny-demo" and not _scan_redaction_ready():
                 raise RuntimeError("SCAN_REDACTION_UNSAFE")
             recorder = lab.new_recorder(run_dir / "assessment", run_id)
@@ -1268,19 +1304,26 @@ class RunManager:
                 if req.execution_scope in ("scan", "combined"):
                     if approval is None:
                         raise RuntimeError("SCAN_APPROVAL_REQUIRED")
-                    from runtime.lab.workflow_lab import WorkflowLab
-                    is_gns3 = req.target_origin == "http://10.0.0.2:8080"
-                    with WorkflowLab(run_id, recorder, is_gns3=is_gns3, target_origin=req.target_origin):
-                        report = runner.run()
+                    if req.target in ("lab-webapp-a", "lab-webapp-b"):
+                        from runtime.lab.web_scan_lab import WebScanLab
+                        with WebScanLab(run_id, recorder, req.target, req.target_origin,
+                                        cancelled=gate.kill_switch.is_active):
+                            report = runner.run()
+                    else:
+                        from runtime.lab.workflow_lab import WorkflowLab
+                        is_gns3 = req.target_origin == "http://10.0.0.2:8080"
+                        with WorkflowLab(run_id, recorder, is_gns3=is_gns3, target_origin=req.target_origin):
+                            report = runner.run()
                 else:
                     report = runner.run()
             if gate.halted_due_to_evidence:
                 raise EvidenceFailure("RUN_EVIDENCE_HALTED")
             scanner_results = list(runner.scanner_executor.results) if runner and runner.scanner_executor else []
+            batch_reason = scanner_batch_stop_reason(req.external_scanners, scanner_results)
             for tool in req.external_scanners:
                 if not any(result["tool"] == tool for result in scanner_results):
                     missing = {"tool": tool, "status": "NOT_RUN", "coverage": "NOT_TESTED",
-                               "reason": report.stop_reason, "run_id": run_id}
+                               "reason": batch_reason or report.stop_reason, "run_id": run_id}
                     missing["evidence_id"] = recorder.persist_phase_artifact("scanner_result", missing)["evidence_id"]
                     scanner_results.append(missing)
                     on_runtime_event({"type": "SCANNER_COMPLETED", "payload": missing})
@@ -1294,6 +1337,12 @@ class RunManager:
                 recorded_state = "STOPPED"
                 if req.execution_scope == "workflow":
                     report.stop_reason = "STOP_REQUESTED"
+            if (req.planner == "llm" and recorded_state == "COMPLETED"
+                    and any(item.get("status") == "COMPLETED" for item in scanner_results)):
+                record_post_scan_analysis(run_dir, recorder, provider_config, gate.kill_switch.is_active)
+                verify_res = lab.verify(recorder)
+                if gate.kill_switch.is_active():
+                    recorded_state = "STOPPED"
             with (run_dir / "report.json").open("x", encoding="utf-8") as report_stream:
                 json.dump({
                     "workflow_result": workflow_result,
@@ -1540,6 +1589,10 @@ class RunManager:
             return None
 
         findings: List[FindingItem] = []
+        try:
+            directory, _, records = self._verified_evidence(run_id)
+        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+            return None
 
         # 1. Check report.json if present
         report_file = run_dir / "report.json"
@@ -1550,8 +1603,7 @@ class RunManager:
                 raw_findings = rep_data.get("findings", [])
                 if type(raw_findings) is not list:
                     raw_findings = []
-                _, integrity, records = self._verified_evidence(run_id)
-                verified_refs = {record["evidence_id"] for _, record in records} if integrity.state == "VERIFIED" else set()
+                verified_refs = {record["evidence_id"] for _, record in records}
                 for raw_f in raw_findings[:1024]:
                     if type(raw_f) is not dict:
                         continue
@@ -1566,6 +1618,8 @@ class RunManager:
                                     for name in ("file", "path", "template", "document", "download", "folder", "dir", "include"))):
                         classification = "INCONCLUSIVE"
                     family = raw_f.get("family", raw_f.get("category", "SECURITY_VERIFICATION"))
+                    if family == "SURFACE_DISCOVERY":
+                        continue  # Rebuilt below from the recorded discovery requests.
                     findings.append(FindingItem(
                         finding_id=raw_f.get("finding_id", f"FND-{uuid.uuid4().hex[:8]}"),
                         run_id=run_id,
@@ -1584,47 +1638,31 @@ class RunManager:
             except Exception:
                 pass
 
-        # 2. Extract surface discovery findings from result-*.json files
+        grouped = {}
+        for record_file, record in records:
+            if not record_file.name.startswith("record-result-") or not record["evidence_id"].startswith("EV-RESULT-"):
+                continue
+            try:
+                result = verified_payload(record, directory)
+                endpoint = _discovery_endpoint(result)
+            except (OSError, ValueError, TypeError, RecursionError):
+                continue
+            if endpoint:
+                grouped.setdefault(endpoint, []).append((record["created_at_utc"], record["evidence_id"]))
+
+        for (method, url), observations in sorted(grouped.items()):
+            observations.sort()
+            key = hashlib.sha256(f"{method} {url}".encode()).hexdigest()[:16]
+            findings.append(FindingItem(
+                finding_id=f"FND-SURF-{key}", run_id=run_id, category="SURFACE_DISCOVERY",
+                severity="INFO", title=f"Discovered Web Endpoint: {method} {url}",
+                detail=f"{len(observations)} recorded discovery request(s).",
+                resource_ref=url, evidence_refs=[ref for _, ref in observations],
+                timestamp_utc=observations[0][0],
+            ))
+
         assessment_dir = run_dir / "assessment"
         if assessment_dir.is_dir():
-            for res_file in sorted(assessment_dir.glob("result-*.json")):
-                try:
-                    from runtime.evidence.evidence_readonly import read_object
-                    res_data = read_object(res_file, run_dir)
-                    if res_data.get("run_id") != run_id:
-                        continue
-                    url = res_data.get("url", "")
-                    code = res_data.get("status_code", 0)
-                    method = res_data.get("method", "GET")
-                    action_id = res_data.get("action_id", "")
-                    b_bytes = res_data.get("body_bytes", 0)
-                    h_code = hashlib.sha256(url.encode()).hexdigest()[:8]
-
-                    rec_ev_id = None
-                    for rf in assessment_dir.glob(f"record-result-*{res_file.name[-12:-5]}*"):
-                        try:
-                            rec_json = read_object(rf, run_dir)
-                            if rec_json.get("run_id") != run_id:
-                                continue
-                            rec_ev_id = rec_json.get("evidence_id")
-                            break
-                        except Exception:
-                            pass
-
-                    findings.append(FindingItem(
-                        finding_id=f"FND-SURF-{h_code}",
-                        run_id=run_id,
-                        category="SURFACE_DISCOVERY",
-                        severity="INFO",
-                        title=f"Discovered Web Endpoint: {url}",
-                        detail=f"Action {action_id} performed {method} request: HTTP {code} ({b_bytes} bytes).",
-                        evidence_refs=[rec_ev_id] if rec_ev_id else [],
-                        confidence=1.0,
-                        timestamp_utc=res_data.get("timestamp_utc", ""),
-                    ))
-                except Exception:
-                    continue
-
             # 3. Extract policy refusal findings
             for dec_file in sorted(assessment_dir.glob("decision-*.json")):
                 try:

@@ -763,5 +763,130 @@ class EvidenceReportingTests(unittest.TestCase):
         self.assertNotEqual(rec_1.directory, rec_2.directory)
 
 
+class DispatchEvidenceLinkTests(unittest.TestCase):
+    """Offline contract checks with mocked HTTP and an isolated evidence directory."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+        self.recorder = DurableEvidenceRecorder(
+            "RUN-LINK-TEST", base_dir=self.directory, approved_root=self.directory, source="OPERATOR"
+        )
+        target, action = "lab-ecommerce", "ACTION-RECON-002"
+        self.approval = ApprovalToken("APP-LINK", "RUN-LINK-TEST", target, action,
+                                      time.time() - 1, time.time() + 300)
+        self.gate = CentralizedSafetyGate(
+            base_origin="http://127.0.0.1:18088",
+            target_registry={target: {"host": "127.0.0.1", "port": 18088}},
+            target_allowlist={target}, canonical_target_allowlist={target},
+            action_allowlist={action}, canonical_action_allowlist={action},
+            recorder=self.recorder,
+        )
+        self.req = DiscoveryRequest("RUN-LINK-TEST", target, action,
+                                    "http://127.0.0.1:18088/", approval=self.approval)
+
+    def test_each_result_links_its_own_intent_and_redacts(self):
+        secret = "syntheticSessionValue123456789"
+        with patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = [("Set-Cookie", "session=" + secret)]
+            response.read.return_value = b"fixture response"
+            first = self.gate.dispatch(self.req)
+            second = self.gate.dispatch(self.req)
+        self.assertTrue(first.durable_confirmed)
+        self.assertTrue(second.durable_confirmed)
+        artifacts = self.recorder.artifacts
+        self.assertEqual(len(artifacts), 4)
+        records = [json.loads(Path(a["record_path"]).read_text(encoding="utf-8")) for a in artifacts]
+        self.assertEqual([r["source"] for r in records], ["VALIDATOR", "EXECUTOR"] * 2)
+        self.assertEqual(records[1]["derived_from"], [records[0]["evidence_id"]])
+        self.assertEqual(records[3]["derived_from"], [records[2]["evidence_id"]])
+        self.assertNotEqual(records[0]["evidence_id"], records[2]["evidence_id"])
+        self.assertTrue(EvidenceVerifier.verify_directory(self.directory).passed)
+        for path in self.directory.iterdir():
+            self.assertNotIn(secret.encode(), path.read_bytes())
+
+    def test_missing_intent_id_stops_before_dispatch(self):
+        with patch.object(self.recorder, "persist_intent", return_value={}), \
+                patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            result = self.gate.dispatch(self.req)
+            again = self.gate.dispatch(self.req)
+        self.assertEqual(result.refusal_reason, "INTENT_EVIDENCE_WRITE_FAILED")
+        self.assertEqual(again.refusal_reason, "HALTED_DUE_TO_EVIDENCE_FAILURE")
+        self.assertEqual(self.gate.network_dispatch_count, 0)
+        connection.assert_not_called()
+
+    def test_unconfirmed_or_reused_intent_and_unexpected_exception_fail_closed(self):
+        existing = self.recorder.persist_intent({"action_id": "ACTION-RECON-002"})
+        for bad_result in ({"evidence_id": "EV-INTENT-not-recorded"}, existing,
+                           TypeError("legacy recorder has no source argument")):
+            with self.subTest(case=type(bad_result).__name__):
+                self.gate.halted_due_to_evidence = False
+                kwargs = {"side_effect": bad_result} if isinstance(bad_result, Exception) else {"return_value": bad_result}
+                with patch.object(self.recorder, "persist_intent", **kwargs), \
+                        patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+                    result = self.gate.dispatch(self.req)
+                self.assertEqual(result.refusal_reason, "INTENT_EVIDENCE_WRITE_FAILED")
+                self.assertTrue(self.gate.halted_due_to_evidence)
+                connection.assert_not_called()
+        self.assertEqual(self.gate.network_dispatch_count, 0)
+
+    def test_result_failure_stops_later_dispatch(self):
+        self.recorder.inject_result_failure()
+        with patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = []
+            response.read.return_value = b"fixture"
+            result = self.gate.dispatch(self.req)
+            again = self.gate.dispatch(self.req)
+        self.assertEqual(result.refusal_reason, "RESULT_EVIDENCE_WRITE_FAILED")
+        self.assertEqual(again.refusal_reason, "HALTED_DUE_TO_EVIDENCE_FAILURE")
+        self.assertEqual(self.gate.network_dispatch_count, 1)
+        connection.assert_called_once()
+
+    def test_unexpected_result_exception_stops_later_dispatch(self):
+        with patch.object(self.recorder, "persist_result", side_effect=TypeError("unexpected recorder error")), \
+                patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = []
+            response.read.return_value = b"fixture"
+            result = self.gate.dispatch(self.req)
+            again = self.gate.dispatch(self.req)
+        self.assertEqual(result.refusal_reason, "RESULT_EVIDENCE_WRITE_FAILED")
+        self.assertEqual(again.refusal_reason, "HALTED_DUE_TO_EVIDENCE_FAILURE")
+        self.assertEqual(self.gate.network_dispatch_count, 1)
+        connection.assert_called_once()
+
+    def test_unconfirmed_result_stops_later_dispatch(self):
+        with patch.object(self.recorder, "persist_result", return_value={}), \
+                patch("runtime.safety.discovery_gate.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.getheaders.return_value = []
+            response.read.return_value = b"fixture"
+            result = self.gate.dispatch(self.req)
+            again = self.gate.dispatch(self.req)
+        self.assertEqual(result.refusal_reason, "RESULT_EVIDENCE_WRITE_FAILED")
+        self.assertEqual(again.refusal_reason, "HALTED_DUE_TO_EVIDENCE_FAILURE")
+        self.assertEqual(self.gate.network_dispatch_count, 1)
+
+    def test_source_override_validated_before_any_write(self):
+        art = self.recorder.persist_phase_artifact("fixture", {"x": 1}, source="PLANNER")
+        record = json.loads(Path(art["record_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(record["source"], "PLANNER")
+        self.assertEqual(self.recorder.source, "OPERATOR")
+        before = {p.name for p in self.directory.iterdir()}
+        for invalid in ("invalid", "", [], 1):
+            with self.subTest(invalid=invalid), self.assertRaises(EvidenceFailure):
+                self.recorder.persist_result({"x": 1}, source=invalid)
+        self.assertEqual({p.name for p in self.directory.iterdir()}, before)
+        default = self.recorder.persist_result({"x": 2})
+        self.assertEqual(json.loads(Path(default["record_path"]).read_text(encoding="utf-8"))["source"], "OPERATOR")
+
+
 if __name__ == "__main__":
     unittest.main()

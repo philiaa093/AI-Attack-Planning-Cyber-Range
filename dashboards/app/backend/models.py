@@ -36,9 +36,17 @@ def validate_target_origin(origin_val: Optional[str]) -> str:
     return norm
 
 
-def validate_isolated_lab_target(target: str, origin: Optional[str]) -> str:
-    """Require an origin whose isolation provider is known for ShopLab."""
+SCAN_LAB_ORIGINS = {
+    "lab-webapp-a": "http://127.0.0.1:18085",
+    "lab-webapp-b": "http://127.0.0.1:18086",
+}
+
+
+def validate_isolated_lab_target(target: str, origin: Optional[str], *, scan_only: bool = False) -> str:
+    """Accept only exact target/provider pairs; volatile Web labs support scans only."""
     normalized = validate_target_origin(origin)
+    if scan_only and target in SCAN_LAB_ORIGINS and normalized == SCAN_LAB_ORIGINS[target]:
+        return normalized
     if target != "lab-ecommerce" or normalized not in (
         "http://127.0.0.1:18088", "http://10.0.0.2:8080",
     ):
@@ -231,7 +239,8 @@ class StartRunRequest(BaseModel):
     @model_validator(mode="after")
     def validate_scanner_scope(self):
         if self.mode != "deny-demo":
-            self.target_origin = validate_isolated_lab_target(self.target, self.target_origin)
+            self.target_origin = validate_isolated_lab_target(
+                self.target, self.target_origin, scan_only=self.execution_scope == "scan")
         elif self.target_origin:
             self.target_origin = validate_target_origin(self.target_origin)
         if self.execution_scope == "scan" and self.approve_authenticated_workflow:

@@ -176,14 +176,24 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
         approval: ApprovalToken | None,
     ) -> CapabilityExecutionResult:
         candidate_facts: list[dict[str, Any]] = []
+        seen_facts: set[tuple[Any, ...]] = set()
+
+        def add_fact(key: tuple[Any, ...], fact: dict[str, Any]) -> None:
+            # Scope deduplication to this analysis and to a single inventory
+            # observation. Distinct pages, methods and form structures remain
+            # distinct even when they happen to expose the same input.
+            if key not in seen_facts:
+                seen_facts.add(key)
+                candidate_facts.append(fact)
 
         for path, item in inventory.items.items():
             clean_url = item.canonical_url.split("?")[0].split("#")[0]
+            source_key = (item.source_observation_id, item.canonical_url, item.method)
             parsed_query = urllib.parse.urlsplit(item.path).query
             # Record query inputs on visited endpoint
             if parsed_query:
                 for qk, _ in urllib.parse.parse_qsl(parsed_query):
-                    candidate_facts.append({
+                    add_fact((*source_key, "query", clean_url, str(qk)), {
                         "fact_id": f"FACT-PARAM-{uuid.uuid4().hex[:8]}",
                         "fact_type": "PARAMETER",
                         "subject": clean_url,
@@ -205,6 +215,9 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                                for part in ("password", "passwd", "credential"))
                         for inp in inputs
                     )
+                    # The whole observed form is part of the identity: two
+                    # forms sharing an input name may carry different context.
+                    form_key = json.dumps(form, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
                     for inp in inputs:
                         inp_name = inp.get("name", "").strip()
@@ -212,7 +225,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                             continue
                         if form_method == "GET":
                             # Safe read-only query parameter input on actual form action endpoint
-                            candidate_facts.append({
+                            add_fact((*source_key, "form", clean_form_target, form_method, form_key, inp_name), {
                                 "fact_id": f"FACT-PARAM-{uuid.uuid4().hex[:8]}",
                                 "fact_type": "PARAMETER",
                                 "subject": clean_form_target,
@@ -221,7 +234,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                             })
                         elif not is_credential_form:
                             # POST/mutating form input: record finding as CANDIDATE_FINDING (zero conversion to synthetic GET query parameter)
-                            candidate_facts.append({
+                            add_fact((*source_key, "form", clean_form_target, form_method, form_key, inp_name), {
                                 "fact_id": f"FACT-CAND-{uuid.uuid4().hex[:8]}",
                                 "fact_type": "CANDIDATE_FINDING",
                                 "subject": clean_form_target,
@@ -229,7 +242,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                                 "confidence": 0.50,
                             })
 
-                candidate_facts.append({
+                add_fact((*source_key, "form_summary", clean_url), {
                     "fact_id": f"FACT-CAND-{uuid.uuid4().hex[:8]}",
                     "fact_type": "CANDIDATE_FINDING",
                     "subject": clean_url,

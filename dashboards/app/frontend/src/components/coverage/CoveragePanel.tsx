@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { apiClient } from '../../api/client';
-import type { RunCoverage } from '../../api/types';
+import type { RunCoverage, ScannerAnalysis } from '../../api/types';
 import { useLanguage } from '../../i18n/LanguageContext';
 
 interface CoveragePanelProps {
@@ -89,6 +89,60 @@ const verificationLimit = (action: string, vi: boolean): string => {
   return labels[action]?.[vi ? 0 : 1] ?? '';
 };
 
+const SCANNER_SEVERITIES = {
+  informational: ['Thông tin', 'Informational'],
+  low: ['Thấp', 'Low'],
+  medium: ['Trung bình', 'Medium'],
+  high: ['Cao', 'High'],
+  critical: ['Nghiêm trọng', 'Critical'],
+};
+
+const SCANNER_NAMES = {
+  'zap-passive': ['ZAP thụ động', 'Passive ZAP'],
+  'zap-active': ['ZAP chủ động', 'Active ZAP'],
+  nuclei: ['Nuclei', 'Nuclei'],
+};
+
+type Review = NonNullable<RunCoverage['scanner_reviews']>[number];
+
+function AlertAnalysis({ run, review, alert, vi }: {
+  run: string; review: Review; alert: Review['alerts'][number]; vi: boolean;
+}) {
+  const [response, setResponse] = useState<ScannerAnalysis>();
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const analysis = response ?? alert.analysis;
+  async function analyze() {
+    if (!review.source || pending) return;
+    setPending(true);
+    setFailed(false);
+    try {
+      setResponse(await apiClient.analyzeScannerAlert(run, review.tool, review.source.evidence_id, alert.alert_index));
+    } catch {
+      setFailed(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  if (!alert.rule_id) return <p>{vi ? 'Thiếu mã rule để phân tích.' : 'Rule ID missing for analysis.'}</p>;
+  if (analysis?.status === 'AVAILABLE') return <div className="space-y-1 break-words">
+    <p className="text-slate-300">{vi ? 'Nhận định AI' : 'AI assessment'} · {analysis.model}</p>
+    <p>{analysis.interpretation}</p>
+    <p><strong>{vi ? 'Điểm chưa chắc' : 'Uncertainty'}</strong> · {analysis.uncertainty}</p>
+    <p><strong>{vi ? 'Đề xuất kiểm chứng' : 'Suggested evidence check'}</strong> · {analysis.evidence_check}</p>
+    {analysis.analysis_evidence_id ? <code>{analysis.analysis_evidence_id}</code>
+      : <p className="text-slate-400">{vi ? 'Phân tích lại trong phiên dashboard hiện tại.' : 'Reviewed in the current dashboard session.'}</p>}
+  </div>;
+  return <div className="space-y-1">
+    {failed && <p role="alert">{vi ? 'Không đọc được kết quả phân tích.' : 'Could not load the analysis.'}</p>}
+    {analysis?.status === 'PROVIDER_UNAVAILABLE' && <p>{vi ? 'Model chưa trả lời được.' : 'Model unavailable.'}</p>}
+    {analysis?.status === 'INVALID_RESPONSE' && <p>{vi ? 'Phản hồi model thiếu hoặc sai định dạng.' : 'Incomplete or invalid model response.'}</p>}
+    <button type="button" disabled={pending} onClick={analyze} className="text-blue-300 underline disabled:text-slate-400">
+      {pending ? (vi ? 'Đang phân tích…' : 'Analyzing…') : (vi ? 'Phân tích bằng AI' : 'Analyze with AI')}
+    </button>
+  </div>;
+}
+
 export const CoveragePanel: React.FC<CoveragePanelProps> = ({ runId, refreshKey }) => {
   const { lang } = useLanguage();
   const vi = lang === 'vi';
@@ -154,6 +208,53 @@ export const CoveragePanel: React.FC<CoveragePanelProps> = ({ runId, refreshKey 
               <p className="text-xs text-slate-400">{vi ? 'Workflow được ghi riêng; không xem đây là kết quả scanner.' : 'The workflow is recorded separately from scanners.'}</p>
             </section>
           </div>
+          {!!data.scanner_reviews?.length && (
+            <section aria-label={vi ? 'Kết quả scanner theo rule' : 'Scanner results by rule'} className="space-y-3">
+              <h4 className="font-medium">{vi ? 'Kết quả scanner theo rule' : 'Scanner results by rule'}</h4>
+              {data.scanner_reviews.map(review => {
+                const name = SCANNER_NAMES[review.tool][vi ? 0 : 1];
+                return <section key={review.tool} aria-label={name} className="space-y-2 rounded border border-slate-700 p-3">
+                  <h5 className="text-sm font-medium">{name}</h5>
+                  {review.status === 'NOT_RECORDED' || review.status === 'UNAVAILABLE'
+                ? <p className="text-xs text-slate-400">{vi ? 'Chưa có báo cáo chi tiết để hiển thị.' : 'No detailed report is available for display.'}</p>
+                : <>
+                  {review.status === 'PARTIAL' &&
+                    <p className="text-xs text-amber-200">{vi ? 'Báo cáo chỉ lưu một phần.' : 'The saved report is partial.'}</p>}
+                  {review.alerts.length === 0
+                    ? review.status === 'AVAILABLE' &&
+                      <p className="text-xs text-slate-400">{vi ? 'Báo cáo ghi nhận 0 kết quả.' : 'The report recorded 0 results.'}</p>
+                    : <table className="w-full !min-w-0 table-fixed text-left text-xs">
+                      <thead className="border-b border-slate-700 text-slate-400">
+                        <tr><th scope="col" className="py-2 pr-2">{vi ? 'Mã rule' : 'Rule ID'}</th>
+                          <th scope="col" className="w-24 py-2 pr-2 sm:w-32">{vi ? 'Mức độ' : 'Severity'}</th>
+                          <th scope="col" className="w-16 py-2 text-right sm:w-20">{vi ? 'Số lần' : 'Instances'}</th></tr>
+                      </thead>
+                      <tbody>{review.alerts.map(alert => (
+                        <React.Fragment key={`${data.run_id}:${review.source?.evidence_id}:${alert.alert_index}`}>
+                        <tr>
+                          <td className="break-words py-2 pr-2">{alert.rule_id
+                            ? review.tool === 'nuclei'
+                              ? <code>{alert.rule_id}</code>
+                              : <a href={`https://www.zaproxy.org/docs/alerts/${encodeURIComponent(alert.rule_id)}/`}
+                                   target="_blank" rel="noreferrer" className="font-mono text-blue-300 underline underline-offset-2">{alert.rule_id}</a>
+                            : <span>{vi ? 'Nhóm' : 'Group'} {alert.alert_index + 1} · {vi ? 'Chưa có mã' : 'No rule ID'}</span>}</td>
+                          <td className="py-2 pr-2 text-slate-300">{alert.severity ? SCANNER_SEVERITIES[alert.severity][vi ? 0 : 1] : (vi ? 'Chưa ghi nhận' : 'Not recorded')}</td>
+                          <td className="py-2 text-right tabular-nums">{alert.instances}</td>
+                        </tr>
+                        <tr className="border-b border-slate-800 last:border-0"><td colSpan={3} className="pb-3 text-xs text-slate-400">
+                          <AlertAnalysis run={data.run_id} review={review} alert={alert} vi={vi} />
+                        </td></tr>
+                        </React.Fragment>
+                      ))}</tbody>
+                    </table>}
+                </>}
+                  {review.source && <p className="break-all text-xs text-slate-400">
+                    {vi ? 'Bằng chứng' : 'Evidence'} · <code>{review.source.artifact} · {review.source.evidence_id}</code>
+                  </p>}
+                </section>;
+              })}
+            </section>
+          )}
           <section aria-label={vi ? 'Kiểm tra nội bộ' : 'Internal verification'} className="space-y-2">
             <h4 className="font-medium">{vi ? 'Kiểm tra nội bộ theo bề mặt' : 'Internal verification by surface'}</h4>
             <p className="text-xs text-slate-400">{vi ? 'Kết quả chỉ áp dụng cho phép thử và bề mặt được ghi.' : 'Results apply only to the recorded check and surface.'}</p>

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from pathlib import Path
 import sys
+from threading import Lock
 from typing import Any, Dict, Optional
 import uuid
 
@@ -16,7 +18,7 @@ if str(ROOT) not in sys.path:
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
@@ -44,7 +46,8 @@ from dashboards.app.backend.models import (
 from dashboards.app.backend.range_controller import RangeController
 from dashboards.app.backend.run_history import RunIndex
 from dashboards.app.backend.run_manager import RunManager
-from dashboards.app.backend.model_profiles import ProfileStore, create_router
+from dashboards.app.backend.model_profiles import ProfileStore, create_router, _local_request
+from dashboards.app.backend.scanner_analysis import analyze_alert
 
 
 # Singletons
@@ -53,6 +56,14 @@ range_controller = RangeController()
 model_profiles = ProfileStore(env_path=ROOT / ".env")
 run_manager = RunManager(model_profiles=model_profiles)
 run_index = RunIndex(run_manager=run_manager)
+# Historical interpretations are session data. Completed evidence packages stay immutable.
+_session_analyses: OrderedDict[tuple, dict] = OrderedDict()
+_analysis_lock = Lock()
+
+
+def _analysis_key(run_id, review, alert):
+    return (run_id, review["source"]["evidence_id"], review["tool"], review["status"],
+            alert["alert_index"], alert["rule_id"], alert["severity"], alert["instances"])
 
 app = FastAPI(
     title="Autonomous Cyber Range Control Center API",
@@ -388,9 +399,41 @@ def get_run_coverage(run_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     if run_dir is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run {run_id} not found")
-    return build_coverage(run_dir, run_id)
+    coverage = build_coverage(run_dir, run_id)
+    with _analysis_lock:
+        for review in coverage["scanner_reviews"]:
+            for alert in review["alerts"]:
+                if alert.get("analysis", {}).get("status") != "AVAILABLE":
+                    advice = _session_analyses.get(_analysis_key(run_id, review, alert))
+                    if advice:
+                        alert["analysis"] = advice
+    return coverage
 
-
+@app.post("/api/runs/{run_id}/coverage/analysis/{tool}/{evidence_id}/{alert_index}")
+def review_scanner_alert(run_id: str, tool: str, evidence_id: str, alert_index: int,
+                         request: Request, response: Response) -> dict:
+    """Review historical evidence on demand, without writing to a completed run."""
+    _local_request(request, mutation=True)
+    response.headers["Cache-Control"] = "no-store"
+    coverage = get_run_coverage(run_id)
+    if coverage["integrity"] != "VERIFIED":
+        raise HTTPException(409, "Evidence integrity has not been verified")
+    for review in coverage["scanner_reviews"]:
+        if (review["tool"] == tool and review["source"] and review["source"]["evidence_id"] == evidence_id
+                and 0 <= alert_index < len(review["alerts"])):
+            alert = review["alerts"][alert_index]
+            if alert.get("analysis", {}).get("status") == "AVAILABLE":
+                return alert["analysis"]
+            advice = analyze_alert(review, alert, model_profiles.snapshot())
+            if advice["status"] == "AVAILABLE":
+                key = _analysis_key(run_id, review, alert)
+                with _analysis_lock:
+                    _session_analyses[key] = advice
+                    _session_analyses.move_to_end(key)
+                    if len(_session_analyses) > 256:
+                        _session_analyses.popitem(last=False)
+            return advice
+    raise HTTPException(404, "Scanner alert not found in verified evidence")
 
 
 @app.get("/api/runs/{run_id}/events")

@@ -25,7 +25,9 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 from runtime.orchestration.autonomous_runner import AutonomousRunner, DecisionTrace
 from runtime.safety.discovery_gate import (
@@ -472,7 +474,14 @@ class AutonomousRunnerTests(unittest.TestCase):
             fallback_allowed=True,
             provider_callable=lambda *_: None,
         )
+        allowed_events = []
+        r_fall_ok.event_hook = allowed_events.append
         rep_fall_ok = r_fall_ok.run()
+        fallbacks = [event for event in allowed_events if event["type"] == "PLANNER_FALLBACK"]
+        rule_proposals = [event for event in allowed_events if event["type"] == "PLANNER_PROPOSED"
+                          and event["payload"]["decision_origin"] == "rule_fallback"]
+        self.assertGreater(len(rule_proposals), 0)
+        self.assertEqual(len(fallbacks), len(rule_proposals))
         self.assertEqual(rep_fall_ok.requested_planner_mode, "LLM_MOCK")
         self.assertEqual(rep_fall_ok.actual_planner_mode, "RULE")
 
@@ -491,8 +500,35 @@ class AutonomousRunnerTests(unittest.TestCase):
         self.assertEqual(r_fall_no.lifecycle_state, "FAILED")
         self.assertNotEqual(rep_fall_no.provider, "rule_engine")
         self.assertIn("RUN_FAILED", [e["type"] for e in failed_events])
+        self.assertNotIn("PLANNER_FALLBACK", [e["type"] for e in failed_events])
         self.assertNotIn("RUN_COMPLETED", [e["type"] for e in failed_events])
         self.assertTrue(all(not trace.dispatched for trace in rep_fall_no.traces))
+
+    def test_terminal_success_is_downgraded_when_observed_input_is_unchecked(self) -> None:
+        stop_success = json.dumps({
+            "schema_version": "1.0", "plan_id": "PLAN-STOP", "objective_id": "OBJ-001",
+            "action_id": "ACTION-END-001", "target_id": self.target_id,
+            "reason_code": "objective_satisfied", "confidence": 1.0,
+        })
+        runner, gate, _, _ = self._setup_runner(
+            requested_mode="LLM", fallback_allowed=False,
+            provider_callable=lambda *_: stop_success,
+            action_allowlist={"ACTION-RECON-002", "ACTION-WEB-001", "ACTION-END-001"},
+        )
+        runner.state_adapter.ingest_observation({
+            "observation_id": "OBS-GUARD-001", "run_id": runner.run_id,
+            "action_id": "ACTION-RECON-002", "timestamp_utc": "2026-11-25T14:00:00Z",
+            "outcome": "SUCCESS",
+            "new_facts": [{"fact_id": "F-GUARD-001", "fact_type": "PARAMETER",
+                           "subject": "/products", "value": "q", "confidence": 0.8}],
+        })
+
+        report = runner.run()
+
+        self.assertEqual(runner.lifecycle_state, "COMPLETED")
+        self.assertEqual(report.stop_reason, "unresolved_candidate_surface")
+        self.assertEqual(report.network_dispatch_count, 0)
+        self.assertEqual(report.traces[-1].proposal["action_id"], "ACTION-END-003")
 
     # =========================================================================
     # A12: Direct transport bypass inspection
@@ -519,6 +555,251 @@ class AutonomousRunnerTests(unittest.TestCase):
 
         # Ensure all network requests flow through gate.dispatch
         self.assertIn("self.gate.dispatch", src)
+
+
+class AutonomousTerminalStateTests(unittest.TestCase):
+    def make_terminal_runner(self, action_id, *, scanners=()):
+        gate = SimpleNamespace(
+            budget_tracker=SimpleNamespace(max_requests=10, requests_dispatched=0),
+            effective_actions={"ACTION-END-001", "ACTION-END-002", "ACTION-END-003"},
+            kill_switch=KillSwitch(), network_dispatch_count=0, dispatch=Mock(),
+        )
+        recorder = Mock()
+        recorder.persist_phase_artifact.return_value = {"evidence_id": "EV-UNIT-TERMINAL"}
+        reply = json.dumps({
+            "schema_version": "1.0", "plan_id": "PLAN-UNIT-STOP", "objective_id": "OBJ-AUTONOMOUS-001",
+            "action_id": action_id, "target_id": "lab-ecommerce",
+            "reason_code": "objective_satisfied", "confidence": 1.0,
+        })
+        events = []
+        runner = AutonomousRunner(
+            target_id="lab-ecommerce", gate=gate, recorder=recorder, approval=None,
+            run_id="RUN-TERMINAL-UNIT", requested_planner_mode="LLM", planner_fallback_allowed=False,
+            planner_provider_callable=lambda *_: reply, event_hook=events.append, external_scanners=scanners,
+        )
+        runner._execute_approved_action = Mock()
+        return runner, events
+
+    def add_surface_observation(self, runner, *, fact_type="ENDPOINT", value="/fixture"):
+        observation_id = "OBS-UNIT-SURFACE"
+        evidence_id = "EV-UNIT-SURFACE"
+        runner.state_adapter.ingest_observation({
+            "observation_id": observation_id, "run_id": runner.run_id, "action_id": "ACTION-RECON-002",
+            "timestamp_utc": "2026-11-25T14:00:00Z", "outcome": "SUCCESS", "evidence_refs": [evidence_id],
+            "new_facts": [{"fact_id": "FACT-UNIT-SURFACE", "fact_type": fact_type,
+                           "subject": "/fixture", "value": value, "confidence": 1.0}],
+        })
+        runner.evidence_refs.append(evidence_id)
+        runner.traces.append(Mock(spec=DecisionTrace, safety_decision="APPROVED", outcome="SUCCESS",
+                                  result_evidence_id=evidence_id, observation_ids=[observation_id],
+                                  new_facts_count=1))
+
+    def assert_terminal_reason(self, runner, events, expected):
+        report = runner.run()
+        self.assertEqual(report.stop_reason, expected)
+        self.assertEqual(report.traces[-1].safety_reason, expected)
+        terminal_record = runner.recorder.persist_phase_artifact.call_args.args[1]
+        self.assertEqual(terminal_record["reason"], expected)
+        self.assertEqual(terminal_record["provider_reason_code"], "objective_satisfied")
+        self.assertEqual(events[-1]["type"], "RUN_COMPLETED")
+        self.assertEqual(events[-1]["payload"]["stop_reason"], expected)
+        self.assertEqual(report.network_dispatch_count, 0)
+        runner.gate.dispatch.assert_not_called()
+        runner._execute_approved_action.assert_not_called()
+
+    def test_provider_cannot_claim_success_without_recorded_observations(self):
+        for action, surface in (("ACTION-END-001", "empty"), ("ACTION-END-001", "post"),
+                                ("ACTION-END-001", "unrecorded"), ("ACTION-END-003", "empty")):
+            with self.subTest(action=action, surface=surface):
+                runner, events = self.make_terminal_runner(action)
+                if surface == "post":
+                    self.add_surface_observation(runner, fact_type="CANDIDATE_FINDING",
+                                                 value="post_form_input_sample")
+                elif surface == "unrecorded":
+                    self.add_surface_observation(runner)
+                    runner.evidence_refs.clear()
+                self.assert_terminal_reason(runner, events, "unresolved_candidate_surface")
+
+    def test_provider_success_requires_recorded_coverage_for_selected_scanner(self):
+        for coverage, expected in ((None, "unresolved_scan_coverage"),
+                                   ("PARTIAL", "unresolved_scan_coverage"),
+                                   ("BOUNDED", "objective_satisfied")):
+            with self.subTest(coverage=coverage):
+                runner, events = self.make_terminal_runner("ACTION-END-001", scanners=("nuclei",))
+                self.add_surface_observation(runner)
+                if coverage is not None:
+                    runner.scanner_executor.results.append({
+                        "tool": "nuclei", "run_id": runner.run_id, "status": "COMPLETED",
+                        "evidence_id": "EV-UNIT-SCANNER", "coverage": coverage,
+                        "seed_coverage": {"not_requested_seed_count": 0},
+                    })
+                self.assert_terminal_reason(runner, events, expected)
+
+    def test_provider_budget_stop_uses_runner_owned_budget(self):
+        for requests_used, expected in ((0, "PLANNER_TERMINAL_STOP"), (10, "budget_exhausted")):
+            with self.subTest(requests_used=requests_used):
+                runner, events = self.make_terminal_runner("ACTION-END-002")
+                runner.gate.budget_tracker.requests_dispatched = requests_used
+                self.assert_terminal_reason(runner, events, expected)
+
+    def test_hybrid_without_fallback_reports_failure_without_dispatch(self) -> None:
+        gate = SimpleNamespace(
+            budget_tracker=SimpleNamespace(max_requests=10, requests_dispatched=0),
+            effective_actions={"ACTION-END-003"},
+            kill_switch=KillSwitch(),
+            network_dispatch_count=0,
+            dispatch=Mock(),
+        )
+        recorder = Mock()
+        recorder.persist_phase_artifact.return_value = {"evidence_id": "fixture-decision"}
+        events = []
+        runner = AutonomousRunner(
+            target_id="lab-ecommerce", gate=gate, recorder=recorder, approval=None,
+            run_id="RUN-HYBRID-UNIT", requested_planner_mode="HYBRID",
+            planner_fallback_allowed=False, event_hook=events.append,
+        )
+
+        report = runner.run()
+
+        self.assertEqual(report.requested_planner_mode, "HYBRID")
+        self.assertEqual(report.actual_planner_mode, "NONE")
+        self.assertEqual(
+            report.stop_reason,
+            "hybrid_not_implemented_halt:FALLBACK_NOT_ALLOWED:HYBRID_NOT_IMPLEMENTED",
+        )
+        self.assertEqual(runner.lifecycle_state, "FAILED")
+        self.assertEqual(gate.network_dispatch_count, 0)
+        gate.dispatch.assert_not_called()
+        self.assertTrue(all(not trace.dispatched for trace in report.traces))
+        terminal_events = [event for event in events
+                           if event["type"] in {"RUN_FAILED", "RUN_COMPLETED", "RUN_STOPPED"}]
+        self.assertEqual([event["type"] for event in terminal_events], ["RUN_FAILED"])
+        self.assertEqual(terminal_events[0]["payload"]["stop_reason"], report.stop_reason)
+        self.assertEqual(terminal_events[0]["payload"]["error"],
+                         "FALLBACK_NOT_ALLOWED:HYBRID_NOT_IMPLEMENTED")
+
+
+class AutonomousBudgetProjectionTests(unittest.TestCase):
+    """Budget is a runner view; observation-store accounting remains unchanged."""
+
+    def make_runner(self, *, max_decisions=2):
+        gate = SimpleNamespace(
+            budget_tracker=SimpleNamespace(max_requests=10, requests_dispatched=0),
+            effective_actions={"ACTION-END-003", "ACTION-RECON-002"},
+            kill_switch=KillSwitch(), network_dispatch_count=0, dispatch=Mock(),
+        )
+        recorder = Mock()
+        recorder.persist_phase_artifact.return_value = {"evidence_id": "fixture-decision"}
+        events = []
+        runner = AutonomousRunner(
+            target_id="lab-ecommerce", gate=gate, recorder=recorder, approval=None,
+            run_id="RUN-BUDGET-UNIT", max_decisions=max_decisions, event_hook=events.append,
+        )
+        return runner, gate, events
+
+    @staticmethod
+    def plan(action):
+        return SimpleNamespace(
+            proposal={"action_id": action, "target_id": "lab-ecommerce", "reason_code": "fixture"},
+            mode_provenance={"requested_mode": "RULE", "actual_mode": "RULE"},
+        )
+
+    def test_multiple_observations_and_requests_project_to_planner_event_and_report(self):
+        runner, gate, events = self.make_runner()
+        runner.planner.propose = Mock(side_effect=[self.plan("ACTION-RECON-002"), self.plan("ACTION-END-003")])
+        runner._evaluate_safety = Mock(return_value=("APPROVED", "fixture"))
+
+        def execute(proposal, provenance, iteration, fingerprint):
+            # One decision yields five observations and six gated HTTP requests.
+            for n in range(5):
+                runner.state_manager.apply_observation({
+                    "observation_id": f"OBS-{n}", "action_id": "ACTION-RECON-002", "new_facts": [],
+                })
+            gate.budget_tracker.requests_dispatched = 6
+            gate.network_dispatch_count = 6
+            return DecisionTrace(iteration, "DEC-1", "2026-01-01T00:00:00Z", fingerprint,
+                                 "RULE", "RULE", proposal, "APPROVED", "fixture", True,
+                                 None, None, [], 0, "SUCCESS")
+
+        runner._execute_approved_action = Mock(side_effect=execute)
+        report = runner.run()
+        first, second = [call.args[0]["remaining_budget"] for call in runner.planner.propose.call_args_list]
+        self.assertEqual((first["actions"], first["requests"]), (2, 10))
+        self.assertEqual((second["actions"], second["requests"]), (1, 4))
+        budget_event = next(e for e in events if e["type"] == "BUDGET_UPDATED")
+        self.assertEqual(budget_event["payload"]["remaining_budget"], second)
+        self.assertEqual(report.final_state["remaining_budget"]["actions"], 0)
+        self.assertEqual(report.final_state["remaining_budget"]["requests"], 4)
+        self.assertEqual(runner.state_manager.get_state()["remaining_budget"]["actions"], 5)
+
+    def test_denied_decisions_consume_decisions_not_requests(self):
+        runner, gate, events = self.make_runner(max_decisions=2)
+        runner.planner.propose = Mock(side_effect=[self.plan("ACTION-RECON-002"), self.plan("ACTION-END-003")])
+        runner._evaluate_safety = Mock(return_value=("DENIED", "fixture"))
+        runner._handle_safety_denial = Mock(side_effect=lambda proposal, reason, provenance, iteration, fp:
+            DecisionTrace(iteration, "DEC-DENY", "2026-01-01T00:00:00Z", fp, "RULE", "RULE",
+                          proposal, "DENIED", reason, False, None, None, [], 0, "DENIED"))
+        report = runner.run()
+        second = runner.planner.propose.call_args_list[1].args[0]["remaining_budget"]
+        self.assertEqual((second["actions"], second["requests"]), (1, 10))
+        self.assertEqual((report.final_state["remaining_budget"]["actions"],
+                          report.final_state["remaining_budget"]["requests"]), (0, 10))
+        gate.dispatch.assert_not_called()
+
+    def test_passive_decision_does_not_consume_http_budget(self):
+        runner, gate, events = self.make_runner(max_decisions=1)
+        runner.planner.propose = Mock(return_value=self.plan("ACTION-SCAN-001"))
+        runner._evaluate_safety = Mock(return_value=("APPROVED", "fixture"))
+        runner._execute_approved_action = Mock(side_effect=lambda proposal, provenance, iteration, fp:
+            DecisionTrace(iteration, "DEC-PASSIVE", "2026-01-01T00:00:00Z", fp, "RULE", "RULE",
+                          proposal, "APPROVED", "fixture", False, None, None, [], 0, "SUCCESS"))
+        report = runner.run()
+        budget = next(e for e in events if e["type"] == "BUDGET_UPDATED")["payload"]["remaining_budget"]
+        self.assertEqual((budget["actions"], budget["requests"]), (0, 10))
+        self.assertEqual(report.stop_reason, "MAX_DECISIONS_REACHED")
+        gate.dispatch.assert_not_called()
+
+    def test_exhausted_request_budget_denies_action_without_dispatch(self):
+        runner, gate, _ = self.make_runner(max_decisions=2)
+        gate.budget_tracker = BudgetTracker(max_requests=10, requests_dispatched=10)
+        gate.lab_mode = True
+        gate.effective_targets = {"lab-ecommerce"}
+        runner.approval = SimpleNamespace(
+            is_valid=lambda: (True, "VALID"), target_id="lab-ecommerce", action_id="*",
+        )
+        runner.planner.propose = Mock(side_effect=[self.plan("ACTION-RECON-002"), self.plan("ACTION-END-003")])
+        runner._handle_safety_denial = Mock(side_effect=lambda proposal, reason, provenance, iteration, fp:
+            DecisionTrace(iteration, "DEC-DENY", "2026-01-01T00:00:00Z", fp, "RULE", "RULE",
+                          proposal, "DENIED", reason, False, None, None, [], 0, "DENIED"))
+        report = runner.run()
+        self.assertEqual(report.traces[0].safety_reason, "BUDGET_EXHAUSTED")
+        self.assertEqual(report.final_state["remaining_budget"]["requests"], 0)
+        gate.dispatch.assert_not_called()
+
+    def test_gate_request_budget_is_clamped_and_stop_before_first_decision_is_uncharged(self):
+        runner, gate, _ = self.make_runner(max_decisions=2)
+        gate.budget_tracker.requests_dispatched = 12
+        view = runner._with_run_budget(runner.state_manager.get_state(), 0)
+        self.assertEqual(view["remaining_budget"]["requests"], 0)
+        runner.request_stop()
+        runner.planner.propose = Mock()
+        report = runner.run()
+        runner.planner.propose.assert_not_called()
+        self.assertEqual(report.final_state["remaining_budget"]["actions"], 2)
+        self.assertEqual(report.final_state["remaining_budget"]["requests"], 0)
+        gate.dispatch.assert_not_called()
+
+    def test_no_progress_proposal_counts_even_without_a_trace(self):
+        runner, gate, _ = self.make_runner(max_decisions=2)
+        runner.max_repeated_state = 1
+        runner.max_no_progress_cycles = 1
+        runner.planner.propose = Mock(return_value=self.plan("ACTION-RECON-002"))
+        report = runner.run()
+        self.assertEqual(report.stop_reason, "NO_PROGRESS_LOOP")
+        self.assertEqual(report.decisions_count, 1)
+        self.assertEqual(len(report.traces), 0)
+        self.assertEqual(report.final_state["remaining_budget"]["actions"], 1)
+        gate.dispatch.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -11,9 +11,11 @@ kiểm chứng và không phải bằng chứng một cuộc pentest đã hoàn 
 from __future__ import annotations
 import hashlib, json, os, pathlib, sqlite3, uuid
 import stat, threading, time, re, secrets, hmac
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from functools import wraps
 from html import escape as html_escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -389,7 +391,7 @@ def initialize_storage(data_dir: str | pathlib.Path) -> None:
 
 
 @contextmanager
-def storage_transaction(*, write: bool = False):
+def storage_transaction(*, write: bool = False, after_commit=None):
     """Connection riêng từng service; cleanup hoàn tất trước khi caller gửi response."""
     global _active
     with _condition:
@@ -410,6 +412,9 @@ def storage_transaction(*, write: bool = False):
         except BaseException:
             db.rollback()
             raise
+        if after_commit is not None:
+            # Keep this worker admitted until its post-commit invoice write finishes.
+            after_commit()
     finally:
         try:
             if db is not None:
@@ -435,6 +440,13 @@ def quiesce_storage() -> None:
             if remaining <= 0:
                 raise StorageError('Storage drain timed out')
             _condition.wait(remaining)
+
+
+def _resume_storage() -> None:
+    global _accepting
+    with _condition:
+        _accepting = True
+        _condition.notify_all()
 
 
 def close_storage() -> None:
@@ -730,40 +742,61 @@ def _workflow_run_id(value: object) -> str:
     return value
 
 
+def _workflow_file_sha256(path: pathlib.Path) -> str:
+    _validate_path(path, directory=False)
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _workflow_invoice_manifest(directory: pathlib.Path) -> dict[str, str]:
+    _validate_path(directory, directory=True)
+    return {item.name: _workflow_file_sha256(item) for item in directory.iterdir()}
+
+
 def _workflow_snapshot_create(run_id: str) -> str:
-    """Create one bounded live database snapshot before a remote workflow mutates state."""
+    """Capture the database and invoice files while ShopLab storage is drained."""
     global _workflow_snapshot
     run_id = _workflow_run_id(run_id)
     with _workflow_control_lock:
         if _workflow_snapshot is not None:
             raise RuntimeError("Workflow snapshot already active")
-        name = ".workflow-" + hashlib.sha256(run_id.encode()).hexdigest()[:16] + ".sqlite3"
-        snapshot_path = DATA_DIR / name
-        if snapshot_path.exists():
-            raise RuntimeError("Workflow snapshot path exists")
+        with _condition:
+            if _database_path is None or not _accepting:
+                raise StorageError("Storage is unavailable")
+            quiesce_storage()
+            database_path = _database_path
+        snapshot_dir = DATA_DIR / (".workflow-" + hashlib.sha256(run_id.encode()).hexdigest()[:16])
         try:
-            with storage_transaction() as source:
-                destination = sqlite3.connect(str(snapshot_path))
-                try:
+            _validate_storage(DATA_DIR)
+            snapshot_dir.mkdir(mode=0o700)
+            try:
+                snapshot_path = snapshot_dir / "shoplab.sqlite3"
+                with closing(sqlite3.connect(database_path.absolute().as_uri() + "?mode=ro", uri=True)) as source, \
+                        closing(sqlite3.connect(snapshot_path)) as destination:
                     source.backup(destination)
-                finally:
-                    destination.close()
-            digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
-            invoice_names = frozenset(
-                item.name for item in UPLOAD_DIR.iterdir()
-                if item.is_file() and not item.is_symlink()
-            )
-            _workflow_snapshot = {
-                "run_id": run_id,
-                "path": snapshot_path,
-                "sha256": digest,
-                "invoice_names": invoice_names,
-            }
-            return digest
-        except BaseException:
-            if snapshot_path.exists():
-                snapshot_path.unlink()
-            raise
+                digest = _workflow_file_sha256(snapshot_path)
+                invoices = snapshot_dir / "invoices"
+                invoices.mkdir()
+                manifest = _workflow_invoice_manifest(UPLOAD_DIR)
+                for name in manifest:
+                    shutil.copy2(UPLOAD_DIR / name, invoices / name)
+                if _workflow_invoice_manifest(invoices) != manifest:
+                    raise RuntimeError("Workflow invoice snapshot differs from source")
+                _workflow_snapshot = {
+                    "run_id": run_id,
+                    "path": snapshot_path,
+                    "sha256": digest,
+                    "invoices": manifest,
+                }
+                return digest
+            except BaseException:
+                shutil.rmtree(snapshot_dir)
+                raise
+        finally:
+            _resume_storage()
 
 
 def _workflow_promote(run_id: str, username: object) -> None:
@@ -788,48 +821,75 @@ def _workflow_promote(run_id: str, username: object) -> None:
                 )
 
 
+def _workflow_db_digest(path: pathlib.Path) -> bytes:
+    """Hash logical ShopLab state, independent of backup page layout."""
+    digest = hashlib.sha256()
+
+    def add(row):
+        values = [{"blob": value.hex()} if isinstance(value, bytes) else value for value in row]
+        digest.update(json.dumps(values, separators=(",", ":")).encode("ascii") + b"\n")
+
+    db = sqlite3.connect(path.absolute().as_uri() + "?mode=ro", uri=True)
+    try:
+        db.execute("BEGIN")
+        add(db.execute("PRAGMA user_version").fetchone())
+        schema = db.execute("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")
+        for entry in schema:
+            add(("schema", *entry))
+            if entry[0] == "table":
+                # All supported ShopLab tables have rowids, including sqlite_sequence.
+                name = '"' + entry[1].replace('"', '""') + '"'
+                for row in db.execute(f"SELECT rowid, * FROM {name} ORDER BY rowid"):
+                    add(("row", *row))
+        return digest.digest()
+    finally:
+        db.close()
+
+
 def _workflow_snapshot_restore(run_id: str) -> str:
-    """Restore the exact pre-workflow database and remove invoices created by the workflow."""
-    global _accepting, _workflow_snapshot
+    """Restore the pre-workflow database and invoice files before admitting requests."""
+    global _workflow_snapshot
     run_id = _workflow_run_id(run_id)
     with _workflow_control_lock:
         snapshot = _workflow_snapshot
         if snapshot is None or snapshot["run_id"] != run_id:
             raise RuntimeError("Workflow snapshot unavailable")
+        quiesce_storage()
         snapshot_path = snapshot["path"]
         if not isinstance(snapshot_path, pathlib.Path) or not snapshot_path.is_file():
             raise RuntimeError("Workflow snapshot unavailable")
-        digest = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+        _validate_storage(DATA_DIR)
+        digest = _workflow_file_sha256(snapshot_path)
         if not hmac.compare_digest(digest, str(snapshot["sha256"])):
             raise RuntimeError("Workflow snapshot integrity failure")
-        quiesce_storage()
-        try:
-            if _database_path is None:
-                raise StorageError("Storage is unavailable")
-            source = sqlite3.connect(str(snapshot_path))
-            destination = sqlite3.connect(str(_database_path))
-            try:
-                source.backup(destination)
-            finally:
-                destination.close()
-                source.close()
-            baseline = snapshot["invoice_names"]
-            if not isinstance(baseline, frozenset):
-                raise RuntimeError("Workflow snapshot invalid")
-            for item in UPLOAD_DIR.iterdir():
-                if item.is_file() and not item.is_symlink() and item.name not in baseline:
-                    item.unlink()
-            _preflight_db(_database_path, required=True)
-        except BaseException:
-            # Keep admission closed when restore cannot be proven complete.
-            raise
-        else:
-            snapshot_path.unlink()
-            _workflow_snapshot = None
-            with _condition:
-                _accepting = True
-                _condition.notify_all()
-            return digest
+        invoices = snapshot_path.parent / "invoices"
+        baseline = snapshot["invoices"]
+        if _workflow_invoice_manifest(invoices) != baseline:
+            raise RuntimeError("Workflow invoice snapshot integrity failure")
+        current = _workflow_invoice_manifest(UPLOAD_DIR)
+        if _database_path is None:
+            raise StorageError("Storage is unavailable")
+        with closing(sqlite3.connect(snapshot_path.absolute().as_uri() + "?mode=ro", uri=True)) as source, \
+                closing(sqlite3.connect(_database_path)) as destination:
+            source.backup(destination)
+        _preflight_db(_database_path, required=True)
+        if _workflow_db_digest(snapshot_path) != _workflow_db_digest(_database_path):
+            raise RuntimeError("Restored database differs from workflow snapshot")
+        # Stage on the invoice filesystem so each replacement is atomic.
+        with tempfile.TemporaryDirectory(prefix=".restore-", dir=UPLOAD_DIR) as staged:
+            for name, expected in baseline.items():
+                if current.get(name) != expected:
+                    path = pathlib.Path(staged) / name
+                    shutil.copy2(invoices / name, path)
+                    os.replace(path, UPLOAD_DIR / name)
+            for name in current.keys() - baseline.keys():
+                (UPLOAD_DIR / name).unlink()
+        if _workflow_invoice_manifest(UPLOAD_DIR) != baseline:
+            raise RuntimeError("Restored invoices differ from workflow snapshot")
+        shutil.rmtree(snapshot_path.parent)
+        _workflow_snapshot = None
+        _resume_storage()
+        return digest
 
 
 def restore_baseline(data_dir: str | pathlib.Path) -> None:
@@ -988,20 +1048,12 @@ class Handler(BaseHTTPRequestHandler):
                     with storage_transaction(write=True) as db:
                         token, current = create_session(db)
                     self._security_headers = _session_headers(token)
-            with storage_transaction(write=write) as db:
+            with storage_transaction(write=write, after_commit=self._finish_post_commit) as db:
                 self._identity = resolve_session(db, token)
                 if write and not self._csrf_valid():
                     self._send_json(403, {'error': 'Request is not authorized'})
                 else:
                     dispatch(db)
-            action_info = self._post_commit_action
-            self._post_commit_action = None
-            if action_info is not None:
-                action, args = action_info
-                try:
-                    action(*args)
-                except Exception:
-                    pass
         except sqlite3.IntegrityError:
             self._send_json(409, {'error': 'Storage constraint rejected'})
         except (StorageError, sqlite3.Error, OSError):
@@ -1010,6 +1062,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {'error': 'Invalid request'})
         if self._pending_response is not None:
             self._flush_response()
+
+    def _finish_post_commit(self) -> None:
+        action_info = self._post_commit_action
+        self._post_commit_action = None
+        if action_info is not None:
+            action, args = action_info
+            try:
+                action(*args)
+            except Exception:
+                pass
 
     def _send_json(self, status: int, obj: dict) -> None:
         self._send(status, json.dumps(obj, sort_keys=True), "application/json")

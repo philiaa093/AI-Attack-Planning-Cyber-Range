@@ -47,7 +47,7 @@ describe('Run budget and verification display', () => {
     fireEvent.change(screen.getByLabelText('Target Origin URL'), { target: { value: 'http://192.168.1.2:8080' } });
     fireEvent.click(screen.getByRole('button', { name: 'Launch Execution' }));
     expect(submit).not.toHaveBeenCalled();
-    expect(screen.getByText('Only lab-ecommerce at the GNS3 or Docker address above is supported.')).toBeInTheDocument();
+    expect(screen.getByText('Choose a supported target and its matching lab address. Workflows support ShopLab only.')).toBeInTheDocument();
   });
 
   it('shows the actual internal tool and a signal without claiming exploitation', () => {

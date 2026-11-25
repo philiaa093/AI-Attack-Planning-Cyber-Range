@@ -7,7 +7,9 @@ import unittest
 from unittest.mock import patch
 
 from dashboards.app.backend.run_history import RunIndex
+from dashboards.app.backend.models import AgentState
 from dashboards.app.backend.run_manager import RunManager
+from runtime.evidence.discovery_recorder import DurableEvidenceRecorder
 from runtime.lab import control_support as lab
 
 
@@ -34,6 +36,53 @@ class HistoryTruthfulnessTests(unittest.TestCase):
         record.update(changes)
         (self.run / "record-fixture.json").write_text(json.dumps(record), encoding="utf-8")
         return payload
+
+    def test_current_terminal_run_integrity_matches_list_and_detail(self):
+        manager = RunManager(output_root=self.root)
+        index = RunIndex(run_roots=[self.root], run_manager=manager)
+        manager._run_status.run_id = self.run.name
+        manager._run_status.state = AgentState.RUNNING
+        payload = self.record()
+        self.assertEqual(index.get_run(self.run.name).evidence_integrity, "NOT_VERIFIED")
+        manager._run_status.state = AgentState.FAILED
+        manager._run_status.stop_reason = "fixture failure"
+        for state, count in [("VERIFIED", 1), ("FAILED", None)]:
+            for row in (index.get_run(self.run.name), index.list_runs(limit=1).runs[0], index.list_runs().runs[0]):
+                self.assertEqual((row.evidence_integrity, row.verified_evidence_count), (state, count))
+                self.assertEqual(row.stop_reason, "fixture failure")
+            payload.write_text("changed", encoding="utf-8")
+
+    def test_surface_groups_only_verified_discovery_and_links_actual_records(self):
+        directory = self.run / "assessment"
+        recorder = DurableEvidenceRecorder(self.run.name, directory, approved_root=self.root)
+        manager = RunManager(output_root=self.root)
+        def record(action, url, method="GET"):
+            return recorder.persist_phase_artifact("result", {
+                "run_id": self.run.name, "action_id": action, "url": url, "method": method,
+                "outcome": "SUCCESS", "status_code": 200,
+            })["evidence_id"]
+        first = record("ACTION-RECON-002", "http://LOCALHOST:80/products?q=one")
+        second = record("ACTION-RECON-002", "http://localhost/products?q=two#hidden")
+        head = record("ACTION-RECON-002", "http://localhost/products", "HEAD")
+        record("ACTION-SCAN-002", "http://localhost/scanner")
+        record("ACTION-WEB-001", "http://localhost/verification")
+        record("ACTION-RECON-002", "http://user@localhost/private")
+        self.report(findings=[{"category": "SURFACE_DISCOVERY", "title": "Unverified legacy endpoint"}])
+        (directory / "result-orphan.json").write_text(json.dumps({
+            "run_id": self.run.name, "action_id": "ACTION-RECON-002", "method": "GET",
+            "outcome": "SUCCESS", "status_code": 200, "url": "http://localhost/orphan",
+        }), encoding="utf-8")
+        findings = manager.get_run_findings(self.run.name)
+        self.assertEqual(findings.findings_count, 0)
+        self.assertEqual(len(findings.items), 2)
+        get, head_item = findings.items
+        self.assertEqual(get.resource_ref, "http://localhost/products")
+        self.assertCountEqual(get.evidence_refs, [first, second])
+        self.assertEqual(head_item.evidence_refs, [head])
+        self.assertNotEqual(get.finding_id, head_item.finding_id)
+        payload = next(path for path in directory.glob("result-*.json") if path.name != "result-orphan.json")
+        payload.write_text("{}", encoding="utf-8")
+        self.assertEqual(manager.get_run_findings(self.run.name).items, [])
 
     def test_absent_metadata_never_becomes_completed_rule_or_zero(self):
         self.record()

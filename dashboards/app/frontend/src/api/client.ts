@@ -8,6 +8,7 @@ import type {
   RangeStatus,
   RunComparisonResponse,
   RunCoverage,
+  ScannerAnalysis,
   RunHistoryItem,
   RunHistoryResponse,
   RunSummaryResponse,
@@ -218,6 +219,13 @@ export const apiClient = {
   async getRunSummary(runId: string): Promise<RunSummaryResponse> {
     const res = await fetch(`${API_BASE_URL}/api/runs/${encodeURIComponent(runId)}/summary`);
     return handleResponse<RunSummaryResponse>(res);
+  },
+
+  async analyzeScannerAlert(runId: string, tool: string, source: string, index: number): Promise<ScannerAnalysis> {
+    const path = [tool, source, String(index)].map(encodeURIComponent).join('/');
+    return handleResponse(await fetch(`${API_BASE_URL}/api/runs/${encodeURIComponent(runId)}/coverage/analysis/${path}`, {
+      method: 'POST', cache: 'no-store',
+    }));
   },
 
   async getRunCoverage(runId: string): Promise<RunCoverage> {

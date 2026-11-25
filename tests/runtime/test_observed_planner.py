@@ -362,10 +362,17 @@ class ObservedPlannerTests(unittest.TestCase):
         self.assertEqual(res_budget.proposal["action_id"], "ACTION-END-002")
         self.assertEqual(res_budget.proposal["reason_code"], "budget_exhausted")
 
-        # Terminal phase -> ACTION-END-001
+        # A terminal phase alone provides no evidence of objective completion.
         state_terminal = {"phase": "TERMINAL", "remaining_budget": {"actions": 10}, "observed_facts": []}
         res_terminal = planner.propose(state_terminal)
-        self.assertEqual(res_terminal.proposal["action_id"], "ACTION-END-001")
+        self.assertEqual(res_terminal.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(res_terminal.proposal["reason_code"], "unresolved_candidate_surface")
+
+        state_terminal["observed_facts"] = [
+            {"fact_id": "FACT-UNIT", "fact_type": "ENDPOINT", "value": "/fixture", "confidence": 1.0},
+        ]
+        res_recorded = planner.propose(state_terminal)
+        self.assertEqual(res_recorded.proposal["action_id"], "ACTION-END-001")
 
     def test_p08_mode_provenance_distinction(self) -> None:
         """P08: Explicitly records and distinguishes RULE_ONLY, LLM_MOCK, and LLM->RULE fallback."""
@@ -687,6 +694,7 @@ class LiveProviderRequestTests(unittest.TestCase):
     def test_malformed_or_empty_provider_response_retries_once_then_recovers(self):
         config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
         malformed = (b'{}', b'{"choices":[]}', b'{"choices":[{"message":{}}]}', b'[]',
+                     b'{"response":{"promptFeedback":{"blockReason":{}}}}',
                      b'{"choices":[{"message":{"content":null}}]}', b'not json')
         valid = b'{"choices":[{"message":{"content":"{}"}}]}'
         for raw in malformed:
@@ -731,6 +739,12 @@ class LiveProviderRequestTests(unittest.TestCase):
                  (200, b'{"choices":[{"finish_reason":"length","message":{}}]}', "PROVIDER_OUTPUT_TRUNCATED"),
                  (200, b'{"choices":[{"finish_reason":"content_filter"}]}', "PROVIDER_REFUSED"),
                  (200, b'{"choices":[{"message":{"refusal":"fixture-key"}}]}', "PROVIDER_REFUSED"),
+                 (200, b'{"response":{"promptFeedback":{"blockReason":"SAFETY","blockReasonMessage":"fixture-key"}}}', "PROVIDER_REFUSED"),
+                 (200, b'{"response":{"promptFeedback":{"blockReason":"OTHER"}}}', "PROVIDER_REFUSED"),
+                 (200, b'{"response":{"promptFeedback":{"blockReason":"BLOCK_REASON_UNSPECIFIED"}}}', "PROVIDER_REFUSED"),
+                 (200, b'{"promptFeedback":{"blockReason":"BLOCKED_REASON_UNSPECIFIED"}}', "PROVIDER_REFUSED"),
+                 (200, b'{"response":{"promptFeedback":{"blockReason":"fixture-key"}}}', "PROVIDER_REFUSED"),
+                 (200, b'{"choices":[{"message":{"content":"{}"}}],"response":{"promptFeedback":{"blockReason":"SAFETY"}}}', "PROVIDER_REFUSED"),
                  (200, b'{"choices":[{"message":{"tool_calls":[{}]}}]}', "PROVIDER_UNSUPPORTED_TOOL_CALL"),
                  (200, b'{"choices":[{"message":{"content":"fixture-key"}}]}', "INVALID_PROVIDER_CONTENT"),
                  (200, b'x' * 8193, "PROVIDER_RESPONSE_TOO_LARGE")]
@@ -745,13 +759,94 @@ class LiveProviderRequestTests(unittest.TestCase):
                 self.assertEqual(connection.call_count, 1)
                 self.assertNotIn("fixture-key", repr((content, error, meta)))
 
-    def test_anthropic_envelope_and_retry_share_total_timeout(self):
-        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "anthropic", "fixture-key")
-        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
-             patch("runtime.planners.observed_planner.time.monotonic", side_effect=[0, 0, 0, 0, 1, 1, 1, 1, 1]):
+    def test_wrapped_provider_refusal_halts_without_retry_or_fallback(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        planner = ObservedStatePlanner("lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+                                       provider_config=config)
+        events = []
+        planner.event_hook = events.append
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
             response = connection.return_value.getresponse.return_value
             response.status = 200
-            response.read.side_effect = [b'{"content":[{"type":"text"}]}', b'{"content":[{"type":"text","text":"{}"}]}']
+            response.read.return_value = (b'{"response":{"promptFeedback":'
+                                          b'{"blockReason":"SAFETY","blockReasonMessage":"fixture-key"}},'
+                                          b'"model":"fixture-returned-model",'
+                                          b'"usage":{"prompt_tokens":4,"completion_tokens":2,'
+                                          b'"total_tokens":6,"private":"fixture-key"}}')
+            result = planner.propose({"remaining_budget": {"actions": 5}, "phase": "RECON"})
+            self.assertEqual(connection.return_value.request.call_count, 1)
+        self.assertEqual(result.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(result.mode_provenance["actual_mode"], "NONE")
+        self.assertEqual(result.mode_provenance["fallback_reason"], "FALLBACK_NOT_ALLOWED:PROVIDER_REFUSED")
+        self.assertEqual(result.mode_provenance["provider_attempts"], 1)
+        self.assertEqual(result.mode_provenance["provider_block_reason"], "SAFETY")
+        self.assertEqual(result.mode_provenance["provider_stage"], "RESPONSE_BODY")
+        self.assertEqual(result.mode_provenance["model_returned"], "fixture-returned-model")
+        self.assertEqual(result.mode_provenance["usage"],
+                         {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6})
+        self.assertIsInstance(result.mode_provenance["latency_ms"], (int, float))
+        self.assertFalse(any(event["type"] in ("PLANNER_REQUEST_RETRIED", "PLANNER_FALLBACK") for event in events))
+        failed = [event for event in events if event["type"] == "PLANNER_FAILED"]
+        self.assertEqual(failed[0]["payload"]["provider_block_reason"], "SAFETY")
+        self.assertEqual(failed[0]["payload"]["provider_attempts"], 1)
+        self.assertEqual(failed[0]["payload"]["usage"]["total_tokens"], 6)
+        self.assertEqual(failed[0]["payload"]["provider_stage"], "RESPONSE_BODY")
+        self.assertNotIn("fixture-key", json.dumps(events))
+
+    def test_unknown_provider_block_reason_is_normalized_without_retry(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "openai-compatible", "fixture-key")
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection:
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.read.return_value = b'{"response":{"promptFeedback":{"blockReason":"fixture-key"}}}'
+            content, error, meta = _call_real_provider("system", "user", config=config)
+        self.assertIsNone(content)
+        self.assertEqual(error, "PROVIDER_REFUSED")
+        self.assertEqual(meta["provider_block_reason"], "UNKNOWN")
+        self.assertEqual(meta["provider_attempts"], 1)
+        self.assertNotIn("fixture-key", repr((error, meta)))
+        self.assertEqual(connection.return_value.request.call_count, 1)
+
+    def test_invalid_provider_output_is_not_exposed_in_events_or_provenance(self):
+        base = {"objective_id": "OBJ-1", "action_id": "ACTION-END-003",
+                "target_id": "lab-ecommerce", "reason_code": "stop", "confidence": 1.0}
+        cases = (
+            ("untrusted-private-marker", "NO_JSON_OBJECT_FOUND", "untrusted-private-marker"),
+            (json.dumps({**base, "untrusted_private_marker": "value"}),
+             "SCHEMA_VALIDATION_ERROR", "untrusted_private_marker"),
+            (json.dumps({**base, "action_id": "ACTION-HIDDEN-999"}),
+             "UNKNOWN_ACTION_ID", "ACTION-HIDDEN-999"),
+            (json.dumps({**base, "target_id": "lab-hidden-target"}),
+             "UNAUTHORIZED_TARGET", "lab-hidden-target"),
+        )
+        for raw, expected, private in cases:
+            with self.subTest(expected=expected):
+                events = []
+                planner = ObservedStatePlanner(
+                    "lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+                    provider_callable=lambda *_: raw, event_hook=events.append,
+                )
+                result = planner.propose({"remaining_budget": {"actions": 5}, "phase": "RECON"})
+                invalid = [event for event in events if event["type"] == "PLANNER_OUTPUT_INVALID"]
+                self.assertEqual(invalid[0]["payload"], {"error": expected})
+                self.assertEqual(result.mode_provenance["fallback_reason"],
+                                 "FALLBACK_NOT_ALLOWED:" + expected)
+                self.assertNotIn(private, json.dumps([events, result.mode_provenance]))
+
+    def test_anthropic_envelope_and_retry_share_total_timeout(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "anthropic", "fixture-key")
+        clock = [0]
+        responses = iter((b'{"content":[{"type":"text"}]}', b'{"content":[{"type":"text","text":"{}"}]}'))
+
+        def read(_size):
+            clock[0] += 1
+            return next(responses)
+
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
+             patch("runtime.planners.observed_planner.time.monotonic", side_effect=lambda: clock[0]):
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.read.side_effect = read
             content, error, meta = _call_real_provider("system", "user", timeout=10, config=config)
             self.assertEqual(content, "{}")
             self.assertIsNone(error)
@@ -760,13 +855,19 @@ class LiveProviderRequestTests(unittest.TestCase):
 
     def test_no_retry_after_deadline_or_anthropic_refusal(self):
         config = ProviderConfig("http://localhost:20128/v1", "fixture-model", "anthropic", "fixture-key")
-        for raw, expected, times in ((b'{}', "INVALID_PROVIDER_ENVELOPE", [0, 0, 0, 10, 10]),
-                                     (b'{"stop_reason":"refusal"}', "PROVIDER_REFUSED", [0, 0, 0, 0, 0])):
+        for raw, expected, elapsed in ((b'{}', "PROVIDER_TIMEOUT", 10),
+                                       (b'{"stop_reason":"refusal"}', "PROVIDER_REFUSED", 0)):
+            clock = [0]
+
+            def read(_size):
+                clock[0] = elapsed
+                return raw
+
             with self.subTest(expected=expected), \
                  patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
-                 patch("runtime.planners.observed_planner.time.monotonic", side_effect=times):
+                 patch("runtime.planners.observed_planner.time.monotonic", side_effect=lambda: clock[0]):
                 response = connection.return_value.getresponse.return_value
-                response.status, response.read.return_value = 200, raw
+                response.status, response.read.side_effect = 200, read
                 self.assertEqual(_call_real_provider("system", "user", timeout=10, config=config)[1], expected)
                 self.assertEqual(connection.call_count, 1)
 
@@ -791,6 +892,249 @@ class LiveProviderRequestTests(unittest.TestCase):
             self.assertIn(action, prompt)
         for action in ("INVALID-ACTION", "ACTION-WEB-001", "ACTION-RECON-001", "ACTION-SCAN-001"):
             self.assertNotIn(action, prompt)
+
+    def test_both_prompts_keep_unapproved_actions_in_observed_history_only(self):
+        import re
+
+        messages = []
+
+        def provider(system, user):
+            messages.extend((system, user))
+            return None
+
+        planner = ObservedStatePlanner(
+            "lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+            provider_callable=provider, effective_actions={"ACTION-END-003"},
+        )
+        planner.propose({"previous_actions": ["ACTION-RECON-002"]})
+        system, user = messages
+        instructions, _, observed = user.partition("Observed web planning context: ")
+        self.assertEqual(set(re.findall(r"ACTION-[A-Z]+-\d{3}", system + instructions)),
+                         {"ACTION-END-003"})
+        self.assertEqual(json.loads(observed)["previous_actions"], ["ACTION-RECON-002"])
+
+    def test_prompt_exposes_action_semantics_and_observed_surface(self):
+        planner = ObservedStatePlanner(
+            "lab-ecommerce",
+            effective_actions={"ACTION-RECON-002", "ACTION-SCAN-001", "ACTION-SCAN-002",
+                               "ACTION-WEB-001", "ACTION-WEB-002", "ACTION-END-001",
+                               "ACTION-END-003"},
+        )
+        facts = [
+            {"fact_id": "F1", "fact_type": "ENDPOINT", "subject": "/products",
+             "value": "/products", "confidence": 1.0},
+            {"fact_id": "F2", "fact_type": "PARAMETER", "subject": "/products",
+             "value": "q", "confidence": 0.8, "source_observation_id": "OBS-1"},
+            {"fact_id": "F3", "fact_type": "CANDIDATE_FINDING", "subject": "/login",
+             "value": "post_form_input_username", "confidence": 0.5,
+             "source_observation_id": "OBS-2"},
+            {"fact_id": "F4", "fact_type": "ACTION_OUTCOME",
+             "subject": "ACTION-SCAN-002:zap-active:coverage", "value": "PARTIAL",
+             "confidence": 1.0},
+            {"fact_id": "F5", "fact_type": "ACTION_OUTCOME",
+             "subject": "ACTION-SCAN-002:zap-active:unrequested_seeds", "value": 2,
+             "confidence": 1.0},
+        ]
+        state = {"phase": "TESTING", "remaining_budget": {"actions": 5, "requests": 10},
+                 "observed_facts": facts}
+        prompt = planner._build_minimized_prompt(state, ["/products"], facts, [])
+
+        self.assertIn("SQL injection (SQLi)", prompt)
+        self.assertIn("cross-site scripting (XSS)", prompt)
+        self.assertIn('"resource_ref":"/products"', prompt)
+        self.assertIn('"parameter_name":"q"', prompt)
+        self.assertIn('"parameter_name":"username"', prompt)
+        self.assertIn("not executable candidates", prompt)
+        self.assertIn('"coverage":"PARTIAL"', prompt)
+        self.assertIn('"unrequested_seeds":2', prompt)
+        self.assertIn("Remaining requests: 10", prompt)
+
+    def test_prompt_size_limit_marks_projection_as_truncated(self):
+        planner = ObservedStatePlanner("lab-ecommerce", effective_actions={"ACTION-END-003"})
+        endpoints = ["/" + "a" * 490 + f"/{number}" for number in range(32)]
+        facts = [{"fact_type": "PARAMETER", "subject": endpoint, "value": "q"} for endpoint in endpoints]
+
+        prompt = planner._build_minimized_prompt({}, endpoints, facts, [])
+        _, _, observed = prompt.partition("Observed web planning context: ")
+        context = json.loads(observed)
+
+        self.assertLessEqual(len(prompt), 24000)
+        self.assertTrue(context["truncated"])
+        self.assertEqual(context["counts"]["endpoints"], 32)
+        self.assertEqual(context["counts"]["get_inputs"], 32)
+
+    def test_llm_stop_success_is_guarded_by_observed_coverage(self):
+        stop_success = json.dumps({
+            "schema_version": "1.0", "plan_id": "PLAN-STOP", "objective_id": "OBJ-TEST",
+            "action_id": "ACTION-END-001", "target_id": "lab-ecommerce",
+            "reason_code": "objective_satisfied", "confidence": 1.0,
+        })
+        base_facts = [{"fact_id": "F1", "fact_type": "PARAMETER", "subject": "/products",
+                       "value": "q", "confidence": 0.8}]
+        state = {
+            "phase": "TESTING", "objective_id": "OBJ-TEST",
+            "remaining_budget": {"actions": 5},
+            "previous_actions": ["ACTION-RECON-002", "ACTION-SCAN-001"],
+            "discovered_endpoints": ["/products"],
+            "observed_facts": base_facts,
+        }
+
+        planner = ObservedStatePlanner(
+            "lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+            provider_callable=lambda *_: stop_success,
+        )
+        guarded = planner.propose(state)
+        self.assertEqual(guarded.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(guarded.proposal["reason_code"], "unresolved_candidate_surface")
+
+        checked = dict(state)
+        checked["observed_facts"] = base_facts + [
+            {"fact_id": "F2", "fact_type": "ACTION_OUTCOME",
+             "subject": "ACTION-WEB-001:/products:q", "value": "NEGATIVE", "confidence": 0.6},
+            {"fact_id": "F3", "fact_type": "ACTION_OUTCOME",
+             "subject": "ACTION-WEB-002:/products:q", "value": "NEGATIVE", "confidence": 0.6},
+        ]
+        planner = ObservedStatePlanner(
+            "lab-ecommerce", requested_mode="LLM", fallback_allowed=False,
+            provider_callable=lambda *_: stop_success,
+        )
+        completed = planner.propose(checked)
+        self.assertEqual(completed.proposal["action_id"], "ACTION-END-001")
+        self.assertEqual(completed.proposal["reason_code"], "objective_satisfied")
+
+    def test_expired_deadline_does_not_start_retry(self):
+        with patch("runtime.planners.observed_planner._request_real_provider") as request:
+            content, error, meta = _call_real_provider("system", "user", timeout=0)
+        request.assert_not_called()
+        self.assertIsNone(content)
+        self.assertEqual(error, "PROVIDER_TIMEOUT")
+        self.assertEqual(meta["provider_stage"], "DEADLINE")
+        self.assertEqual(meta["provider_attempts"], 0)
+
+    def test_trickled_response_cannot_exceed_total_deadline(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+
+        class TrickleHandler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(200)
+                if self.protocol_version == "HTTP/1.1":
+                    self.send_header("Connection", "close")
+                self.end_headers()
+                try:
+                    for _ in range(20):
+                        time.sleep(0.05)
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                except OSError:
+                    pass
+
+            def log_message(self, *args):
+                pass
+
+        for protocol in ("HTTP/1.0", "HTTP/1.1"):
+            with self.subTest(protocol=protocol):
+                class Handler(TrickleHandler):
+                    protocol_version = protocol
+
+                with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+                    thread = threading.Thread(target=server.serve_forever,
+                                              kwargs={"poll_interval": 0.02}, daemon=True)
+                    thread.start()
+                    try:
+                        config = ProviderConfig(f"http://127.0.0.1:{server.server_port}/v1",
+                                                "fixture-model", "openai-compatible", "fixture-key")
+                        started = time.monotonic()
+                        content, error, meta = _call_real_provider("system", "user", timeout=0.25,
+                                                                   config=config)
+                        elapsed = time.monotonic() - started
+                    finally:
+                        server.shutdown()
+                        thread.join(1)
+
+                self.assertIsNone(content)
+                self.assertEqual(error, "PROVIDER_TIMEOUT")
+                self.assertEqual(meta["provider_stage"], "RESPONSE_BODY")
+                self.assertEqual(meta["provider_attempts"], 1)
+                self.assertLess(elapsed, 0.5)
+
+    def test_late_dns_result_cannot_open_a_connection(self):
+        import socket
+        import threading
+
+        release = threading.Event()
+        started = threading.Event()
+        slots = threading.BoundedSemaphore(1)
+
+        def lookup(*_args, **_kwargs):
+            started.set()
+            release.wait(1)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 20128))]
+
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model",
+                                "openai-compatible", "fixture-key")
+        with patch("runtime.planners.observed_planner._PROVIDER_DNS_SLOTS", slots), \
+             patch("runtime.planners.observed_planner.socket.getaddrinfo", side_effect=lookup), \
+             patch("runtime.planners.observed_planner.socket.socket") as tcp:
+            before = time.monotonic()
+            try:
+                content, error, meta = _call_real_provider("system", "user", timeout=0.25, config=config)
+                elapsed = time.monotonic() - before
+                self.assertTrue(started.is_set())
+                self.assertFalse(slots.acquire(blocking=False))
+            finally:
+                release.set()
+            self.assertTrue(slots.acquire(timeout=1))
+            slots.release()
+            tcp.assert_not_called()
+
+        self.assertIsNone(content)
+        self.assertEqual(error, "PROVIDER_TIMEOUT")
+        self.assertEqual(meta["provider_stage"], "DNS")
+        self.assertEqual(meta["provider_attempts"], 1)
+        self.assertLess(elapsed, 0.5)
+
+    def test_connect_finishing_after_deadline_cannot_send_request(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model",
+                                "openai-compatible", "fixture-key")
+        clock = [0.0]
+
+        def connect():
+            clock[0] = 0.5
+
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
+             patch("runtime.planners.observed_planner.time.monotonic", side_effect=lambda: clock[0]):
+            connection.return_value.connect.side_effect = connect
+            content, error, meta = _call_real_provider("system", "user", timeout=0.5, config=config)
+            connection.return_value.request.assert_not_called()
+
+        self.assertIsNone(content)
+        self.assertEqual(error, "PROVIDER_TIMEOUT")
+        self.assertEqual(meta["provider_stage"], "CONNECT")
+
+    def test_response_returned_after_absolute_deadline_is_rejected(self):
+        config = ProviderConfig("http://localhost:20128/v1", "fixture-model",
+                                "openai-compatible", "fixture-key")
+        clock = [0.0]
+
+        def read(_size):
+            clock[0] = 0.5
+            return b'{"choices":[{"message":{"content":"{}"}}]}'
+
+        with patch("runtime.planners.observed_planner.http.client.HTTPConnection") as connection, \
+             patch("runtime.planners.observed_planner.time.monotonic", side_effect=lambda: clock[0]):
+            response = connection.return_value.getresponse.return_value
+            response.status = 200
+            response.read.side_effect = read
+            content, error, meta = _call_real_provider("system", "user", timeout=0.5,
+                                                       config=config)
+
+        self.assertIsNone(content)
+        self.assertEqual(error, "PROVIDER_TIMEOUT")
+        self.assertEqual(meta["provider_stage"], "RESPONSE_BODY")
+        self.assertEqual(meta["provider_attempts"], 1)
+        self.assertEqual(connection.call_count, 1)
 
 
 if __name__ == "__main__":
