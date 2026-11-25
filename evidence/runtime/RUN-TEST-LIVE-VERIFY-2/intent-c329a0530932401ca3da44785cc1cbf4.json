@@ -1,1 +1,0 @@
-{"action_id":"ACTION-WEB-001","approval_id":"APP-TEST","decision":"DISPATCH_PERMITTED","depth":0,"form_fields":["csrf_token","product_id","quantity"],"headers":{"Cookie":"[REDACTED]"},"method":"POST","redirect_hops":0,"run_id":"RUN-TEST-LIVE-VERIFY-2","target_id":"lab-ecommerce","timestamp_utc":"2026-11-24T15:21:56.866360Z","url":"http://10.0.0.2:8080/cart/add"}

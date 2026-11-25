@@ -1,1 +1,0 @@
-{"decision":"STOP","proposal":{"action_id":"ACTION-END-003","confidence":1.0,"objective_id":"OBJ-AUTONOMOUS-001","plan_id":"95adfd2a-fa70-4137-abe7-2099930017fe","reason_code":"unresolved_candidate_surface","schema_version":"1.0","target_id":"lab-ecommerce"},"reason":"unresolved_candidate_surface","run_id":"RUN-TEST-LOGIC-1de1aa","timestamp_utc":"2026-11-24T16:20:22.788091Z"}

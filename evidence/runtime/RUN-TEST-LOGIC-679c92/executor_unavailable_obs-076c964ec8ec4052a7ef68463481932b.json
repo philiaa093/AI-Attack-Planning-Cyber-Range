@@ -1,1 +1,0 @@
-{"action_id":"ACTION-LOGIC-001","evidence_refs":[],"new_facts":[{"confidence":1.0,"fact_id":"FACT-NOEXEC-ACTION-LOGIC-001","fact_type":"ACTION_OUTCOME","subject":"ACTION-LOGIC-001","value":"EXECUTOR_UNAVAILABLE"}],"observation_id":"OBS-NOEXEC-7bd47646","outcome":"FAILURE","run_id":"RUN-TEST-LOGIC-679c92","timestamp_utc":"2026-11-24T16:22:20.682344Z"}

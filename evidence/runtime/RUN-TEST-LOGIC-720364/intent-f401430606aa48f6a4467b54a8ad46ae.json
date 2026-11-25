@@ -1,1 +1,0 @@
-{"action_id":"ACTION-RECON-002","approval_id":"APP-TEST-ba6d16","decision":"DISPATCH_PERMITTED","depth":2,"form_fields":[],"headers":{},"method":"GET","redirect_hops":0,"run_id":"RUN-TEST-LOGIC-720364","target_id":"lab-ecommerce","timestamp_utc":"2026-11-24T16:20:41.806818Z","url":"http://10.0.0.2:8080/products/7"}

@@ -1,1 +1,0 @@
-{"action_id":"ACTION-WEB-001","approval_id":"APP-TEST-ba6d16","decision":"DISPATCH_PERMITTED","depth":0,"form_fields":[],"headers":{},"method":"GET","redirect_hops":0,"run_id":"RUN-TEST-LOGIC-720364","target_id":"lab-ecommerce","timestamp_utc":"2026-11-24T16:20:42.067518Z","url":"http://10.0.0.2:8080/products?q=probe_test"}

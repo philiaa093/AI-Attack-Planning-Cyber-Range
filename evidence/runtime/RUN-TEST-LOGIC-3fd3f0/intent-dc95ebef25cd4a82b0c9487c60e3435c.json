@@ -1,1 +1,0 @@
-{"action_id":"ACTION-RECON-001","approval_id":"APP-TEST-da533e","decision":"DISPATCH_PERMITTED","depth":0,"form_fields":[],"headers":{},"method":"GET","redirect_hops":0,"run_id":"RUN-TEST-LOGIC-3fd3f0","target_id":"lab-ecommerce","timestamp_utc":"2026-11-24T16:23:12.751109Z","url":"http://10.0.0.2:8080/health"}
