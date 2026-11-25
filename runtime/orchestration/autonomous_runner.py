@@ -68,7 +68,7 @@ from runtime.planners.observed_planner import (
     PlannerResult,
     ProviderConfig,
 )
-from runtime.planners.web_planning_context import completion_blocker
+from runtime.planners.web_planning_context import completion_blocker, candidate_key, candidate_blocker, TEST_ACTIONS
 
 RUNNER_ACTION_CATALOG = {
     **ACTION_CATALOG,
@@ -225,6 +225,7 @@ class AutonomousRunner:
         # Inventory & Trace tracking
         self.inventory = InventoryStore()
         self.traces: list[DecisionTrace] = []
+        self.candidate_attempts: dict[tuple, dict[str, Any]] = {}
         self.evidence_refs: list[str] = []
         self.unsafe_dispatch_count = 0
         self.capability_registry = CapabilityRegistry()
@@ -263,12 +264,45 @@ class AutonomousRunner:
         by the number of observations produced by an action.
         """
         state = copy.deepcopy(state)
+        state["candidate_attempts"] = copy.deepcopy(list(self.candidate_attempts.values()))
         budget = state.setdefault("remaining_budget", {})
         budget["actions"] = max(0, self.max_decisions - decisions_used)
         budget["requests"] = max(
             0, self.gate.budget_tracker.max_requests - self.gate.budget_tracker.requests_dispatched
         )
         return state
+
+    def _record_candidate_result(self, proposal, result, evidence_id, *, executed=True, reason=None):
+        key = candidate_key(proposal)
+        previous = self.candidate_attempts.get(key, {})
+        self.candidate_attempts[key] = dict(
+            zip(("target_id", "action_id", "method", "resource_ref", "parameter_name"), key),
+            attempts=previous.get("attempts", 0) + int(executed),
+            result=result, result_evidence_id=evidence_id,
+            retry_block_reason=reason,
+        )
+
+    def _block_candidate(self, proposal, reason, provenance, iteration, state_fp):
+        artifact = self.recorder.persist_phase_artifact("candidate_blocked", {
+            "run_id": self.run_id, "timestamp_utc": _utc_now_iso(),
+            "proposal": proposal, "reason": reason, "dispatched": False,
+            "classification": "INCONCLUSIVE", "mode_provenance": provenance,
+        })
+        self.evidence_refs.append(artifact["evidence_id"])
+        key = candidate_key(proposal)
+        result = self.candidate_attempts.get(key, {}).get("result", "INCONCLUSIVE")
+        self._record_candidate_result(proposal, result, artifact["evidence_id"], executed=False, reason=reason)
+        self.traces.append(DecisionTrace(
+            iteration=iteration, decision_id=f"DEC-{uuid.uuid4().hex[:8]}",
+            timestamp_utc=_utc_now_iso(), state_fingerprint=state_fp,
+            planner_requested_mode=provenance.get("requested_mode", self.requested_planner_mode),
+            planner_actual_mode=provenance.get("actual_mode", "RULE"), proposal=proposal,
+            safety_decision="DENIED", safety_reason=reason, dispatched=False,
+            intent_evidence_id=None, result_evidence_id=artifact["evidence_id"],
+            observation_ids=[], new_facts_count=0, outcome="DENIED"))
+        self._emit_event("EVIDENCE_RECORDED", iteration=iteration,
+                         payload={"evidence_id": artifact["evidence_id"], "type": "candidate_blocked"})
+        self._emit_event("AGENT_REPLANNING", iteration=iteration, payload={"reason": reason})
 
     def _terminal_coverage_blocker(self, state: dict[str, Any]) -> str | None:
         blocker = completion_blocker(state, self.planner.effective_actions)
@@ -975,6 +1009,8 @@ class AutonomousRunner:
                 inventory=self.inventory,
                 approval=self.approval,
             )
+            if action_id in TEST_ACTIONS:
+                self._record_candidate_result(proposal, cap_res.classification, cap_res.result_evidence_id)
             if action_id != "ACTION-SCAN-002":
                 self.active_verifications_count += 1
             if cap_res.intent_evidence_id:
@@ -986,19 +1022,29 @@ class AutonomousRunner:
                 self.findings.append(asdict(f))
 
             self._emit_event("VERIFICATION_COMPLETED", iteration=iteration, action_id=action_id,
-                             payload={"classification": cap_res.classification, "outcome": cap_res.outcome,
+                             payload={"classification": cap_res.classification,
+                                      "outcome": (cap_res.outcome if cap_res.outcome in
+                                                   {"SUCCESS", "FAILURE", "PARTIAL", "DENIED", "ERROR"}
+                                                   else "FAILURE"),
                                       "resource_ref": proposal.get("resource_ref"),
                                       "parameter_name": proposal.get("parameter_name"),
                                       "findings": [asdict(f) for f in cap_res.findings],
                                       "result_evidence_id": cap_res.result_evidence_id})
 
             obs_id = f"OBS-VERIF-{uuid.uuid4().hex[:8]}"
+            # Capability executors may use an internal non-dispatch marker such
+            # as NOT_APPLICABLE.  The observation contract has no such outcome;
+            # preserve the detailed INCONCLUSIVE classification/fact while
+            # mapping the observation envelope to the contract's failure state.
+            observation_outcome = (cap_res.outcome if cap_res.outcome in
+                                   {"SUCCESS", "FAILURE", "PARTIAL", "DENIED", "ERROR"}
+                                   else "FAILURE")
             obs = {
                 "observation_id": obs_id,
                 "run_id": self.run_id,
                 "action_id": action_id,
                 "timestamp_utc": _utc_now_iso(),
-                "outcome": cap_res.outcome,
+                "outcome": observation_outcome,
                 "new_facts": cap_res.new_facts,
                 "evidence_refs": [cap_res.result_evidence_id] if cap_res.result_evidence_id else [],
             }
@@ -1019,7 +1065,7 @@ class AutonomousRunner:
                 result_evidence_id=cap_res.result_evidence_id,
                 observation_ids=[obs_id],
                 new_facts_count=len(cap_res.new_facts),
-                outcome=cap_res.outcome,
+                outcome=observation_outcome,
             )
 
         elif action_id in ("ACTION-PLAN-001", "ACTION-PLAN-002", "ACTION-PLAN-003"):
@@ -1324,6 +1370,15 @@ class AutonomousRunner:
                 )
                 self.traces.append(refusal_trace)
                 self._emit_event("AGENT_REPLANNING", iteration=iteration, payload={"reason": "safety_denial"})
+                continue
+
+            retry_block = candidate_blocker(proposal, list(self.candidate_attempts.values()))
+            if retry_block:
+                try:
+                    self._block_candidate(proposal, retry_block, provenance, iteration, state_fp)
+                except EvidenceFailure:
+                    stop_reason = "EVIDENCE_FAILURE"
+                    break
                 continue
 
             # Control Mode check: Operator Approval for MANUAL or ASSISTED modes

@@ -35,7 +35,7 @@ from shared.schema_validation import validate_shape
 
 from agent.planner.action_catalog import ACTION_CATALOG
 from runtime.planners.web_planning_context import (
-    build_web_planning_context,
+    build_web_planning_context, is_path_like, candidate_blocker, has_unresolved_outcomes,
     completion_blocker,
 )
 
@@ -483,11 +483,7 @@ class ObservedStatePlanner:
 
         # Stop condition 2: Terminal phase
         if phase == "TERMINAL":
-            has_inconclusive = any(
-                f.get("classification") == "INCONCLUSIVE"
-                or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
-                for f in facts
-            )
+            has_inconclusive = has_unresolved_outcomes(state, facts)
             blocker = ("inconclusive_terminal_stop" if has_inconclusive
                        else self._completion_blocker(state, facts, previous))
             proposal = {
@@ -611,11 +607,7 @@ class ObservedStatePlanner:
             })
 
         if parsed_plan:
-            has_inconclusive = any(
-                f.get("classification") == "INCONCLUSIVE"
-                or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
-                for f in facts
-            )
+            has_inconclusive = has_unresolved_outcomes(state, facts)
             if parsed_plan.get("action_id") == "ACTION-END-001":
                 blocker = ("unresolved_inconclusive_surface" if has_inconclusive
                            else self._completion_blocker(state, facts, previous))
@@ -791,6 +783,11 @@ class ObservedStatePlanner:
                 verified_outcomes[canonical_subject] = val
                 outcome_counts[canonical_subject] = outcome_counts.get(canonical_subject, 0) + 1
 
+        for row in state.get("candidate_attempts", []):
+            key = f"{row['action_id']}:{row['resource_ref']}:{row['parameter_name']}"
+            verified_outcomes[key] = row["result"]
+            outcome_counts[key] = row["attempts"]
+
         # Priority 1: Follow up on any anomaly/SIGNAL outcome
         for subj, outcome in verified_outcomes.items():
             if outcome == "SIGNAL" and subj.startswith("ACTION-WEB-001:"):
@@ -818,10 +815,6 @@ class ObservedStatePlanner:
         injection_candidates: list[dict[str, str]] = []
         logic_candidates: list[dict[str, str]] = []
 
-        path_keywords = (
-            "file", "path", "doc", "invoice", "template", "dir", "include", "view",
-            "page", "document", "download", "folder", "src", "dest", "filename", "read"
-        )
         reflection_keywords = (
             "name", "author", "comment", "title", "msg", "message", "body", "content",
             "review", "text", "description", "feedback", "email", "input", "prompt", "val", "data"
@@ -836,7 +829,7 @@ class ObservedStatePlanner:
             res_lower = cand["resource"].lower()
             if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
                 logic_candidates.append(cand)
-            elif any(k in p_lower for k in path_keywords):
+            elif is_path_like(cand["resource"], cand["param"]):
                 path_candidates.append(cand)
             elif any(k in p_lower for k in reflection_keywords):
                 reflection_candidates.append(cand)
@@ -891,7 +884,10 @@ class ObservedStatePlanner:
                 parts = subj.split(":", 2)
                 if len(parts) == 3:
                     act_id, s_res, s_param = parts[0], parts[1], parts[2]
-                    if act_id in self.effective_actions and act_id not in refused_actions:
+                    retry = {"target_id": self.target_id, "action_id": act_id,
+                             "resource_ref": s_res, "parameter_name": s_param}
+                    if (act_id in self.effective_actions and act_id not in refused_actions
+                            and not candidate_blocker(retry, state.get("candidate_attempts", []))):
                         return {
                             "schema_version": "1.0",
                             "plan_id": str(uuid.uuid4()),
@@ -906,13 +902,7 @@ class ObservedStatePlanner:
                         }
 
         # Check if any outcomes or facts remain INCONCLUSIVE
-        has_inconclusive = any(
-            outcome == "INCONCLUSIVE" for outcome in verified_outcomes.values()
-        ) or any(
-            f.get("classification") == "INCONCLUSIVE"
-            or (f.get("fact_type") == "ACTION_OUTCOME" and f.get("value") == "INCONCLUSIVE")
-            for f in facts
-        )
+        has_inconclusive = has_unresolved_outcomes(state, facts)
 
         if has_inconclusive:
             # Cannot complete cleanly when there are still unresolved INCONCLUSIVE items -> HALT
@@ -932,7 +922,7 @@ class ObservedStatePlanner:
             res_lower = cand["resource"].lower()
             if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
                 action_id = "ACTION-LOGIC-001"
-            elif any(k in p_lower for k in path_keywords):
+            elif is_path_like(cand["resource"], cand["param"]):
                 action_id = "ACTION-WEB-003"
             elif any(k in p_lower for k in reflection_keywords):
                 action_id = "ACTION-WEB-002"
@@ -1042,7 +1032,7 @@ class ObservedStatePlanner:
         # Keep the head, catalog semantics and explicit truncation metadata.
         # Drop bounded context groups deterministically; never slice serialized
         # JSON into malformed text or silently lose the truncation flag.
-        for key in ("probe_results", "observed_post_inputs", "observed_get_inputs",
+        for key in ("candidate_attempts", "probe_results", "observed_post_inputs", "observed_get_inputs",
                     "observed_endpoints", "scanner_coverage", "untestable_inputs",
                     "unresolved_checks", "incomplete_scans", "refused_actions"):
             while len(prompt) > max_prompt_chars and context.get(key):

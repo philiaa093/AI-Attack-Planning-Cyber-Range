@@ -22,7 +22,7 @@ TEST_ACTIONS = frozenset({
 SCAN_ACTIONS = frozenset({"ACTION-SCAN-001", "ACTION-SCAN-002"})
 
 _CONTROL_PARTS = ("csrf", "token", "session", "secret", "password", "passwd", "credential")
-_PATH_PARTS = ("file", "path", "page", "template", "download", "doc", "include", "view")
+_PATH_PARTS = ("file", "path", "template", "document", "download", "folder", "dir", "include")
 _LOGIC_PARTS = ("cart", "checkout", "order", "payment", "quantity", "price", "total", "coupon", "idempot")
 
 ACTION_SEMANTICS = {
@@ -72,9 +72,42 @@ def _is_control_field(name: str) -> bool:
     return any(part in lower for part in _CONTROL_PARTS)
 
 
-def _is_path_like(resource: str, parameter: str) -> bool:
-    text = (resource + " " + parameter).lower()
-    return any(part in text for part in _PATH_PARTS)
+def is_path_like(resource: str, parameter: str) -> bool:
+    return isinstance(parameter, str) and any(part in parameter.lower() for part in _PATH_PARTS)
+
+
+def candidate_key(proposal: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Scheduling identity only; authorization still belongs to the gate."""
+    return (str(proposal.get("target_id", "")), str(proposal.get("action_id", "")),
+            str(proposal.get("method", "GET")).upper(),
+            _canonical_resource(proposal.get("resource_ref")),
+            str(proposal.get("parameter_name", "")))
+
+
+def candidate_blocker(proposal: dict[str, Any], attempts: list[dict[str, Any]]) -> str | None:
+    if proposal.get("action_id") not in TEST_ACTIONS:
+        return None
+    if proposal.get("action_id") == "ACTION-WEB-003" and not is_path_like(
+            str(proposal.get("resource_ref", "")), proposal.get("parameter_name")):
+        return "PATH_INPUT_NOT_OBSERVED"
+    key = candidate_key(proposal)
+    row = next((row for row in attempts if candidate_key(row) == key), None)
+    if row and row.get("attempts", 0) >= 3:
+        return "CANDIDATE_ATTEMPTS_EXHAUSTED"
+    return None
+
+
+def has_unresolved_outcomes(state: dict[str, Any], facts: list[dict[str, Any]]) -> bool:
+    latest = {}
+    for fact in facts:
+        if fact.get("fact_type") == "ACTION_OUTCOME":
+            action, _, tail = str(fact.get("subject", "")).partition(":")
+            resource, _, param = tail.rpartition(":")
+            if action in TEST_ACTIONS and resource and param:
+                latest[(action, _canonical_resource(resource), param)] = fact.get("value")
+    for row in state.get("candidate_attempts", []):
+        latest[(row["action_id"], row["resource_ref"], row["parameter_name"])] = row["result"]
+    return any(value == "INCONCLUSIVE" for value in latest.values())
 
 
 def _is_logic_like(resource: str, parameter: str) -> bool:
@@ -88,7 +121,7 @@ def _eligible_actions(resource: str, parameter: str, effective_actions: set[str]
         eligible.append("ACTION-WEB-001")
     if "ACTION-WEB-002" in effective_actions:
         eligible.append("ACTION-WEB-002")
-    if "ACTION-WEB-003" in effective_actions and _is_path_like(resource, parameter):
+    if "ACTION-WEB-003" in effective_actions and is_path_like(resource, parameter):
         eligible.append("ACTION-WEB-003")
     if "ACTION-LOGIC-001" in effective_actions and _is_logic_like(resource, parameter):
         eligible.append("ACTION-LOGIC-001")
@@ -228,6 +261,11 @@ def build_web_planning_context(
             elif field == "unrequested_seeds":
                 match["unrequested_seeds"] = value if type(value) is int and value >= 0 else None
 
+    attempt_rows = [{**row, "retry_block_reason": candidate_blocker(row, state.get("candidate_attempts", []))}
+                    for row in state.get("candidate_attempts", [])]
+    for row in attempt_rows:
+        latest_results[(row["action_id"], row["resource_ref"], row["parameter_name"])] = row["result"]
+
     checks = _dedupe(checks, lambda row: (row["action"], row["resource_ref"],
                                            row["parameter_name"], row["result"]))
     checks.sort(key=lambda row: (row["resource_ref"], row["parameter_name"],
@@ -317,6 +355,9 @@ def build_web_planning_context(
         ),
         "probe_results": bounded_rows(checks, resource_ref=_RESOURCE_LIMIT,
                                      parameter_name=_TEXT_LIMIT, result=_TEXT_LIMIT),
+        "candidate_attempts": bounded_rows(attempt_rows, resource_ref=_RESOURCE_LIMIT,
+                                            parameter_name=_TEXT_LIMIT, target_id=_TEXT_LIMIT),
+        "retry_policy": "Prefer untried eligible checks; never retry blocked candidates; maximum three executions per candidate.",
         "scanner_coverage": bounded_rows(scans, **scan_limits),
         "refused_actions": visible_refusals,
         "unresolved_checks": bounded_rows(unresolved, **input_limits),
@@ -347,6 +388,8 @@ def completion_blocker(
         effective_actions,
         limit=limit,
     )
+    if has_unresolved_outcomes(state, facts):
+        return "unresolved_candidate_surface"
     if (context["unresolved_checks"] or context["untestable_inputs"]
             or context["post_inputs_unsupported"]):
         return "unresolved_candidate_surface"

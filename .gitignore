@@ -53,6 +53,7 @@ node_modules/
 /runtime/gate-hygiene/
 /runtime/gate-remediation/
 /runtime/sequence-artifacts/
+/evidence/runtime/RUN-TEST-*/
 /reports/evaluation-runs/
 /reports/defense_receipts.json
 

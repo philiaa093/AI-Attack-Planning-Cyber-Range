@@ -2,6 +2,12 @@
 
 Roadmap hiện hành: `PLAN-ENTERPRISE-REDTEAM-001`, nền tảng nghiên cứu AI Red Team dưới quan sát một phần. Ưu tiên simulator và benchmark theo [định nghĩa sản phẩm](PROJECT_CONTEXT.md); trạng thái/dependencies chỉ tra tại [TASKS.md](TASKS.md).
 
+### Candidate INCONCLUSIVE loop repair (2026-11-26)
+
+User-approved scope: offline implementation and tests only; no lab/provider rerun. Allowlist: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/planners/web_planning_context.py`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `tests/runtime/test_autonomous_pentest.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_web_planning_context.py`, `tests/runtime/test_autonomous_runner.py`.
+
+Acceptance: shared executor-compatible path eligibility; non-dispatch ACTION_OUTCOME/evidence; run-owned attempts independent of deduplicated facts, at most three executions per candidate; blocked candidates never dispatch and LLM proposals never silently become RULE fallback. Preserve unresolved/PARTIAL/skipped-seed completion blockers, existing runner/test edits, contracts/policy/targets and historical evidence. Focused runtime/backend regressions and repository checker against baseline; exact receipts and independent-review handoff, no status promotion.
+
 ## Foundation
 
 Tái dùng contracts, normalizer, belief/state management, bounded actions, Safety Gate, recorder và evaluator hiện có. Không viết lại thành phần chỉ vì roadmap mới; xác định khoảng thiếu bằng source và checks trước khi thêm code.

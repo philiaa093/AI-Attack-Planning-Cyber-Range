@@ -36,6 +36,33 @@ class WebPlanningContextTests(unittest.TestCase):
                                           facts, ["ACTION-RECON-002", "ACTION-SCAN-001"],
                                           set(actions), limit=limit)
 
+    def test_path_eligibility_matches_executor_and_retains_unresolved_result(self):
+        from runtime.planners.web_planning_context import is_path_like, candidate_blocker
+        for param in ("file", "document", "folder", "dir", "template"):
+            self.assertTrue(is_path_like("/any", param))
+        for param in ("name", "page", "view", "src", None):
+            self.assertFalse(is_path_like("/files", param))
+        context = self.build([fact("P", "PARAMETER", "/files", "name")])
+        self.assertNotIn("ACTION-WEB-003", [row["action"] for row in context["unresolved_checks"][0]["pending_checks"]])
+        state = self.state([fact("P", "PARAMETER", "/files", "name")])
+        state["candidate_attempts"] = [{"target_id": "lab-a", "action_id": "ACTION-WEB-003",
+            "method": "GET", "resource_ref": "/files", "parameter_name": "name",
+            "attempts": 0, "result": "INCONCLUSIVE", "retry_block_reason": "PATH_INPUT_NOT_OBSERVED"}]
+        self.assertEqual(candidate_blocker(state["candidate_attempts"][0], []), "PATH_INPUT_NOT_OBSERVED")
+        self.assertIsNotNone(completion_blocker(state, ALL_WEB_ACTIONS))
+
+    def test_latest_execution_resolves_old_inconclusive_without_erasing_history(self):
+        from runtime.planners.web_planning_context import has_unresolved_outcomes, candidate_blocker
+        facts = [fact("F", "ACTION_OUTCOME", "ACTION-WEB-001:/items:id", "INCONCLUSIVE")]
+        row = {"target_id": "lab-a", "action_id": "ACTION-WEB-001", "method": "GET",
+               "resource_ref": "/items", "parameter_name": "id", "attempts": 3, "result": "NEGATIVE"}
+        state = {"candidate_attempts": [row]}
+        self.assertFalse(has_unresolved_outcomes(state, facts))
+        self.assertEqual(facts[0]["value"], "INCONCLUSIVE")
+        self.assertEqual(candidate_blocker({**row, "resource_ref": "http://localhost/items?x=1"}, [row]),
+                         "CANDIDATE_ATTEMPTS_EXHAUSTED")
+        self.assertIsNone(candidate_blocker({**row, "parameter_name": "other"}, [row]))
+
     def test_projection_distinguishes_measured_zero_from_missing_or_invalid_counts(self):
         scanner = "ACTION-SCAN-002:fixture"
         status = fact("F1", "ACTION_OUTCOME", scanner, "COMPLETED")

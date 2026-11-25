@@ -42,6 +42,7 @@ from runtime.evidence.discovery_recorder import (
     EvidenceFailure,
 )
 from runtime.planners.observed_planner import ObservedStatePlanner
+from runtime.lab.capability_registry import CapabilityExecutionResult
 
 
 class EphemeralMockServer:
@@ -259,6 +260,130 @@ class AutonomousRunnerTests(unittest.TestCase):
         self.assertIn("ACTION-SCAN-001", actions_sequence)
         self.assertIn("ACTION-END-003", actions_sequence)
         self.assertEqual(report.stop_reason, "unresolved_candidate_surface")
+
+    def test_repeated_llm_ineligible_candidate_is_blocked_without_fallback(self):
+        from unittest.mock import Mock
+        from runtime.planners.observed_planner import PlannerResult
+        runner, gate, _, _ = self._setup_runner(
+            action_allowlist={"ACTION-WEB-003", "ACTION-END-003"},
+            requested_mode="LLM", fallback_allowed=False, max_decisions=5)
+        proposal = {"action_id": "ACTION-WEB-003", "target_id": self.target_id,
+                    "resource_ref": "/files", "parameter_name": "name"}
+        runner.planner.propose = Mock(return_value=PlannerResult(
+            proposal=proposal, mode_provenance={"requested_mode": "LLM", "actual_mode": "LLM"},
+            validation_errors=[], is_valid=True))
+        runner._evaluate_safety = Mock(return_value=("APPROVED", "fixture"))
+        runner._execute_approved_action = Mock(side_effect=AssertionError("must not execute"))
+        report = runner.run()
+        self.assertEqual(gate.network_dispatch_count, 0)
+        self.assertLessEqual(report.decisions_count, 5)
+        self.assertTrue(report.traces)
+        self.assertTrue(all(t.planner_actual_mode == "LLM" for t in report.traces))
+        self.assertTrue(all(t.safety_reason == "PATH_INPUT_NOT_OBSERVED" for t in report.traces))
+        self.assertEqual(next(iter(runner.candidate_attempts.values()))["attempts"], 0)
+
+    def test_llm_inconclusive_execution_is_capped_even_when_facts_are_deduplicated(self):
+        from unittest.mock import Mock
+        from runtime.planners.observed_planner import PlannerResult
+        runner, gate, recorder, _ = self._setup_runner(
+            action_allowlist={"ACTION-WEB-001", "ACTION-END-003"},
+            requested_mode="LLM", fallback_allowed=False, max_decisions=6)
+        runner.max_no_progress_cycles = 20
+        runner.max_repeated_state = 20
+        proposal = {"action_id": "ACTION-WEB-001", "target_id": self.target_id,
+                    "resource_ref": "/items", "parameter_name": "id"}
+        runner.planner.propose = Mock(return_value=PlannerResult(
+            proposal=proposal, mode_provenance={"requested_mode": "LLM", "actual_mode": "LLM"},
+            validation_errors=[], is_valid=True))
+        runner._evaluate_safety = Mock(return_value=("APPROVED", "fixture"))
+        def execute(**kwargs):
+            artifact = recorder.persist_phase_artifact("fixture_result", {"classification": "INCONCLUSIVE"})
+            return CapabilityExecutionResult(action_id="ACTION-WEB-001", target_id=self.target_id,
+                outcome="FAILURE", classification="INCONCLUSIVE", result_evidence_id=artifact["evidence_id"],
+                new_facts=[{"fact_id": "F-SAME", "fact_type": "ACTION_OUTCOME",
+                            "subject": "ACTION-WEB-001:/items:id", "value": "INCONCLUSIVE", "confidence": 1.0}])
+        executor = Mock()
+        executor.execute.side_effect = execute
+        runner.capability_registry.register("ACTION-WEB-001", executor)
+        report = runner.run()
+        self.assertEqual(executor.execute.call_count, 3)
+        self.assertEqual(report.decisions_count, 6)
+        self.assertEqual(gate.network_dispatch_count, 0)
+        self.assertEqual(report.traces[-1].safety_reason, "CANDIDATE_ATTEMPTS_EXHAUSTED")
+        self.assertTrue(all(t.planner_actual_mode == "LLM" for t in report.traces))
+
+    def test_candidate_block_evidence_failure_stops_before_dispatch(self):
+        from unittest.mock import Mock
+        from runtime.planners.observed_planner import PlannerResult
+        runner, gate, recorder, _ = self._setup_runner(
+            action_allowlist={"ACTION-WEB-003", "ACTION-END-003"})
+        proposal = {"action_id": "ACTION-WEB-003", "target_id": self.target_id,
+                    "resource_ref": "/files", "parameter_name": "name"}
+        runner.planner.propose = Mock(return_value=PlannerResult(
+            proposal=proposal, mode_provenance={}, validation_errors=[], is_valid=True))
+        runner._evaluate_safety = Mock(return_value=("APPROVED", "fixture"))
+        original = recorder.persist_phase_artifact
+        def fail_block(phase, data):
+            if phase == "candidate_blocked":
+                raise EvidenceFailure("fixture failure")
+            return original(phase, data)
+        recorder.persist_phase_artifact = fail_block
+        report = runner.run()
+        self.assertEqual(report.stop_reason, "EVIDENCE_FAILURE")
+        self.assertEqual(gate.network_dispatch_count, 0)
+        self.assertEqual(runner.candidate_attempts, {})
+
+    def test_attempt_counter_is_independent_of_duplicate_facts_and_other_candidates(self):
+        from runtime.planners.web_planning_context import candidate_blocker
+        runner, _, _, _ = self._setup_runner()
+        proposal = {"target_id": self.target_id, "action_id": "ACTION-WEB-001",
+                    "resource_ref": "/items", "parameter_name": "id"}
+        for _ in range(3):
+            runner._record_candidate_result(proposal, "INCONCLUSIVE", "EV-fixture")
+        rows = runner._with_run_budget({}, 3)["candidate_attempts"]
+        self.assertEqual(rows[0]["attempts"], 3)
+        self.assertEqual(candidate_blocker(proposal, rows), "CANDIDATE_ATTEMPTS_EXHAUSTED")
+        self.assertIsNone(candidate_blocker({**proposal, "parameter_name": "q"}, rows))
+        self.assertIsNone(candidate_blocker({**proposal, "target_id": "lab-other"}, rows))
+
+    def test_non_dispatch_capability_outcome_is_normalized_at_observation_boundary(self) -> None:
+        """Internal executor markers must not violate the observation contract."""
+        runner, _, _, _ = self._setup_runner(action_allowlist={"ACTION-WEB-003", "ACTION-END-001"})
+
+        class NonDispatchExecutor:
+            def execute(self, **kwargs):
+                return CapabilityExecutionResult(
+                    action_id="ACTION-WEB-003",
+                    target_id=runner.target_id,
+                    outcome="NOT_APPLICABLE",
+                    classification="INCONCLUSIVE",
+                    new_facts=[{
+                        "fact_id": "FACT-PATH-INCONCLUSIVE",
+                        "fact_type": "ACTION_OUTCOME",
+                        "subject": "ACTION-WEB-003:/files:name",
+                        "value": "INCONCLUSIVE",
+                        "confidence": 1.0,
+                    }],
+                )
+
+        runner.capability_registry.register("ACTION-WEB-003", NonDispatchExecutor())
+        trace = runner._execute_approved_action(
+            {
+                "action_id": "ACTION-WEB-003",
+                "target_id": runner.target_id,
+                "resource_ref": "/files",
+                "parameter_name": "name",
+            },
+            {"requested_mode": "RULE", "actual_mode": "RULE"},
+            1,
+            "fingerprint",
+        )
+
+        self.assertEqual(trace.outcome, "FAILURE")
+        observations = list(runner.state_manager._observations.values())
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["outcome"], "FAILURE")
+        self.assertEqual(observations[0]["new_facts"][0]["value"], "INCONCLUSIVE")
 
     # =========================================================================
     # A04: Unknown action -> DENIED, network_dispatch_count = 0

@@ -534,6 +534,31 @@ class ReplanPreflightTests(unittest.TestCase):
         # Next action shifts to ACTION-RECON-002 based strictly on the new observed fact
         self.assertEqual(res_target.proposal["action_id"], "ACTION-RECON-002")
 
+    def test_blocked_path_candidate_does_not_starve_other_observed_inputs(self):
+        planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")
+        state = {
+            "phase": "RECON", "remaining_budget": {"actions": 8},
+            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001"],
+            "discovered_endpoints": ["/files", "/items"],
+            "observed_facts": [
+                {"fact_type": "PARAMETER", "subject": "/files", "value": "name"},
+                {"fact_type": "PARAMETER", "subject": "/items", "value": "id"},
+            ],
+            "candidate_attempts": [{"target_id": self.target_id, "action_id": "ACTION-WEB-003",
+                "method": "GET", "resource_ref": "/files", "parameter_name": "name",
+                "attempts": 0, "result": "INCONCLUSIVE", "retry_block_reason": "PATH_INPUT_NOT_OBSERVED"}],
+        }
+        proposal = planner.propose(state).proposal
+        self.assertNotEqual(proposal["action_id"], "ACTION-WEB-003")
+        self.assertFalse(proposal["action_id"].startswith("ACTION-END"))
+        # Exhausted runtime attempts override a single deduplicated fact.
+        state["candidate_attempts"].append({"target_id": self.target_id, "action_id": "ACTION-WEB-001",
+            "method": "GET", "resource_ref": "/items", "parameter_name": "id",
+            "attempts": 3, "result": "INCONCLUSIVE"})
+        state["observed_facts"].append({"fact_type": "ACTION_OUTCOME",
+            "subject": "ACTION-WEB-002:/files:name", "value": "NEGATIVE"})
+        self.assertEqual(planner.propose(state).proposal["action_id"], "ACTION-END-003")
+
     def test_p09_inconclusive_triggers_candidate_reverification(self) -> None:
         """When an outcome is INCONCLUSIVE, planner proposes re-verification of the candidate."""
         planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")

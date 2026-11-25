@@ -902,8 +902,8 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
     ) -> CapabilityExecutionResult:
         resource = proposal.get("resource_ref", "/")
         param = proposal.get("parameter_name", "file")
-        file_like_names = ("file", "path", "template", "document", "download", "folder", "dir", "include")
-        if not any(name in str(param).lower() for name in file_like_names):
+        from runtime.planners.web_planning_context import is_path_like
+        if not is_path_like(str(resource), param):
             reason = "Observed input is not file/path-like; bounded path traversal verification was not dispatched"
             finding = VerificationFinding(
                 finding_id=f"FIND-PATH-{uuid.uuid4().hex[:8]}", family="PATH_TRAVERSAL",
@@ -917,9 +917,13 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
                 "resource": resource, "parameter": param, "classification": "INCONCLUSIVE",
                 "reason": reason, "finding": asdict(finding), "dispatches_made": 0,
             })
+            finding.result_evidence_refs = [artifact["evidence_id"]]
             return CapabilityExecutionResult(
                 action_id="ACTION-WEB-003", target_id=target_id, outcome="NOT_APPLICABLE",
                 classification="INCONCLUSIVE", findings=[finding], network_dispatch_count=0,
+                new_facts=[{"fact_id": f"FACT-PATH-{uuid.uuid4().hex[:8]}",
+                            "fact_type": "ACTION_OUTCOME", "subject": f"ACTION-WEB-003:{resource}:{param}",
+                            "value": "INCONCLUSIVE", "confidence": 1.0}],
                 result_evidence_id=artifact["evidence_id"], details={"reason": reason},
             )
 
