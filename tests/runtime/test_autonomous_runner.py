@@ -221,24 +221,44 @@ class AutonomousRunnerTests(unittest.TestCase):
     # =========================================================================
     def test_a02_refusal_causes_replan(self) -> None:
         """A02: Gate refusal generates REFUSAL observation; replan does not infinitely propose refused action."""
-        # Allow only RECON-002, refuse RECON-001
-        runner, gate, _, _ = self._setup_runner(action_allowlist={"ACTION-RECON-002", "ACTION-SCAN-001", "ACTION-END-001"})
+        runner, gate, _, _ = self._setup_runner(action_allowlist={
+            "ACTION-RECON-001", "ACTION-RECON-002", "ACTION-SCAN-001",
+            "ACTION-WEB-001", "ACTION-WEB-002", "ACTION-END-001", "ACTION-END-002",
+            "ACTION-END-003"})
+        real_propose = runner.planner.propose
+        calls = {"n": 0}
 
-        # Initial plan: proposes ACTION-RECON-001
-        # Gate will DENY it because RECON-001 is not allowlisted
-        # Runner handles refusal -> ingests REFUSAL observation -> replans to ACTION-RECON-002
+        def propose(state):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # Emit a candidate the Gate must refuse: unobserved resource.
+                return type(real_propose(state))(
+                    proposal={"schema_version": "1.0", "plan_id": "p-a02",
+                              "objective_id": runner.objective_id, "action_id": "ACTION-WEB-001",
+                              "target_id": self.target_id, "resource_ref": "/never-observed",
+                              "parameter_name": "q", "reason_code": "fixture_candidate",
+                              "confidence": 0.8},
+                    mode_provenance={"requested_mode": "RULE", "actual_mode": "RULE"},
+                    validation_errors=[], is_valid=True)
+            return real_propose(state)
+
+        runner.planner.propose = propose
         report = runner.run()
 
         self.assertGreater(report.denied_actions_count, 0)
-        # Verify first decision was DENIED for RECON-001
         first_trace = report.traces[0]
-        self.assertEqual(first_trace.proposal["action_id"], "ACTION-RECON-001")
+        self.assertEqual(first_trace.proposal["action_id"], "ACTION-WEB-001")
         self.assertEqual(first_trace.safety_decision, "DENIED")
+        self.assertEqual(first_trace.safety_reason, "UNOBSERVED_RESOURCE")
 
-        # Verify second decision switched away from RECON-001 (no infinite loop)
+        # Verify the next decision switched away from the refused candidate
         second_trace = report.traces[1]
-        self.assertNotEqual(second_trace.proposal["action_id"], "ACTION-RECON-001")
-        self.assertEqual(second_trace.proposal["action_id"], "ACTION-RECON-002")
+        self.assertNotEqual(second_trace.proposal["action_id"], "ACTION-WEB-001")
+        # The refusal must be recorded as a candidate-scoped observation fact.
+        refused_facts = [f for f in report.final_state["observed_facts"]
+                         if f.get("value") == "REFUSED"]
+        self.assertTrue(refused_facts)
+        self.assertTrue(any("never-observed" in str(f.get("subject")) for f in refused_facts))
 
     # =========================================================================
     # A03: Execution result causes replan
@@ -307,7 +327,9 @@ class AutonomousRunnerTests(unittest.TestCase):
         runner.capability_registry.register("ACTION-WEB-001", executor)
         report = runner.run()
         self.assertEqual(executor.execute.call_count, 3)
-        self.assertEqual(report.decisions_count, 6)
+        # Stopping at the cap is the bounded behaviour; it must not need the
+        # decision ceiling to finish.
+        self.assertLessEqual(report.decisions_count, 6)
         self.assertEqual(gate.network_dispatch_count, 0)
         self.assertEqual(report.traces[-1].safety_reason, "CANDIDATE_ATTEMPTS_EXHAUSTED")
         self.assertTrue(all(t.planner_actual_mode == "LLM" for t in report.traces))

@@ -36,10 +36,15 @@ from shared.schema_validation import validate_shape
 from agent.planner.action_catalog import ACTION_CATALOG
 from runtime.planners.web_planning_context import (
     build_web_planning_context, is_path_like, candidate_blocker, has_unresolved_outcomes,
-    completion_blocker,
+    completion_blocker, path_like_evidence,
 )
 
 PLANNABLE_ACTIONS = frozenset(set(ACTION_CATALOG) | {"ACTION-LOGIC-001"})
+
+# Terminal proposals never dispatch, so they stay available even when a run
+# scope omits them. Every other proposal must be inside the run-approved set.
+TERMINAL_ACTIONS = frozenset({"ACTION-END-001", "ACTION-END-002", "ACTION-END-003"})
+
 
 
 def _load_env_if_present() -> None:
@@ -588,7 +593,8 @@ class ObservedStatePlanner:
             parsed_plan, parse_err = self._parse_provider_json(provider_text)
             if not parsed_plan:
                 provider_err = parse_err or "MALFORMED_PROVIDER_OUTPUT"
-                for category in ("SCHEMA_VALIDATION_ERROR", "UNKNOWN_ACTION_ID", "UNAUTHORIZED_TARGET"):
+                for category in ("SCHEMA_VALIDATION_ERROR", "UNKNOWN_ACTION_ID",
+                                 "ACTION_NOT_IN_RUN_SCOPE", "UNAUTHORIZED_TARGET"):
                     if provider_err.startswith(category + "_"):
                         provider_err = category
                         break
@@ -668,7 +674,6 @@ class ObservedStatePlanner:
     ) -> dict[str, Any]:
         """Observation-driven rule baseline with zero route name assumptions."""
         obj_id = state.get("objective_id", self.objective_id)
-
         # Extract semantic sets independent of observation ordering
         observed_endpoints = set(endpoints)
         observed_services = set(state.get("discovered_services", []))
@@ -721,7 +726,8 @@ class ObservedStatePlanner:
 
         has_target_info = bool(target_facts) or ("ACTION-RECON-001" in previous)
 
-        if not has_target_info and "ACTION-RECON-001" not in refused_actions:
+        if (not has_target_info and "ACTION-RECON-001" not in refused_actions
+                and "ACTION-RECON-001" in self.effective_actions):
             return {
                 "schema_version": "1.0",
                 "plan_id": str(uuid.uuid4()),
@@ -731,7 +737,8 @@ class ObservedStatePlanner:
                 "reason_code": "initial_target_discovery",
                 "confidence": 0.95,
             }
-        elif "ACTION-RECON-002" not in previous and "ACTION-RECON-002" not in refused_actions:
+        elif ("ACTION-RECON-002" not in previous and "ACTION-RECON-002" not in refused_actions
+              and "ACTION-RECON-002" in self.effective_actions):
             return {
                 "schema_version": "1.0",
                 "plan_id": str(uuid.uuid4()),
@@ -741,7 +748,9 @@ class ObservedStatePlanner:
                 "reason_code": "surface_discovery_required",
                 "confidence": 0.90,
             }
-        elif observed_endpoints and "ACTION-SCAN-001" not in previous and "ACTION-SCAN-001" not in refused_actions:
+        elif (observed_endpoints and "ACTION-SCAN-001" not in previous
+              and "ACTION-SCAN-001" not in refused_actions
+              and "ACTION-SCAN-001" in self.effective_actions):
             return {
                 "schema_version": "1.0",
                 "plan_id": str(uuid.uuid4()),
@@ -759,55 +768,59 @@ class ObservedStatePlanner:
                     "reason_code": "approved_external_scanners_on_observed_surface", "confidence": 0.85}
 
         # Step 4: Collect verified outcomes and anomalies
-        verified_outcomes: dict[str, str] = {}
-        outcome_counts: dict[str, int] = {}
+        verified_outcomes: dict[tuple[str, str, str], str] = {}
+        outcome_counts: dict[tuple[str, str, str], int] = {}
 
-        def canonical_outcome_subject(subject: str) -> str:
-            action_id, separator, remainder = subject.partition(":")
-            if not separator or action_id not in {"ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-LOGIC-001"}:
-                return subject
-            resource, param_separator, param = remainder.rpartition(":")
-            if not param_separator or not resource or not param:
-                return subject
+        def outcome_key(action_id: str, resource: str, parameter: str) -> tuple[str, str, str]:
+            """Component-wise key; joining with ':' would merge distinct candidates."""
             parsed_resource = urllib.parse.urlsplit(resource)
             if parsed_resource.scheme or parsed_resource.netloc:
                 resource = parsed_resource.path or "/"
-            return f"{action_id}:{resource}:{param}"
+            return (action_id, resource, parameter)
+
+        def parse_outcome_subject(subject: str) -> tuple[str, str, str] | None:
+            action_id, separator, remainder = subject.partition(":")
+            if not separator or action_id not in {
+                    "ACTION-WEB-001", "ACTION-WEB-002", "ACTION-WEB-003", "ACTION-LOGIC-001"}:
+                return None
+            resource, param_separator, parameter = remainder.rpartition(":")
+            if not param_separator or not resource or not parameter:
+                return None
+            return outcome_key(action_id, resource, parameter)
 
         for f in facts:
             ft = f.get("fact_type", "")
             subj = str(f.get("subject", ""))
             val = str(f.get("value", ""))
             if ft == "ACTION_OUTCOME" and subj:
-                canonical_subject = canonical_outcome_subject(subj)
-                verified_outcomes[canonical_subject] = val
-                outcome_counts[canonical_subject] = outcome_counts.get(canonical_subject, 0) + 1
+                key = parse_outcome_subject(subj)
+                if key is not None:
+                    verified_outcomes[key] = val
+                    outcome_counts[key] = outcome_counts.get(key, 0) + 1
 
         for row in state.get("candidate_attempts", []):
-            key = f"{row['action_id']}:{row['resource_ref']}:{row['parameter_name']}"
+            key = outcome_key(row["action_id"], row["resource_ref"], row["parameter_name"])
             verified_outcomes[key] = row["result"]
             outcome_counts[key] = row["attempts"]
 
         # Priority 1: Follow up on any anomaly/SIGNAL outcome
-        for subj, outcome in verified_outcomes.items():
-            if outcome == "SIGNAL" and subj.startswith("ACTION-WEB-001:"):
-                parts = subj.split(":", 2)
-                if len(parts) == 3:
-                    s_res, s_param = parts[1], parts[2]
-                    xss_key = f"ACTION-WEB-002:{s_res}:{s_param}"
-                    if xss_key not in verified_outcomes and "ACTION-WEB-002" not in refused_actions:
-                        return {
-                            "schema_version": "1.0",
-                            "plan_id": str(uuid.uuid4()),
-                            "objective_id": obj_id,
-                            "action_id": "ACTION-WEB-002",
-                            "target_id": self.target_id,
-                            "hypothesis_id": f"HYPO-SIGNAL-XSS-{uuid.uuid4().hex[:6]}",
-                            "resource_ref": s_res,
-                            "parameter_name": s_param,
-                            "reason_code": "followup_anomaly_signal_investigation",
-                            "confidence": 0.85,
-                        }
+        for (action_ref, s_res, s_param), outcome in verified_outcomes.items():
+            if outcome == "SIGNAL" and action_ref == "ACTION-WEB-001":
+                xss_key = ("ACTION-WEB-002", s_res, s_param)
+                if (xss_key not in verified_outcomes and "ACTION-WEB-002" not in refused_actions
+                        and "ACTION-WEB-002" in self.effective_actions):
+                    return {
+                        "schema_version": "1.0",
+                        "plan_id": str(uuid.uuid4()),
+                        "objective_id": obj_id,
+                        "action_id": "ACTION-WEB-002",
+                        "target_id": self.target_id,
+                        "hypothesis_id": f"HYPO-SIGNAL-XSS-{uuid.uuid4().hex[:6]}",
+                        "resource_ref": s_res,
+                        "parameter_name": s_param,
+                        "reason_code": "followup_anomaly_signal_investigation",
+                        "confidence": 0.85,
+                    }
 
         # Priority 2: Semantic hypothesis matching based on parameter surface characteristics
         path_candidates: list[dict[str, str]] = []
@@ -824,12 +837,20 @@ class ObservedStatePlanner:
             "checkout", "order", "idempotency", "token", "nonce", "coupon", "discount"
         )
 
+        path_evidence = set()
+        for f in facts:
+            if f.get("fact_type") == "CANDIDATE_FINDING":
+                marker = str(f.get("value") or "")
+                if marker.startswith("path_like_input_"):
+                    path_evidence.add((str(f.get("subject") or ""),
+                                       marker[len("path_like_input_"):]))
+
         for cand in candidate_inputs:
             p_lower = cand["param"].lower()
             res_lower = cand["resource"].lower()
             if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
                 logic_candidates.append(cand)
-            elif is_path_like(cand["resource"], cand["param"]):
+            elif is_path_like(cand["resource"], cand["param"], evidence=path_evidence):
                 path_candidates.append(cand)
             elif any(k in p_lower for k in reflection_keywords):
                 reflection_candidates.append(cand)
@@ -863,8 +884,9 @@ class ObservedStatePlanner:
         candidate_proposals.sort(key=lambda entry: (entry[1].get("method") != "GET", entry[0]))
         for _, cand, action_id, hypothesis_prefix, reason_code, confidence in candidate_proposals:
             res, param = cand["resource"], cand["param"]
-            key = f"{action_id}:{res}:{param}"
-            if key not in verified_outcomes and action_id not in refused_actions:
+            key = outcome_key(action_id, res, param)
+            if (key not in verified_outcomes and action_id not in refused_actions
+                    and action_id in self.effective_actions):
                 return {
                     "schema_version": "1.0",
                     "plan_id": str(uuid.uuid4()),
@@ -879,27 +901,25 @@ class ObservedStatePlanner:
                 }
 
         # Priority 3: Candidate re-verification cycle for INCONCLUSIVE outcomes
-        for subj, outcome in sorted(verified_outcomes.items()):
-            if outcome == "INCONCLUSIVE" and outcome_counts.get(subj, 0) < 3:
-                parts = subj.split(":", 2)
-                if len(parts) == 3:
-                    act_id, s_res, s_param = parts[0], parts[1], parts[2]
-                    retry = {"target_id": self.target_id, "action_id": act_id,
-                             "resource_ref": s_res, "parameter_name": s_param}
-                    if (act_id in self.effective_actions and act_id not in refused_actions
-                            and not candidate_blocker(retry, state.get("candidate_attempts", []))):
-                        return {
-                            "schema_version": "1.0",
-                            "plan_id": str(uuid.uuid4()),
-                            "objective_id": obj_id,
-                            "action_id": act_id,
-                            "target_id": self.target_id,
-                            "hypothesis_id": f"HYPO-REVERIFY-{uuid.uuid4().hex[:6]}",
-                            "resource_ref": s_res,
-                            "parameter_name": s_param,
-                            "reason_code": "reverify_inconclusive_candidate",
-                            "confidence": 0.70,
-                        }
+        for (act_id, s_res, s_param), outcome in sorted(verified_outcomes.items()):
+            if outcome == "INCONCLUSIVE" and outcome_counts.get((act_id, s_res, s_param), 0) < 3:
+                retry = {"target_id": self.target_id, "action_id": act_id,
+                         "resource_ref": s_res, "parameter_name": s_param}
+                if (act_id in self.effective_actions and act_id not in refused_actions
+                        and not candidate_blocker(retry, state.get("candidate_attempts", []),
+                                                  evidence=path_evidence)):
+                    return {
+                        "schema_version": "1.0",
+                        "plan_id": str(uuid.uuid4()),
+                        "objective_id": obj_id,
+                        "action_id": act_id,
+                        "target_id": self.target_id,
+                        "hypothesis_id": f"HYPO-REVERIFY-{uuid.uuid4().hex[:6]}",
+                        "resource_ref": s_res,
+                        "parameter_name": s_param,
+                        "reason_code": "reverify_inconclusive_candidate",
+                        "confidence": 0.70,
+                    }
 
         # Check if any outcomes or facts remain INCONCLUSIVE
         has_inconclusive = has_unresolved_outcomes(state, facts)
@@ -922,13 +942,13 @@ class ObservedStatePlanner:
             res_lower = cand["resource"].lower()
             if any(k in p_lower for k in logic_keywords) or any(k in res_lower for k in ("cart", "checkout", "order", "payment")):
                 action_id = "ACTION-LOGIC-001"
-            elif is_path_like(cand["resource"], cand["param"]):
+            elif is_path_like(cand["resource"], cand["param"], evidence=path_evidence):
                 action_id = "ACTION-WEB-003"
             elif any(k in p_lower for k in reflection_keywords):
                 action_id = "ACTION-WEB-002"
             else:
                 action_id = "ACTION-WEB-001"
-            key = f"{action_id}:{cand['resource']}:{cand['param']}"
+            key = outcome_key(action_id, cand["resource"], cand["param"])
             if key not in verified_outcomes and action_id in refused_actions:
                 unresolved_blocked = True
                 break
@@ -981,6 +1001,13 @@ class ObservedStatePlanner:
         # Action catalog check
         if data.get("action_id") not in PLANNABLE_ACTIONS:
             return None, f"UNKNOWN_ACTION_ID_{data.get('action_id')}"
+        # Run scope check: the prompt only exposes run-approved actions, so an
+        # action outside this run's authorized set is rejected here instead of
+        # consuming a decision and producing an avoidable gate refusal. Terminal
+        # proposals never dispatch, so a safe stop stays valid.
+        if (data.get("action_id") not in self.effective_actions
+                and data.get("action_id") not in TERMINAL_ACTIONS):
+            return None, f"ACTION_NOT_IN_RUN_SCOPE_{data.get('action_id')}"
 
         # Target visibility check
         target = data.get("target_id")

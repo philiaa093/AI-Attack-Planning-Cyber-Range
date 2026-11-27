@@ -559,6 +559,81 @@ class ReplanPreflightTests(unittest.TestCase):
             "subject": "ACTION-WEB-002:/files:name", "value": "NEGATIVE"})
         self.assertEqual(planner.propose(state).proposal["action_id"], "ACTION-END-003")
 
+    def test_llm_terminal_proposal_is_not_treated_as_out_of_scope(self) -> None:
+        """A provider-proposed safe stop stays valid even when the scope lists no END action."""
+        proposal = {
+            "schema_version": "1.0", "plan_id": "PLAN-STOP-01", "objective_id": self.objective_id,
+            "action_id": "ACTION-END-003", "target_id": self.target_id,
+            "reason_code": "unresolved_coverage_remains", "confidence": 1.0,
+        }
+        planner = ObservedStatePlanner(
+            self.target_id, self.objective_id, requested_mode="LLM", fallback_allowed=False,
+            effective_actions={"ACTION-WEB-001"},
+            provider_callable=lambda *_: json.dumps(proposal))
+        result = planner.propose({"phase": "TESTING", "remaining_budget": {"actions": 5},
+                                  "observed_facts": []})
+        self.assertEqual(result.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(result.mode_provenance["actual_mode"], "LLM")
+
+    def test_llm_action_outside_run_scope_is_rejected(self) -> None:
+        """A provider proposal for an action not enabled in this run must fail closed."""
+        scope = {"ACTION-WEB-001", "ACTION-END-001", "ACTION-END-002", "ACTION-END-003"}
+        proposal = {
+            "schema_version": "1.0", "plan_id": "PLAN-SCOPE-01", "objective_id": self.objective_id,
+            "action_id": "ACTION-LOGIC-001", "target_id": self.target_id,
+            "reason_code": "synthetic_out_of_scope", "confidence": 0.5,
+        }
+        planner = ObservedStatePlanner(
+            self.target_id, self.objective_id, requested_mode="LLM", fallback_allowed=False,
+            effective_actions=scope, provider_callable=lambda *_: json.dumps(proposal))
+        result = planner.propose({"phase": "RECON", "remaining_budget": {"actions": 5},
+                                  "observed_facts": []})
+        self.assertEqual(result.proposal["action_id"], "ACTION-END-003")
+        self.assertEqual(result.mode_provenance["actual_mode"], "NONE")
+        self.assertIn("ACTION_NOT_IN_RUN_SCOPE", result.mode_provenance["fallback_reason"])
+
+    def test_rule_engine_never_proposes_an_action_outside_run_scope(self) -> None:
+        """The rule baseline must stay inside the run-approved action set in every branch."""
+        scope = {"ACTION-WEB-001", "ACTION-END-001", "ACTION-END-002", "ACTION-END-003"}
+        planner = ObservedStatePlanner(
+            self.target_id, self.objective_id, requested_mode="RULE", effective_actions=scope)
+        states = {
+            "initial": {"phase": "RECON", "remaining_budget": {"actions": 8},
+                        "observed_facts": []},
+            "after_discovery": {"phase": "RECON", "remaining_budget": {"actions": 8},
+                                "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002"],
+                                "discovered_endpoints": ["/items"],
+                                "observed_facts": [{"fact_type": "ENDPOINT",
+                                                    "value": "/items"}]},
+            "sqli_signal": {"phase": "TESTING", "remaining_budget": {"actions": 8},
+                            "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002",
+                                                 "ACTION-SCAN-001"],
+                            "discovered_endpoints": ["/items"],
+                            "observed_facts": [
+                                {"fact_type": "PARAMETER", "subject": "/items", "value": "id"},
+                                {"fact_type": "ACTION_OUTCOME",
+                                 "subject": "ACTION-WEB-001:/items:id", "value": "SIGNAL"}]},
+            "logic_form": {"phase": "TESTING", "remaining_budget": {"actions": 8},
+                           "previous_actions": ["ACTION-RECON-001", "ACTION-RECON-002",
+                                                "ACTION-SCAN-001"],
+                           "discovered_endpoints": ["/cart/add"],
+                           "observed_facts": [
+                               {"fact_type": "CANDIDATE_FINDING", "subject": "/cart/add",
+                                "value": "post_form_input_quantity"}]},
+        }
+        for name, state in states.items():
+            with self.subTest(state=name):
+                proposal = planner.propose(state).proposal
+                self.assertIn(proposal["action_id"], scope)
+
+    def test_empty_run_scope_never_proposes_a_disabled_action(self) -> None:
+        """An empty scope cannot silently fall back to recon actions."""
+        planner = ObservedStatePlanner(
+            self.target_id, self.objective_id, requested_mode="RULE", effective_actions=set())
+        proposal = planner.propose({"phase": "RECON", "remaining_budget": {"actions": 8},
+                                    "observed_facts": []}).proposal
+        self.assertIn(proposal["action_id"], {"ACTION-END-001", "ACTION-END-002", "ACTION-END-003"})
+
     def test_p09_inconclusive_triggers_candidate_reverification(self) -> None:
         """When an outcome is INCONCLUSIVE, planner proposes re-verification of the candidate."""
         planner = ObservedStatePlanner(self.target_id, self.objective_id, requested_mode="RULE")

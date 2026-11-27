@@ -68,7 +68,9 @@ from runtime.planners.observed_planner import (
     PlannerResult,
     ProviderConfig,
 )
-from runtime.planners.web_planning_context import completion_blocker, candidate_key, candidate_blocker, TEST_ACTIONS
+from runtime.planners.web_planning_context import (
+    completion_blocker, candidate_key, candidate_blocker, path_like_evidence, TEST_ACTIONS,
+)
 
 RUNNER_ACTION_CATALOG = {
     **ACTION_CATALOG,
@@ -84,6 +86,52 @@ from shared.schema_validation import validate_shape
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_resource_key(value: Any) -> str:
+    """Path-only key used to compare scheduling identity across resource forms."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urllib.parse.urlsplit(text)
+    if parsed.scheme or parsed.netloc:
+        text = parsed.path or "/"
+    text = text.split("#", 1)[0].split("?", 1)[0]
+    return text or "/"
+
+
+_ACTION_SCOPED_DENIALS = frozenset({
+    # Denials about the action or the run, not about this specific candidate.
+    "BUDGET_EXHAUSTED", "MISSING_APPROVAL", "KILL_SWITCH_ACTIVE", "RECORDER_NOT_READY",
+    "LAB_MODE_DISABLED", "OPERATOR_REJECTED", "SCANNER_NOT_SELECTED",
+    "SCANNER_ALREADY_EXECUTED", "APPROVAL_ACTION_MISMATCH", "APPROVAL_TARGET_MISMATCH",
+    "APPROVAL_REVOKED", "APPROVAL_EXPIRED", "APPROVAL_NOT_YET_VALID",
+    "TARGET_NOT_ALLOWLISTED", "UNKNOWN_ACTION_ID", "ACTION_NOT_ALLOWLISTED",
+})
+
+
+def _normalized_denial_code(reason: str) -> str:
+    """Strip the wrapper and the identity suffix the runner appends to codes."""
+    text = str(reason or "").strip()
+    prefix = "SAFETY_DENIED_AFTER_APPROVAL:"
+    if text.startswith(prefix):
+        text = text[len(prefix):].strip()
+    text = text.split(":", 1)[0]
+    # Codes are emitted as CODE_<suffix>, e.g. TARGET_NOT_ALLOWLISTED_lab-x or
+    # ACTION_NOT_ALLOWLISTED_ACTION-WEB-001.
+    for marker in ("_ACTION-", "_lab-", "_MANUAL", "_OTHER"):
+        if marker in text:
+            text = text.split(marker, 1)[0]
+    return text
+
+
+def _is_action_scoped_denial(reason: str) -> bool:
+    """Exact-match known run-level codes; unknown codes stay candidate-scoped.
+
+    Candidate-scoped denials are still bounded because every denial is counted
+    in the run-owned candidate attempts, so an unknown code cannot loop forever.
+    """
+    return _normalized_denial_code(reason) in _ACTION_SCOPED_DENIALS
 
 
 @dataclass
@@ -241,6 +289,13 @@ class AutonomousRunner:
             self.planner.effective_actions.discard("ACTION-SCAN-002")
         self.findings: list[dict[str, Any]] = []
         self.active_verifications_count = 0
+        # Progress counters are updated when a decision happens, not when its
+        # trace is appended, so an executor exception cannot erase them.
+        self.decisions_used = 0
+        self.approved_decisions = 0
+        self.denied_decisions = 0
+        self.observed_facts_added = 0
+        self.last_planner_provenance: dict[str, Any] = {}
 
         # Load schemas for validation
         self._plan_schema = json.loads(
@@ -303,6 +358,48 @@ class AutonomousRunner:
         self._emit_event("EVIDENCE_RECORDED", iteration=iteration,
                          payload={"evidence_id": artifact["evidence_id"], "type": "candidate_blocked"})
         self._emit_event("AGENT_REPLANNING", iteration=iteration, payload={"reason": reason})
+
+    def _has_untried_candidate(self, state: dict[str, Any], exhausted: dict[str, Any]) -> bool:
+        """True when an observed input still has an untried run-approved check.
+
+        Used so that one candidate hitting the attempt cap does not starve the
+        rest of the observed surface.
+        """
+        attempted = {(row["action_id"], _canonical_resource_key(row.get("resource_ref")),
+                      str(row.get("parameter_name", "")))
+                     for row in self.candidate_attempts.values()}
+        exhausted_key = (exhausted.get("action_id"),
+                         _canonical_resource_key(exhausted.get("resource_ref")),
+                         str(exhausted.get("parameter_name", "")))
+        context_inputs = []
+        for fact in state.get("observed_facts", []):
+            fact_type = fact.get("fact_type")
+            if fact_type == "PARAMETER":
+                context_inputs.append((_canonical_resource_key(fact.get("subject")),
+                                       str(fact.get("value") or "")))
+            elif (fact_type == "CANDIDATE_FINDING"
+                  and str(fact.get("value") or "").startswith("path_like_input_")):
+                context_inputs.append((
+                    _canonical_resource_key(fact.get("subject")),
+                    str(fact.get("value"))[len("path_like_input_"):]))
+        for action_id in self.planner.effective_actions:
+            if not action_id.startswith("ACTION-WEB-") and action_id != "ACTION-LOGIC-001":
+                continue
+            for resource, parameter in context_inputs:
+                key = (action_id, resource, parameter)
+                if key != exhausted_key and key not in attempted:
+                    return True
+        return False
+
+    def _candidate_blocker_for(self, proposal: dict[str, Any], state: dict[str, Any]) -> str | None:
+        """Scheduling blocker that also honours observed path-value evidence.
+
+        The planner and the runner must judge eligibility with the same
+        evidence, otherwise a planner-approved path candidate is refused here
+        with PATH_INPUT_NOT_OBSERVED and the run stalls.
+        """
+        return candidate_blocker(proposal, list(self.candidate_attempts.values()),
+                                 evidence=path_like_evidence(state.get("observed_facts", [])))
 
     def _terminal_coverage_blocker(self, state: dict[str, Any]) -> str | None:
         blocker = completion_blocker(state, self.planner.effective_actions)
@@ -602,7 +699,24 @@ class AutonomousRunner:
 
         obs_id = f"OBS-REFUSAL-{uuid.uuid4().hex[:8]}"
         action_ref = proposal.get("action_id", "ACTION_UNKNOWN")
-        fact_id = f"FACT-REF-{action_ref}"
+        # Refusal authority applies to the rejected candidate only. Keeping the
+        # resource/parameter prevents one denial from suppressing every other
+        # observed input that the same action could still verify. Denials about
+        # the action or the run stay action-scoped so they cannot loop.
+        resource = str(proposal.get("resource_ref") or "")
+        parameter = str(proposal.get("parameter_name") or "")
+        if resource and parameter and not _is_action_scoped_denial(reason):
+            subject = f"{action_ref}:{resource}:{parameter}"
+        else:
+            subject = action_ref
+        # A stable identity keeps a repeated identical denial idempotent, so a
+        # stuck candidate still reaches the no-progress stop instead of looking
+        # like fresh information on every iteration. Components are joined with
+        # a length-prefixed encoding so values containing ':' cannot collide.
+        identity = json.dumps([action_ref, resource, parameter, str(reason)],
+                              ensure_ascii=True, separators=(",", ":"))
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        fact_id = f"FACT-REF-{digest}"
 
         obs = {
             "observation_id": obs_id,
@@ -614,7 +728,7 @@ class AutonomousRunner:
                 {
                     "fact_id": fact_id,
                     "fact_type": "ACTION_OUTCOME",
-                    "subject": action_ref,
+                    "subject": subject,
                     "value": "REFUSED",
                     "confidence": 1.0,
                 }
@@ -652,6 +766,11 @@ class AutonomousRunner:
         obs["evidence_refs"] = [dec_art["evidence_id"]]
         obs_art = self.recorder.persist_phase_artifact("refusal_obs", obs)
         self.evidence_refs.append(obs_art["evidence_id"])
+        self.denied_decisions += 1
+        self.observed_facts_added += len(obs["new_facts"])
+        if proposal.get("action_id") in TEST_ACTIONS:
+            self._record_candidate_result(proposal, "REFUSED", obs_art["evidence_id"],
+                                          executed=True, reason=reason)
 
         # Ingest into state manager via adapter (updates state with refusal fact and projects visibility)
         self._ingest_and_update_visibility(obs)
@@ -1247,9 +1366,11 @@ class AutonomousRunner:
             self._emit_event("PLANNER_STARTED", iteration=iteration, payload={"requested_mode": self.requested_planner_mode})
             plan_res = self.planner.propose(planner_state)
             decisions_used += 1
+            self.decisions_used = decisions_used
             proposal = plan_res.proposal
             provenance = plan_res.mode_provenance
             last_provenance = provenance
+            self.last_planner_provenance = dict(provenance)
 
             action_id = proposal.get("action_id", "")
             self._emit_event(
@@ -1364,6 +1485,28 @@ class AutonomousRunner:
             safety_decision, safety_reason = self._evaluate_safety(proposal)
 
             if safety_decision == "DENIED":
+                # Denials count against the candidate, so the cap must be
+                # enforced before recording another one.
+                retry_block = self._candidate_blocker_for(proposal, planner_state)
+                if retry_block:
+                    try:
+                        self._block_candidate(proposal, retry_block, provenance, iteration, state_fp)
+                    except EvidenceFailure:
+                        stop_reason = "EVIDENCE_FAILURE"
+                        break
+                    if retry_block == "CANDIDATE_ATTEMPTS_EXHAUSTED":
+                        # The candidate is spent, but other observed inputs may
+                        # still be untried. Only stop when nothing is left.
+                        if self._has_untried_candidate(planner_state, proposal):
+                            self._emit_event("AGENT_REPLANNING", iteration=iteration,
+                                             payload={"reason": retry_block})
+                            continue
+                        stop_reason = retry_block
+                        self._emit_event("STOP_CONDITION_REACHED", iteration=iteration,
+                                         action_id=proposal.get("action_id"),
+                                         payload={"reason": stop_reason})
+                        break
+                    continue
                 # Gate refused proposed action -> record, add REFUSAL observation, and replan!
                 refusal_trace = self._handle_safety_denial(
                     proposal, safety_reason, provenance, iteration, state_fp
@@ -1372,12 +1515,24 @@ class AutonomousRunner:
                 self._emit_event("AGENT_REPLANNING", iteration=iteration, payload={"reason": "safety_denial"})
                 continue
 
-            retry_block = candidate_blocker(proposal, list(self.candidate_attempts.values()))
+            retry_block = self._candidate_blocker_for(proposal, planner_state)
             if retry_block:
                 try:
                     self._block_candidate(proposal, retry_block, provenance, iteration, state_fp)
                 except EvidenceFailure:
                     stop_reason = "EVIDENCE_FAILURE"
+                    break
+                if retry_block == "CANDIDATE_ATTEMPTS_EXHAUSTED":
+                    # Same rule after a Gate approval: move on if anything is
+                    # still untried, otherwise stop bounded.
+                    if self._has_untried_candidate(planner_state, proposal):
+                        self._emit_event("AGENT_REPLANNING", iteration=iteration,
+                                         payload={"reason": retry_block})
+                        continue
+                    stop_reason = retry_block
+                    self._emit_event("STOP_CONDITION_REACHED", iteration=iteration,
+                                     action_id=proposal.get("action_id"),
+                                     payload={"reason": stop_reason})
                     break
                 continue
 
@@ -1480,11 +1635,13 @@ class AutonomousRunner:
                     break
 
             # Action approved by Gate (and operator if required) -> execute strictly through gate / safe capabilities
+            self.approved_decisions += 1
             try:
                 trace = self._execute_approved_action(
                     proposal, provenance, iteration, state_fp
                 )
                 self.traces.append(trace)
+                self.observed_facts_added += trace.new_facts_count
 
                 if trace.dispatched:
                     self._emit_event(
@@ -1559,10 +1716,15 @@ class AutonomousRunner:
                 payload={"next_iteration": iteration + 1},
             )
 
-        # Calculate final counts
-        approved_count = sum(1 for t in self.traces if t.safety_decision == "APPROVED")
-        denied_count = sum(1 for t in self.traces if t.safety_decision == "DENIED")
-        obs_added_count = sum(t.new_facts_count for t in self.traces)
+        # Calculate final counts. Progress counters advance on the decision
+        # itself, so a stop that skips the trace (evidence failure) still
+        # reports the approved or denied action that actually happened.
+        approved_count = max(self.approved_decisions,
+                             sum(1 for t in self.traces if t.safety_decision == "APPROVED"))
+        denied_count = max(self.denied_decisions,
+                           sum(1 for t in self.traces if t.safety_decision == "DENIED"))
+        obs_added_count = max(self.observed_facts_added,
+                              sum(t.new_facts_count for t in self.traces))
 
         if self.gate.kill_switch.is_active() or self._stop_requested.is_set():
             self.lifecycle_state = "STOPPED"
@@ -1572,6 +1734,11 @@ class AutonomousRunner:
             self._emit_event("RUN_FAILED", payload={"stop_reason": stop_reason,
                 "error": last_provenance.get("fallback_reason"),
                 "provider": last_provenance.get("provider"), "model": last_provenance.get("model")})
+        elif stop_reason.startswith("EVIDENCE_FAILURE"):
+            # Evidence failure is a bounded stop, not a successful completion.
+            self.lifecycle_state = "FAILED"
+            self._emit_event("RUN_FAILED", payload={"stop_reason": stop_reason,
+                "error": "evidence write failed"})
         else:
             self.lifecycle_state = "COMPLETED"
             self._emit_event(

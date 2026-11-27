@@ -92,6 +92,78 @@ class WebPlanningContextTests(unittest.TestCase):
         for key in ("observed_endpoints", "observed_get_inputs", "unresolved_checks"):
             self.assertEqual(context[key], [])
 
+    def test_path_evidence_comes_from_observed_values_only(self):
+        """A name-only route is not path-like; an observed file value makes it evidence-backed."""
+        from runtime.planners.web_planning_context import is_path_like, looks_like_path_value
+
+        # Name-only heuristic stays as-is for clearly named inputs.
+        self.assertTrue(is_path_like("/any", "file"))
+        self.assertFalse(is_path_like("/files", "name"))
+
+        # Observed values decide the evidence-backed answer.
+        for value in ("readme.txt", "../../etc/passwd", "invoices/2026.pdf",
+                      "/var/log/app.log", "C:\\temp\\a.txt"):
+            with self.subTest(value=value):
+                self.assertTrue(looks_like_path_value(value))
+        for value in ("9.99", "1", "", "alice", "2026-11-27", "hello world",
+                      "a" * 320 + ".txt", "bad\x00value"):
+            with self.subTest(value=value):
+                self.assertFalse(looks_like_path_value(value))
+
+        evidence = {("/files", "name")}
+        self.assertTrue(is_path_like("/files", "name", evidence=evidence))
+        self.assertFalse(is_path_like("/files", "other", evidence=evidence))
+
+    def test_observed_path_value_unlocks_the_traversal_candidate(self):
+        """A candidate with recorded path evidence is eligible and not blocked."""
+        from runtime.planners.web_planning_context import candidate_blocker
+
+        facts = [fact("F1", "PARAMETER", "/files", "name"),
+                 fact("F2", "CANDIDATE_FINDING", "/files", "path_like_input_name")]
+        context = self.build(facts, endpoints=("/files",))
+        pending = {row["action"] for row in context["unresolved_checks"][0]["pending_checks"]}
+        self.assertIn("ACTION-WEB-003", pending)
+        self.assertEqual(candidate_blocker(
+            {"action_id": "ACTION-WEB-003", "target_id": "lab-a", "resource_ref": "/files",
+             "parameter_name": "name"}, [], evidence={("/files", "name")}), None)
+        self.assertEqual(candidate_blocker(
+            {"action_id": "ACTION-WEB-003", "target_id": "lab-a", "resource_ref": "/files",
+             "parameter_name": "name"}, []), "PATH_INPUT_NOT_OBSERVED")
+
+    def test_context_and_runner_report_the_same_path_blocker(self):
+        """R1: the projection shown to the LLM must not contradict the runner."""
+        facts = [fact("F1", "PARAMETER", "/files", "name"),
+                 fact("F2", "CANDIDATE_FINDING", "/files", "path_like_input_name")]
+        state = self.state(facts, endpoints=("/files",))
+        state["candidate_attempts"] = [{
+            "target_id": "lab-a", "action_id": "ACTION-WEB-003", "method": "GET",
+            "resource_ref": "/files", "parameter_name": "name", "attempts": 1,
+            "result": "INCONCLUSIVE"}]
+        context = build_web_planning_context(
+            state, ["/files"], facts, ["ACTION-RECON-002", "ACTION-SCAN-001"],
+            set(ALL_WEB_ACTIONS), limit=32)
+        row = context["candidate_attempts"][0]
+        self.assertIsNone(row["retry_block_reason"])
+        self.assertIn("ACTION-WEB-003",
+                      [check["action"] for check in context["unresolved_checks"][0]["pending_checks"]])
+
+    def test_absolute_resource_url_uses_the_same_path_evidence(self):
+        """R1: an absolute same-origin resource must resolve to the same evidence key."""
+        from runtime.planners.web_planning_context import is_path_like
+
+        class Canonicalizer:
+            def canonicalize(self, value, current_url=None):
+                class Result:
+                    is_valid = True
+                    is_same_origin = True
+                    canonical_url = value
+                return Result()
+
+        evidence = {("/files", "name")}
+        self.assertTrue(is_path_like("http://127.0.0.1:18088/files?name=x", "name",
+                                     evidence=evidence))
+        self.assertTrue(is_path_like("/files", "name", evidence=evidence))
+
     def test_completion_requires_observed_surface(self):
         for facts in ([], [fact("F1", "TARGET", "lab-ecommerce", "lab-ecommerce")]):
             with self.subTest(facts=facts):

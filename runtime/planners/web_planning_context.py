@@ -13,6 +13,7 @@ Design rules:
 """
 from __future__ import annotations
 
+import re
 import urllib.parse
 from typing import Any
 
@@ -24,6 +25,72 @@ SCAN_ACTIONS = frozenset({"ACTION-SCAN-001", "ACTION-SCAN-002"})
 _CONTROL_PARTS = ("csrf", "token", "session", "secret", "password", "passwd", "credential")
 _PATH_PARTS = ("file", "path", "template", "document", "download", "folder", "dir", "include")
 _LOGIC_PARTS = ("cart", "checkout", "order", "payment", "quantity", "price", "total", "coupon", "idempot")
+
+# A value may only unlock path-traversal checking when it really looks like a
+# filesystem reference. Bounds keep the marker small and reject control bytes.
+_PATH_VALUE_MAX = 300
+_PATH_VALUE_SEGMENT = re.compile(r"^[A-Za-z0-9._~%+@-]+$")
+_PATH_VALUE_SUFFIXES = (
+    ".txt", ".log", ".json", ".xml", ".csv", ".pdf", ".md", ".yml", ".yaml", ".conf",
+    ".ini", ".html", ".htm", ".zip", ".tar", ".gz", ".bak", ".sql", ".env",
+)
+
+
+def looks_like_path_value(value: Any) -> bool:
+    """Return True only for observed values that plausibly name a file or path.
+
+    This is evidence, not a route guess: the caller passes a value the target
+    actually returned. Emails, dates, prose, absolute URLs and control bytes
+    stay False so unrelated inputs are not promoted to traversal candidates.
+    """
+    if not isinstance(value, str):
+        return False
+    # Check raw bytes before stripping: a value containing control characters is
+    # not a path even when it trims to something that looks like one.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        return False
+    text = value.strip()
+    if not text or text != value or len(text) > _PATH_VALUE_MAX:
+        return False
+    lowered = text.lower()
+    if "://" in lowered or lowered.startswith(("http:", "https:", "ftp:", "file:")):
+        return False
+    if "@" in text and "." in text.split("@", 1)[1]:
+        return False  # email address, not a file reference
+    if any(char.isspace() for char in text):
+        return False  # prose or a path with spaces we cannot verify
+    if ".." in text or "\\" in text:
+        return True
+    if "/" in text:
+        segments = [segment for segment in text.split("/") if segment]
+        # A date such as 2026/11/27 is not a filesystem reference.
+        if not segments or all(segment.isdigit() for segment in segments):
+            return False
+        return True
+    if lowered.endswith(_PATH_VALUE_SUFFIXES):
+        return True
+    # A dotted compound such as "readme.txt" or "app.v2.js": a real stem
+    # followed by a plausible extension of two to five alphanumerics.
+    stem, dot, extension = text.rpartition(".")
+    if dot and stem and 2 <= len(extension) <= 5 and extension.isalnum():
+        return bool(_PATH_VALUE_SEGMENT.match(stem)) and any(char.isalpha() for char in stem)
+    return False
+
+
+def is_path_like(resource: str, parameter: str, evidence: Any = None) -> bool:
+    """Decide whether an input can carry a filesystem path.
+
+    Provenance order: an explicitly observed path-like value, then the
+    historical parameter-name heuristic. Planner and executor call this same
+    predicate so eligibility cannot drift between them. Evidence is keyed by
+    canonical path, so an absolute same-origin URL matches the same entry.
+    """
+    if isinstance(parameter, str) and any(part in parameter.lower() for part in _PATH_PARTS):
+        return True
+    if not isinstance(evidence, (set, frozenset)):
+        return False
+    canonical = _canonical_resource(resource)
+    return (canonical, parameter) in evidence or (resource, parameter) in evidence
 
 ACTION_SEMANTICS = {
     "ACTION-RECON-001": "Discover the authorized target's initial reachability without route assumptions.",
@@ -72,10 +139,6 @@ def _is_control_field(name: str) -> bool:
     return any(part in lower for part in _CONTROL_PARTS)
 
 
-def is_path_like(resource: str, parameter: str) -> bool:
-    return isinstance(parameter, str) and any(part in parameter.lower() for part in _PATH_PARTS)
-
-
 def candidate_key(proposal: dict[str, Any]) -> tuple[str, str, str, str, str]:
     """Scheduling identity only; authorization still belongs to the gate."""
     return (str(proposal.get("target_id", "")), str(proposal.get("action_id", "")),
@@ -84,11 +147,13 @@ def candidate_key(proposal: dict[str, Any]) -> tuple[str, str, str, str, str]:
             str(proposal.get("parameter_name", "")))
 
 
-def candidate_blocker(proposal: dict[str, Any], attempts: list[dict[str, Any]]) -> str | None:
+def candidate_blocker(proposal: dict[str, Any], attempts: list[dict[str, Any]],
+                      evidence: Any = None) -> str | None:
     if proposal.get("action_id") not in TEST_ACTIONS:
         return None
     if proposal.get("action_id") == "ACTION-WEB-003" and not is_path_like(
-            str(proposal.get("resource_ref", "")), proposal.get("parameter_name")):
+            str(proposal.get("resource_ref", "")), proposal.get("parameter_name"),
+            evidence=evidence):
         return "PATH_INPUT_NOT_OBSERVED"
     key = candidate_key(proposal)
     row = next((row for row in attempts if candidate_key(row) == key), None)
@@ -115,13 +180,37 @@ def _is_logic_like(resource: str, parameter: str) -> bool:
     return any(part in text for part in _LOGIC_PARTS)
 
 
-def _eligible_actions(resource: str, parameter: str, effective_actions: set[str]) -> list[str]:
+PATH_LIKE_MARKER = "path_like_input_"
+
+
+def path_like_evidence(facts: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """Collect (resource, parameter) pairs whose observed value looked like a path.
+
+    Only a minimized marker is stored in state; the raw value never leaves the
+    executor's bounded response handling.
+    """
+    evidence: set[tuple[str, str]] = set()
+    for fact in facts:
+        if fact.get("fact_type") != "CANDIDATE_FINDING":
+            continue
+        value = str(fact.get("value") or "")
+        if not value.startswith(PATH_LIKE_MARKER):
+            continue
+        resource = _canonical_resource(fact.get("subject"))
+        parameter = value[len(PATH_LIKE_MARKER):]
+        if resource and parameter:
+            evidence.add((resource, parameter))
+    return evidence
+
+
+def _eligible_actions(resource: str, parameter: str, effective_actions: set[str],
+                      evidence: Any = None) -> list[str]:
     eligible: list[str] = []
     if "ACTION-WEB-001" in effective_actions:
         eligible.append("ACTION-WEB-001")
     if "ACTION-WEB-002" in effective_actions:
         eligible.append("ACTION-WEB-002")
-    if "ACTION-WEB-003" in effective_actions and is_path_like(resource, parameter):
+    if "ACTION-WEB-003" in effective_actions and is_path_like(resource, parameter, evidence=evidence):
         eligible.append("ACTION-WEB-003")
     if "ACTION-LOGIC-001" in effective_actions and _is_logic_like(resource, parameter):
         eligible.append("ACTION-LOGIC-001")
@@ -261,7 +350,9 @@ def build_web_planning_context(
             elif field == "unrequested_seeds":
                 match["unrequested_seeds"] = value if type(value) is int and value >= 0 else None
 
-    attempt_rows = [{**row, "retry_block_reason": candidate_blocker(row, state.get("candidate_attempts", []))}
+    evidence = path_like_evidence(facts)
+    attempt_rows = [{**row, "retry_block_reason": candidate_blocker(
+                        row, state.get("candidate_attempts", []), evidence=evidence)}
                     for row in state.get("candidate_attempts", [])]
     for row in attempt_rows:
         latest_results[(row["action_id"], row["resource_ref"], row["parameter_name"])] = row["result"]
@@ -276,7 +367,8 @@ def build_web_planning_context(
     unresolved: list[dict[str, Any]] = []
     untestable: list[dict[str, Any]] = []
     for row in get_inputs:
-        eligible = _eligible_actions(row["resource_ref"], row["parameter_name"], effective_actions)
+        eligible = _eligible_actions(row["resource_ref"], row["parameter_name"],
+                                     effective_actions, evidence=evidence)
         if not eligible:
             untestable.append({**row, "reason": "no approved action accepts this observed input"})
             continue
@@ -357,6 +449,10 @@ def build_web_planning_context(
                                      parameter_name=_TEXT_LIMIT, result=_TEXT_LIMIT),
         "candidate_attempts": bounded_rows(attempt_rows, resource_ref=_RESOURCE_LIMIT,
                                             parameter_name=_TEXT_LIMIT, target_id=_TEXT_LIMIT),
+        "path_like_inputs": bounded_rows(
+            [{"resource_ref": resource, "parameter_name": parameter}
+             for resource, parameter in sorted(evidence)],
+            resource_ref=_RESOURCE_LIMIT, parameter_name=_TEXT_LIMIT),
         "retry_policy": "Prefer untried eligible checks; never retry blocked candidates; maximum three executions per candidate.",
         "scanner_coverage": bounded_rows(scans, **scan_limits),
         "refused_actions": visible_refusals,

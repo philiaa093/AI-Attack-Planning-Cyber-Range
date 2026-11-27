@@ -67,6 +67,7 @@ class VerificationFinding:
     confidence: float
     limitations: list[str]
     reason: str
+    path_input_evidence: bool | None = None
 
 
 @dataclass
@@ -192,7 +193,7 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
             parsed_query = urllib.parse.urlsplit(item.path).query
             # Record query inputs on visited endpoint
             if parsed_query:
-                for qk, _ in urllib.parse.parse_qsl(parsed_query):
+                for qk, qv in urllib.parse.parse_qsl(parsed_query, keep_blank_values=False):
                     add_fact((*source_key, "query", clean_url, str(qk)), {
                         "fact_id": f"FACT-PARAM-{uuid.uuid4().hex[:8]}",
                         "fact_type": "PARAMETER",
@@ -200,6 +201,21 @@ class PassiveSurfaceAnalyzer(BaseCapabilityExecutor):
                         "value": str(qk),
                         "confidence": 0.85,
                     })
+                    # An observed value that names a file/path is evidence the
+                    # input carries a filesystem reference. Only a minimized
+                    # marker is recorded; the value itself stays out of state.
+                    from runtime.planners.web_planning_context import looks_like_path_value
+                    if looks_like_path_value(qv):
+                        marker_resource = urllib.parse.urlsplit(clean_url).path or "/"
+                        if marker_resource != "/":
+                            marker_resource = marker_resource.rstrip("/") or "/"
+                        add_fact((*source_key, "query_path", clean_url, str(qk)), {
+                            "fact_id": f"FACT-CAND-{uuid.uuid4().hex[:8]}",
+                            "fact_type": "CANDIDATE_FINDING",
+                            "subject": marker_resource,
+                            "value": f"path_like_input_{qk}",
+                            "confidence": 0.60,
+                        })
 
             # Record form inputs with strict action and method provenance
             if item.forms:
@@ -301,11 +317,101 @@ def _find_observed_form(
     return None
 
 
+def _probe_form_method(
+    inventory: InventoryStore,
+    resource: str,
+    parameter: str,
+) -> str:
+    """Pick the observation-proven method for one input.
+
+    Provenance order: a query parameter on an observed GET URL, then a GET
+    form, then a POST form. A query input therefore stays a GET probe even
+    when the same resource also exposes an unrelated POST form with the same
+    name. POST is only used when nothing GET-observable exposes the input.
+    """
+    if _observed_query_parameter(resource, parameter):
+        return "GET"
+    # The planner usually strips the query from resource_ref, so also look for
+    # the parameter on URLs this run actually observed for the same path.
+    if _observed_query_in_inventory(inventory, resource, parameter):
+        return "GET"
+    if _find_observed_form(inventory, resource, parameter, "GET") is not None:
+        return "GET"
+    if _find_observed_form(inventory, resource, parameter, "POST") is not None:
+        return "POST"
+    return "GET"
+
+
+def _observed_query_in_inventory(
+    inventory: InventoryStore,
+    resource: str,
+    parameter: str,
+) -> bool:
+    """True when a recorded GET URL for this path carried the parameter."""
+    resource_path = urllib.parse.urlsplit(resource).path.rstrip("/") or "/"
+    for item in inventory.items.values():
+        if (urllib.parse.urlsplit(item.canonical_url).path.rstrip("/") or "/") != resource_path:
+            continue
+        query = urllib.parse.urlsplit(item.path).query
+        if query and parameter in {name for name, _ in urllib.parse.parse_qsl(query)}:
+            return True
+    return False
+
+
+def _observed_query_parameter(resource: str, parameter: str) -> bool:
+    """True when the candidate URL itself carries this query parameter."""
+    query = urllib.parse.urlsplit(resource).query
+    if not query:
+        return False
+    return parameter in {name for name, _ in urllib.parse.parse_qsl(query)}
+
+
+def observed_path_evidence(inventory: InventoryStore) -> set[tuple[str, str]]:
+    """Collect (resource, parameter) pairs whose observed value looks like a path.
+
+    The value is read from bounded inventory metadata that is already in memory.
+    It is never copied into planner state or evidence; only membership leaves
+    this function.
+    """
+    from runtime.planners.web_planning_context import looks_like_path_value
+
+    evidence: set[tuple[str, str]] = set()
+    for item in inventory.items.values():
+        query = urllib.parse.urlsplit(item.path).query
+        if not query:
+            continue
+        resource = urllib.parse.urlsplit(item.canonical_url).path or "/"
+        if resource != "/":
+            resource = resource.rstrip("/") or "/"
+        for name, value in urllib.parse.parse_qsl(query, keep_blank_values=False):
+            if looks_like_path_value(value):
+                evidence.add((resource, name))
+    return evidence
+
+
+def _has_path_evidence(evidence: set[tuple[str, str]], resource: Any, parameter: Any) -> bool:
+    """Match observed evidence for both relative and absolute resource forms."""
+    from runtime.planners.web_planning_context import _canonical_resource
+
+    canonical = _canonical_resource(resource)
+    return (canonical, parameter) in evidence or (str(resource), parameter) in evidence
+
+
 def _observed_get_baseline(
     inventory: InventoryStore,
     resource: str,
     parameter: str,
 ) -> str:
+    # Prefer the value the target actually served for this input: a fabricated
+    # baseline can turn a healthy endpoint into a 404 and mask every check.
+    resource_path = urllib.parse.urlsplit(resource).path.rstrip("/") or "/"
+    for item in inventory.items.values():
+        if (urllib.parse.urlsplit(item.canonical_url).path.rstrip("/") or "/") != resource_path:
+            continue
+        for name, value in urllib.parse.parse_qsl(
+                urllib.parse.urlsplit(item.path).query, keep_blank_values=False):
+            if name == parameter and value:
+                return value
     matched = _find_observed_form(inventory, resource, parameter, "GET")
     if matched is None:
         return "probe_test"
@@ -433,7 +539,7 @@ class SafeInputVerificationExecutor(BaseCapabilityExecutor):
         classification = "INCONCLUSIVE"
         reason = "Incomplete response set during bounded differential probe"
 
-        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
+        is_post_form = _probe_form_method(inventory, resource, param) == "POST"
         default_form_fields: dict[str, str] = {}
         request_headers: dict[str, str] = {}
         can_probe = True
@@ -688,7 +794,7 @@ class SafeReflectionVerificationExecutor(BaseCapabilityExecutor):
         reason = "Incomplete response during bounded reflection probe"
 
         # Check if input belongs to a discovered POST form
-        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
+        is_post_form = _probe_form_method(inventory, resource, param) == "POST"
         default_form_fields: dict[str, str] = {}
         request_headers: dict[str, str] = {}
         can_probe = True
@@ -903,7 +1009,10 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
         resource = proposal.get("resource_ref", "/")
         param = proposal.get("parameter_name", "file")
         from runtime.planners.web_planning_context import is_path_like
-        if not is_path_like(str(resource), param):
+        # Evidence comes from the observed inventory, not from the route name.
+        # The raw value stays in memory; only a boolean is recorded.
+        evidence = observed_path_evidence(inventory)
+        if not is_path_like(str(resource), param, evidence=evidence):
             reason = "Observed input is not file/path-like; bounded path traversal verification was not dispatched"
             finding = VerificationFinding(
                 finding_id=f"FIND-PATH-{uuid.uuid4().hex[:8]}", family="PATH_TRAVERSAL",
@@ -945,7 +1054,10 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
             method="GET",
             approval=approval,
         )
+        initial_dispatch_count = gate.network_dispatch_count
+        initial_artifact_count = len(recorder.artifacts)
         resp = gate.dispatch(req)
+        dispatches_made = gate.network_dispatch_count - initial_dispatch_count
         if gate.halted_due_to_evidence or (
             not resp.durable_confirmed and "EVIDENCE" in (resp.refusal_reason or "")
         ):
@@ -953,14 +1065,13 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
 
         last_intent_id = None
         last_result_id = None
-        for art in reversed(recorder.artifacts):
+        # Only artifacts created by this dispatch belong to this probe.
+        for art in recorder.artifacts[initial_artifact_count:]:
             ev = art.get("evidence_id", "")
-            if not last_result_id and "result" in ev.lower():
+            if ev.startswith("EV-RESULT-"):
                 last_result_id = ev
-            elif not last_intent_id and "intent" in ev.lower():
+            elif ev.startswith("EV-INTENT-"):
                 last_intent_id = ev
-            if last_intent_id and last_result_id:
-                break
 
         body = resp.body or ""
 
@@ -968,22 +1079,42 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
         # a signal only; confirmation requires the sentinel independently of
         # the supplied probe text.
         reflected_probe = traversal_probe in body or urllib.parse.quote(traversal_probe) in body
-        if self.SAFE_SENTINEL in body and not reflected_probe:
+        # Every conclusion needs a usable control: the endpoint must have
+        # answered the probe with HTTP 200. A 5xx, an unfollowed redirect, a
+        # 4xx from an unproven control and a truncated body prove nothing, and
+        # a sentinel inside such a body is not proof of traversal either.
+        eligible_response = (
+            resp.outcome == "SUCCESS" and resp.status_code == 200
+            and not resp.error_message and not resp.truncated
+        )
+        if resp.outcome == "DENIED" or resp.refusal_reason:
+            # A refusal before dispatch proves nothing about the input.
+            classification = "REFUSED"
+            reason = "Safety Gate refused bounded path traversal probe: " + (
+                resp.refusal_reason or resp.outcome)
+        elif (resp.outcome not in {"SUCCESS", "FAILURE"} or resp.error_message
+              or not 100 <= resp.status_code <= 599):
+            classification = "INCONCLUSIVE"
+            reason = "Incomplete response during bounded path traversal probe"
+        elif resp.truncated:
+            classification = "INCONCLUSIVE"
+            reason = "Truncated response during bounded path traversal probe"
+        elif not eligible_response:
+            classification = "INCONCLUSIVE"
+            reason = f"Ineligible HTTP {resp.status_code} response during bounded path traversal probe"
+        elif self.SAFE_SENTINEL in body and not reflected_probe:
             classification = "VERIFIED_IN_LAB"
             reason = "Approved lab traversal sentinel was successfully retrieved via traversal sequence"
         elif reflected_probe:
             classification = "SIGNAL"
             reason = "Traversal probe was reflected by the response; sentinel file retrieval was not demonstrated"
-        elif resp.status_code in (400, 403, 404):
-            # Target cleanly rejected the path traversal sequence (e.g. ShopLab INV-* regex rejection)
-            classification = "NEGATIVE"
-            reason = f"Path traversal probe rejected with HTTP {resp.status_code} by parameter validation"
         else:
             classification = "NEGATIVE"
             reason = "No sentinel disclosure observed for bounded LAB_TRAVERSAL_SENTINEL fixture probe"
 
         finding_id = f"FIND-PATH-{uuid.uuid4().hex[:8]}"
-        conf = 0.95 if classification == "VERIFIED_IN_LAB" else 0.60
+        conf = (0.95 if classification == "VERIFIED_IN_LAB"
+                else 0.60 if classification == "NEGATIVE" else 0.30)
         finding = VerificationFinding(
             finding_id=finding_id,
             family="PATH_TRAVERSAL",
@@ -996,6 +1127,7 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
             confidence=conf,
             limitations=["Harmless LAB_TRAVERSAL_SENTINEL probe only; zero host file access (/etc/passwd, win.ini forbidden)"],
             reason=reason,
+            path_input_evidence=_has_path_evidence(evidence, resource, param),
         )
 
         fact = {
@@ -1015,17 +1147,20 @@ class SafePathFixtureVerificationExecutor(BaseCapabilityExecutor):
             "classification": classification,
             "reason": reason,
             "finding": asdict(finding),
-            "dispatches_made": 1,
+            "dispatches_made": dispatches_made,
+            "path_input_evidence": _has_path_evidence(evidence, resource, param),
         })
 
         return CapabilityExecutionResult(
             action_id="ACTION-WEB-003",
             target_id=target_id,
-            outcome="SUCCESS",
+            outcome="DENIED" if classification == "REFUSED" else (
+                "FAILURE" if classification == "INCONCLUSIVE" else "SUCCESS"
+            ),
             classification=classification,
             findings=[finding],
             new_facts=[fact],
-            network_dispatch_count=1,
+            network_dispatch_count=dispatches_made,
             intent_evidence_id=last_intent_id,
             result_evidence_id=art["evidence_id"],
             details={"reason": reason, "classification": classification},
@@ -1066,7 +1201,7 @@ class SafeBusinessLogicVerificationExecutor(BaseCapabilityExecutor):
         classification = "INCONCLUSIVE"
         reason = "Incomplete response set during business logic verification probe"
 
-        is_post_form = _find_observed_form(inventory, resource, param, "POST") is not None
+        is_post_form = _probe_form_method(inventory, resource, param) == "POST"
         default_form_fields: dict[str, str] = {}
         request_headers: dict[str, str] = {}
         can_probe = True

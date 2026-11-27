@@ -211,6 +211,13 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(result["verifications"][0]["classification"], "INCONCLUSIVE")
         self.assertEqual(result["verifications"][0]["reason"], "PATH_INPUT_NOT_OBSERVED")
 
+    def test_path_result_with_recorded_evidence_is_kept(self):
+        self.record("action_web_003_verification", action_id="ACTION-WEB-003", resource="/files",
+                    parameter="name", classification="VERIFIED_IN_LAB",
+                    reason="Approved lab traversal sentinel retrieved", path_input_evidence=True)
+        result = build_coverage(self.run, self.run.name)
+        self.assertEqual(result["verifications"][0]["classification"], "VERIFIED_IN_LAB")
+
     def test_tamper_or_conflicting_scope_fails_closed_without_repair(self):
         artifact = self.record("dashboard_run_scope", authenticated_workflow_approved=False,
                                external_scanners=[])
@@ -532,6 +539,80 @@ class SeparateExecutionTests(unittest.TestCase):
             response = self.manager.start_run(request, self.sink)
         self.assertTrue(response.success)
         thread.return_value.start.assert_called_once()
+
+    def test_failed_run_preserves_recorded_findings_and_decision_count(self):
+        """An error after completed work must not report zero findings or reset the planner mode."""
+        run_id = self.run_id
+        class FakeLab:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+        class PartialRunner:
+            def __init__(self, **kwargs):
+                self.recorder = kwargs["recorder"]
+                self.scanner_executor = None
+                self.findings = [{"family": "SQL_INJECTION", "classification": "VERIFIED_IN_LAB",
+                                  "resource_ref": "/synthetic", "input_ref": "q",
+                                  "verification_action": "ACTION-WEB-001",
+                                  "result_evidence_refs": []}]
+                self.active_verifications_count = 1
+                self.traces = [SimpleNamespace(safety_decision="APPROVED", planner_actual_mode="LLM",
+                                               new_facts_count=2)] * 3
+            def run(self):
+                self.recorder.persist_phase_artifact("action_web_001_verification", {
+                    "run_id": run_id, "action_id": "ACTION-WEB-001", "resource": "/synthetic",
+                    "parameter": "q", "classification": "VERIFIED_IN_LAB",
+                    "finding": self.findings[0]})
+                raise ValueError("SYNTHETIC_POST_PROGRESS_FAILURE")
+
+        recorder = DurableEvidenceRecorder(run_id, self.run / "assessment", approved_root=self.root)
+        request = self.request(execution_scope="scan", planner="llm", approve_authenticated_workflow=False,
+                               approve_active_verification=True, external_scanners=[])
+        with patch("runtime.lab.workflow_lab.WorkflowLab", FakeLab), \
+             patch("dashboards.app.backend.run_manager._scan_redaction_ready", return_value=True), \
+             patch("dashboards.app.backend.run_manager.AutonomousRunner", PartialRunner), \
+             patch("runtime.lab.control_support.new_recorder", return_value=recorder), \
+             patch("runtime.lab.control_support.verify", return_value={"records": 2}):
+            self.manager._worker(run_id, request, self.run, self.sink)
+        report = json.loads((self.run / "report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["state"], "FAILED")
+        self.assertEqual(report["findings"][0]["classification"], "VERIFIED_IN_LAB")
+        self.assertEqual(report["decisions_count"], 3)
+        self.assertEqual(report["actual_planner_mode"], "LLM")
+        findings = self.manager.get_run_findings(run_id)
+        self.assertIsNotNone(findings)
+
+    def test_failed_run_preserves_decisions_proposed_before_the_error(self):
+        """A proposal that reached the planner and Gate survives an executor exception."""
+        run_id = self.run_id
+        class FakeLab:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        recorder = DurableEvidenceRecorder(run_id, self.run / "assessment", approved_root=self.root)
+        request = self.request(execution_scope="scan", planner="rule",
+                               approve_authenticated_workflow=False, approve_read_only=True,
+                               approve_active_verification=True, external_scanners=[],
+                               max_decisions=5)
+        with patch("runtime.lab.workflow_lab.WorkflowLab", FakeLab), \
+             patch("dashboards.app.backend.run_manager._scan_redaction_ready", return_value=True), \
+             patch("runtime.lab.control_support.new_recorder", return_value=recorder), \
+             patch("runtime.lab.control_support.verify", return_value={"records": 2}), \
+             patch.object(AutonomousRunner, "_execute_approved_action",
+                          side_effect=RuntimeError("EXECUTOR_FAILED_BEFORE_TRACE")):
+            self.manager._worker(run_id, request, self.run, self.sink)
+        report = json.loads((self.run / "report.json").read_text(encoding="utf-8"))
+        self.assertEqual(report["state"], "FAILED")
+        self.assertEqual(report["decisions_count"], 1)
+        self.assertEqual(report["requested_planner_mode"], "RULE")
+        self.assertEqual(report["actual_planner_mode"], "RULE")
 
     def test_scan_blocks_if_recorder_redactor_is_replaced(self):
         request = self.request(execution_scope="scan", approve_authenticated_workflow=False)

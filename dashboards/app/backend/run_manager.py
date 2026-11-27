@@ -1427,6 +1427,60 @@ class RunManager:
                 except Exception:
                     verification = {"state": "FAILED", "records": 0}
             failure_reason = "WORKFLOW_FAILED" if req.approve_authenticated_workflow else "RUN_FAILED"
+            # Work completed before the error stays reported; nothing is invented for
+            # work that never ran. An exception must not reset observed progress.
+            observed_findings = [dict(item) for item in getattr(runner, "findings", [])
+                                 if type(item) is dict]
+            observed_traces = [trace for trace in getattr(runner, "traces", []) or []
+                               if hasattr(trace, "safety_decision")]
+            observed_verifications = getattr(runner, "active_verifications_count", 0)
+            planner_obj = getattr(runner, "planner", None)
+            configured_provider = getattr(planner_obj, "configured_provider", None)
+            configured_model = getattr(planner_obj, "configured_model", None)
+            # Counters and provenance advance on the decision itself, so a
+            # decision whose trace never completed is still reported. Values are
+            # type-checked because a stub runner may expose non-numeric attributes.
+            def observed_count(name: str) -> int:
+                value = getattr(runner, name, None)
+                return value if type(value) is int and value >= 0 else 0
+
+            decisions_observed = max(observed_count("decisions_used"), len(observed_traces))
+            approved_actions = max(
+                observed_count("approved_decisions"),
+                sum(1 for trace in observed_traces
+                    if getattr(trace, "safety_decision", None) == "APPROVED"))
+            denied_actions = max(
+                observed_count("denied_decisions"),
+                sum(1 for trace in observed_traces
+                    if getattr(trace, "safety_decision", None) == "DENIED"))
+            facts_added = max(
+                observed_count("observed_facts_added"),
+                sum(getattr(trace, "new_facts_count", 0) or 0 for trace in observed_traces)
+                if all(type(getattr(trace, "new_facts_count", 0)) is int
+                       for trace in observed_traces) else 0)
+            last_mode: dict[str, Any] = {}
+            provenance = getattr(runner, "last_planner_provenance", None)
+            if type(provenance) is dict and provenance.get("actual_mode"):
+                last_mode = dict(provenance)
+            for trace in reversed(observed_traces):
+                mode = getattr(trace, "planner_actual_mode", None)
+                if mode and "actual_mode" not in last_mode:
+                    last_mode = {"actual_mode": mode}
+                    break
+            reported_mode = (last_mode.get("actual_mode")
+                             if last_mode.get("actual_mode") in ("RULE", "LLM") else "NONE")
+            if reported_mode == "LLM":
+                # Configured identity is recorded, not proof of a served request.
+                reported_provider = (last_mode.get("provider")
+                                     if isinstance(last_mode.get("provider"), str)
+                                     else configured_provider if isinstance(configured_provider, str) else None)
+                reported_model = (last_mode.get("model")
+                                  if isinstance(last_mode.get("model"), str)
+                                  else configured_model if isinstance(configured_model, str) else None)
+            elif reported_mode == "RULE":
+                reported_provider, reported_model = "rule_engine", "none"
+            else:
+                reported_provider, reported_model = None, None
             scanner_executor = getattr(runner, "scanner_executor", None)
             observed_scanners = getattr(scanner_executor, "results", [])
             if type(observed_scanners) is not list:
@@ -1446,24 +1500,25 @@ class RunManager:
                 "target_id": req.target,
                 "target_origin": req.target_origin or lab.ORIGIN,
                 "requested_planner_mode": "NONE" if req.execution_scope == "workflow" else ("HYBRID" if req.planner == "hybrid" else ("RULE" if req.planner == "rule" else "LLM")),
-                "actual_planner_mode": "NONE",
+                "actual_planner_mode": reported_mode,
                 "control_mode": req.control_mode,
-                "provider": "rule_engine" if req.execution_scope != "workflow" and req.planner == "rule" else None,
-                "model": "none" if req.execution_scope != "workflow" and req.planner == "rule" else None,
+                "provider": reported_provider,
+                "model": reported_model,
                 "state": "FAILED",
                 "error": error,
                 "stop_reason": failure_reason,
-                "decisions_count": 0,
-                "approved_actions_count": 0,
-                "denied_actions_count": 0,
+                "decisions_count": decisions_observed,
+                "approved_actions_count": approved_actions,
+                "denied_actions_count": denied_actions,
                 "network_dispatch_count": dispatches,
                 "unsafe_dispatch_count": 0,
-                "observations_added_count": 0,
-                "pause_count": 0,
+                "observations_added_count": facts_added,
+                "pause_count": getattr(runner, "_pause_count", 0) if type(
+                    getattr(runner, "_pause_count", 0)) is int else 0,
                 "operator_approvals_count": 0,
                 "operator_rejections_count": 0,
-                "findings": [],
-                "active_verifications_count": 0,
+                "findings": observed_findings,
+                "active_verifications_count": observed_verifications if type(observed_verifications) is int else 0,
                 "scanner_results": failure_scanners,
                 "evidence_refs": evidence_refs,
                 "evidence_verification": verification,
@@ -1614,6 +1669,7 @@ class RunManager:
                     if classification == "VERIFIED_IN_LAB" and (not refs or not set(refs) <= verified_refs):
                         classification = "INCONCLUSIVE"
                     if (classification == "VERIFIED_IN_LAB" and action == "ACTION-WEB-003" and
+                            raw_f.get("path_input_evidence") is not True and
                             not any(name in str(raw_f.get("input_ref", "")).lower()
                                     for name in ("file", "path", "template", "document", "download", "folder", "dir", "include"))):
                         classification = "INCONCLUSIVE"

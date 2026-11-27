@@ -2,6 +2,63 @@
 
 Roadmap hiện hành: `PLAN-ENTERPRISE-REDTEAM-001`, nền tảng nghiên cứu AI Red Team dưới quan sát một phần. Ưu tiên simulator và benchmark theo [định nghĩa sản phẩm](PROJECT_CONTEXT.md); trạng thái/dependencies chỉ tra tại [TASKS.md](TASKS.md).
 
+### Đợt nâng cấp quan sát thực thi lab, sơ đồ tương tác và telemetry (M1–M4)
+
+Allowlist chính thức cho đợt triển khai M1–M4 (giữ nguyên `TASK-026` và `TASK-032` ở trạng thái `DEFERRED`, không sửa `configs/safety/*.yaml`, `actions/catalog/**`, `agent/planner/contracts/plan.schema.json`, `runtime/discovery/discovery_engine.py`, `scripts/demo/demo-output/**`, `evidence/runtime/**`, `runtime/simulation/**`, `evaluation/ground_truth/**`):
+- Governance & Plan: `PROJECT_PLAN.md`
+- Backend & Runtime Telemetry: `dashboards/app/backend/*.py`, `runtime/orchestration/autonomous_runner.py`, `runtime/planners/observed_planner.py`, `runtime/lab/capability_registry.py`, `runtime/lab/external_scanners.py`, `runtime/lab/authenticated_workflow.py`, `tools/scanners/zap_worker.py`
+- Frontend UI: `dashboards/app/frontend/**`
+- Tests: `tests/backend/**`, `tests/runtime/test_external_scanners.py`, `tests/e2e/**`
+
+Acceptance:
+- Duy trì chuỗi liên kết `run_id -> agent_id -> step_id -> tool_call_id -> seq/event_id -> evidence_id/finding_id`, ghi bền `report.traces`, timestamps, provenance (`data_origin`, `simulated`) và đồ thị thực thi `execution` (dùng `state`, không dùng khóa `command`/`payload` trong JSON), hỗ trợ replay run lịch sử và khôi phục SSE (`seq`, `Last-Event-ID`, `after_seq`, che bí mật giữ nguyên bộ đếm token).
+- Đo đạc thực cho ZAP (các giai đoạn thực tế `DAEMON_STARTING`..`REPORT_EXPORT`, không dựng giả Spider/Ajax Spider), Nuclei (version từ metadata ảnh, templates, flags, bộ đếm relay đo tại host, `progress_pct=null`), bộ kiểm tra nội bộ, discovery và LLM planner; bảo toàn cách ly Zero-Knowledge AST và mọi kiểm tra `validate_scaffold.py`.
+
+### Đợt sửa R1–R9 sau review vòng 2 (2026-11-27)
+
+Review vòng 2 trả `REQUEST CHANGES` với 5 MAJOR (R1–R5) và 4 MINOR (R6–R9). Allowlist giữ nguyên 12 file của đợt trước: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/orchestration/autonomous_runner.py`, `runtime/planners/observed_planner.py`, `runtime/planners/web_planning_context.py`, `dashboards/app/backend/run_manager.py`, `dashboards/app/backend/coverage.py`, `tests/runtime/test_autonomous_pentest.py`, `tests/runtime/test_autonomous_runner.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_web_planning_context.py`, `tests/backend/test_coverage.py`.
+
+Acceptance:
+- R1: runner dùng cùng bằng chứng path như planner qua `_candidate_blocker_for()`; nhánh re-verify của planner cũng truyền `path_evidence`. Test xuyên luồng analyzer → planner → Gate → runner không còn `PATH_INPUT_NOT_OBSERVED`.
+- R2: mọi kết luận path (kể cả `VERIFIED_IN_LAB` và `REFUSED`) yêu cầu control hợp lệ (HTTP 200, SUCCESS, không truncate/error); 4xx/5xx/redirect đều `INCONCLUSIVE`.
+- R3: method lấy từ inventory khi proposal đã bỏ query (`_observed_query_in_inventory`).
+- R4: `approved_decisions` tăng ngay trước khi thực thi, nên lỗi executor không làm mất approval.
+- R5: cờ `path_input_evidence` nằm trên `VerificationFinding`, nên report/API giữ được `VERIFIED_IN_LAB`.
+- R6: attempt cap được enforce trước khi ghi denial, và candidate hết lượt dừng bounded thay vì chạy tới decision ceiling.
+- R7: `_normalized_denial_code()` cắt đúng suffix identity (`_ACTION-`, `_lab-`) và frozenset có `ACTION_NOT_ALLOWLISTED`.
+- R8: `looks_like_path_value()` loại email, ngày, prose, URL tuyệt đối và control byte trước khi strip.
+- R9: refusal identity hash trên mảng JSON tách thành phần, không nối bằng `:`.
+
+Checks: focused runtime/backend suites, test xuyên luồng có khả năng fail khi bỏ hành vi cần kiểm, `git diff --check`, repository checker so baseline. Không đổi contracts/catalog/policy/configs/scenarios/evidence; không chạy live lab/provider; không nâng trạng thái task.
+
+### Đợt sửa tiếp theo review độc lập 8 finding (2026-11-27)
+
+Review độc lập 5 bản sửa trước trả `REQUEST CHANGES` với 5 MAJOR và 3 MINOR. Allowlist bổ sung cho đợt này: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/orchestration/autonomous_runner.py`, `runtime/planners/observed_planner.py`, `runtime/planners/web_planning_context.py`, `dashboards/app/backend/run_manager.py`, `dashboards/app/backend/coverage.py`, `tests/runtime/test_autonomous_pentest.py`, `tests/runtime/test_autonomous_runner.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_web_planning_context.py`, `tests/backend/test_coverage.py`.
+
+Acceptance:
+- Refusal có identity ổn định theo candidate và được tính vào run-owned candidate attempts, để denial lặp lại vẫn dừng bởi no-progress/attempt cap thay vì sinh fact mới mỗi vòng; mã run-level (`BUDGET_EXHAUSTED`, `MISSING_APPROVAL`, `KILL_SWITCH_ACTIVE`, `APPROVAL_REVOKED/EXPIRED/NOT_YET_VALID`, wrapper `SAFETY_DENIED_AFTER_APPROVAL:`) giữ phạm vi action, mã không nhận diện giữ phạm vi candidate và vẫn bị giới hạn bởi attempt cap.
+- Path executor chỉ kết luận `NEGATIVE` khi response đủ điều kiện (HTTP 200, outcome SUCCESS, không truncate/error); 5xx, redirect và control không hợp lệ là `INCONCLUSIVE`; evidence chỉ lấy từ artifact của chính lần dispatch hiện tại.
+- Method chọn theo provenance đã quan sát: query parameter trên URL GET, rồi form GET, rồi form POST.
+- Rule/RULE fallback/LLM fallback không đề xuất action ngoài `effective_actions`; terminal actions vẫn được phép để dừng an toàn.
+- Failure report giữ quyết định và provenance đã xảy ra trước lỗi executor, không phụ thuộc việc trace đã append.
+- Bằng chứng path lấy từ giá trị đã quan sát: `PassiveSurfaceAnalyzer` chỉ phát marker `path_like_input_<param>` (không lưu giá trị thô); `is_path_like()` nhận evidence; executor/coverage/report đọc cờ `path_input_evidence`. Không có bằng chứng thì `/files?name` vẫn `INCONCLUSIVE`, không dispatch.
+- Baseline GET dùng giá trị đã quan sát thay vì `probe_test`.
+
+Checks: focused runtime/backend suites, offline reproduction cho từng finding, `git diff --check`, repository checker so baseline. Không đổi contracts/catalog/policy/configs/scenarios/evidence; không chạy live lab/provider; không nâng trạng thái task.
+
+### Đợt sửa luồng LLM/WebLab sau review offline (2026-11-27)
+
+Theo yêu cầu người dùng ngày 2026-11-27, sửa năm lỗi đã tái hiện bằng chẩn đoán offline trên source hiện tại; không chạy live lab, scanner hay provider thật. Allowlist: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/orchestration/autonomous_runner.py`, `runtime/planners/observed_planner.py`, `dashboards/app/backend/run_manager.py`, `tests/runtime/test_autonomous_pentest.py`, `tests/runtime/test_observed_planner.py`, `tests/backend/test_coverage.py`.
+
+Acceptance:
+- Path traversal executor phân loại `REFUSED` khi Gate từ chối, `INCONCLUSIVE` khi transport lỗi hoặc response bị cắt; dispatch count lấy từ chênh lệch bộ đếm Gate, không phải hằng số; không ghi `NEGATIVE` khi thiếu control hợp lệ.
+- Failure report giữ findings, decisions, mode/provider/model đã quan sát trước lỗi; trường không chạy vẫn là rỗng/unknown, không suy diễn.
+- Executor chọn method theo provenance của input đã quan sát: input GET không bị chuyển thành POST chỉ vì có form POST cùng tên.
+- Refusal được ghi theo candidate (action + resource + parameter); một candidate bị từ chối không chặn candidate khác cùng action.
+- Planner từ chối proposal ngoài `effective_actions` của run và rule baseline không đề xuất action ngoài scope.
+
+Checks: focused runtime/backend suites, offline reproduction of each case, và repository checker đối chiếu baseline. Không đổi contracts/catalog/policy/configs/scenarios/evidence, không nâng trạng thái task, không chạy live confirmation.
+
 ### Candidate INCONCLUSIVE loop repair (2026-11-26)
 
 User-approved scope: offline implementation and tests only; no lab/provider rerun. Allowlist: `PROJECT_PLAN.md`, `runtime/lab/capability_registry.py`, `runtime/planners/web_planning_context.py`, `runtime/planners/observed_planner.py`, `runtime/orchestration/autonomous_runner.py`, `tests/runtime/test_autonomous_pentest.py`, `tests/runtime/test_observed_planner.py`, `tests/runtime/test_web_planning_context.py`, `tests/runtime/test_autonomous_runner.py`.

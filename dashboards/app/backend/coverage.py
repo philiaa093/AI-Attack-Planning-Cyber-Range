@@ -261,7 +261,9 @@ def build_coverage(run_dir: Path, run_id: str) -> dict[str, Any]:
                 classification = value.get("classification") if value.get("classification") in (
                     "NEGATIVE", "SIGNAL", "VERIFIED_IN_LAB", "INCONCLUSIVE", "REFUSED") else "UNKNOWN"
                 reason = _safe_reason(value.get("reason"))
+                path_evidence = value.get("path_input_evidence")
                 if (action == "ACTION-WEB-003" and classification == "VERIFIED_IN_LAB"
+                        and path_evidence is not True
                         and not any(part in parameter.lower() for part in
                                     ("file", "path", "template", "document", "download", "folder", "dir", "include"))):
                     classification, reason = "INCONCLUSIVE", "PATH_INPUT_NOT_OBSERVED"
